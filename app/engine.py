@@ -140,6 +140,63 @@ async def gap_table(q: QlooClient, catchment: Catchment, genres: list[dict], foc
     return scoring.score_gaps(list(rows), catchment.area_m2, around_area)
 
 
+async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> dict | None:
+    """Resolve free text ('bakeries', 'board game cafe') to a storefront place genre.
+
+    Genres locals already rank keep their local and reference ranks; others come from Qloo's tag search
+    and are marked unranked, which is itself evidence of weak local demand.
+    """
+    wanted = _normalize_genre(query)
+    exact = next((genre for genre in ranked if _normalize_genre(genre["name"]) == wanted), None)
+    if exact:
+        return exact
+    data = await q.tags({"filter.query": query.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 5})
+    for tag in scoring.tags(data):
+        tag_id, name = scoring.tag_id(tag), tag.get("name")
+        if not tag_id or not name or not scoring.is_business_genre(name):
+            continue
+        known = next((genre for genre in ranked if genre["id"] == tag_id), None)
+        return known or {"id": tag_id, "name": name, "rank": scoring.UNRANKED, "ref_rank": None}
+    return None
+
+
+def _normalize_genre(text: str) -> str:
+    text = " ".join(text.lower().replace("-", " ").split())
+    text = text.removesuffix(" restaurant").removesuffix(" restaurants")
+    if text.endswith("ies"):
+        return text[:-3] + "y"
+    return text[:-1] if text.endswith("s") and not text.endswith("ss") else text
+
+
+async def probe_genre(q: QlooClient, catchment: Catchment, genre: dict, table: list[dict]) -> dict:
+    """Live evidence for one more genre, scored on the same supply baseline as the site's gap table."""
+    row = await genre_evidence(q, catchment, genre)
+    around_area = math.pi * around_radius(catchment) ** 2
+    return scoring.score_gaps([row], catchment.area_m2, around_area, baseline_rows=table)[0]
+
+
+async def fan_taste(q: QlooClient, lat: float, lon: float, tag_id: str, take: int = 15) -> dict:
+    """Brands and artists that people near the site who engage with a genre also love (Qloo cross-domain affinity)."""
+    signal = {
+        "signal.interests.tags": tag_id,
+        "signal.location": point_wkt(lat, lon),
+        "signal.location.radius": TASTE_M,
+        "filter.popularity.min": 0.1,
+        "take": take,
+    }
+    brands, artists = await asyncio.gather(
+        q.insights({"filter.type": "urn:entity:brand", **signal}),
+        q.insights({"filter.type": "urn:entity:artist", **signal}),
+    )
+    return {
+        "brands": [
+            scoring.entity_card(e) for e in scoring.entities(brands)
+            if scoring.is_commercial_brand(e) and scoring.is_safe_name(e.get("name"))
+        ][:10],
+        "artists": [scoring.entity_card(e) for e in scoring.entities(artists) if scoring.is_safe_name(e.get("name"))][:10],
+    }
+
+
 async def _ranked(q: QlooClient, entity_type: str, lat: float, lon: float, radius: int, take: int = 30) -> list[dict]:
     return scoring.entities(await q.insights({
         "filter.type": entity_type,

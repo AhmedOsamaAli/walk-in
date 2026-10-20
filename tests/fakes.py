@@ -2,7 +2,8 @@
 
 The fake Qloo world is invented (no real Qloo data may be committed). It is shaped so the expected outcome
 is known: Seafood is loved more here than around, under-supplied, and its local favorites lie outside the
-walk; Yoga is barely known locally (thin); Gift shop favorites are hotels (atypical).
+walk; Yoga is barely known locally (thin); Gift shop favorites are hotels (atypical). Ramen and Board Game
+Cafe sit outside the gap table for the agent's live tests, and Seafood's local fans share taste with the area.
 """
 from __future__ import annotations
 
@@ -23,16 +24,27 @@ GENRES = {
     "Bakery": "urn:tag:genre:place:test_bakery",
     "Gift shop": "urn:tag:genre:place:test_gift_shop",
     "Yoga studio": "urn:tag:genre:place:test_yoga_studio",
+    # Outside the 8-row gap table: Ramen is ranked 9th locally, Board Game Cafe only exists in tag search.
+    "Ramen": "urn:tag:genre:place:test_ramen",
+    "Board Game Cafe": "urn:tag:genre:place:test_board_game_cafe",
 }
 GENRE_BY_ID = {tag: name for name, tag in GENRES.items()}
+TAG_CATALOG = list(GENRES) + ["Art museum"]
 
 LOCAL_RANKING = ["Restaurant", "Seafood", "Brunch", "Wine Bar", "Art museum", "Coffee shop", "Japanese", "Bakery",
-                 "Gift shop", "Yoga studio"]
+                 "Gift shop", "Yoga studio", "Ramen"]
 REFERENCE_RANKING = ["Brunch", "Coffee shop", "Wine Bar", "Bakery", "Japanese", "Gift shop", "Yoga studio", "Seafood"]
 NEARBY = {"Seafood": 1, "Brunch": 12, "Wine Bar": 9, "Coffee shop": 14, "Japanese": 5, "Bakery": 4, "Gift shop": 2,
-          "Yoga studio": 0}
+          "Yoga studio": 0, "Ramen": 0, "Board Game Cafe": 0}
 AROUND = {"Seafood": 12, "Brunch": 30, "Wine Bar": 22, "Coffee shop": 34, "Japanese": 13, "Bakery": 10,
-          "Gift shop": 5, "Yoga studio": 1}
+          "Gift shop": 5, "Yoga studio": 1, "Ramen": 9, "Board Game Cafe": 2}
+CROWD_PROFILE = {
+    "age": {"24_and_younger": -0.1, "25_to_29": 0.3, "30_to_34": 0.2, "35_to_44": -0.1, "45_to_54": -0.2, "55_and_older": -0.3},
+    "gender": {"male": -0.05, "female": 0.05},
+}
+# What people near the site who love a genre also love; Seafood fans share two names with the area's signature taste.
+FAN_TASTE = {"Seafood": {"brands": ["Riverside Cider Co", "Tide Magazine"], "artists": ["Sea Shanty Crew", "Local Jazz Trio"]}}
+DEFAULT_FANS = {"brands": ["Global Coffee"], "artists": ["Global Pop Star"]}
 SEAFOOD_LOCAL_FAVORITES = ["Harbor Oyster Bar", "Dockside Crab", "Saltwater Kitchen", "Pier Nine Fish", "Tidal Grill"]
 WINE_LOCAL_FAVORITES = ["Corner Cellar", "Vine & Barrel", "The Cork Room", "Little Pour"]
 LOCAL_BRANDS = [
@@ -41,7 +53,7 @@ LOCAL_BRANDS = [
 ]
 BRAND_TYPES = {
     "Block News": "Media Brand", "Local Sports Team": "Entertainment Brand", "Riverside Cider Co": "Product Brand",
-    "Neighborhood Bikes": "Retail Brand", "Civic Advocacy Org": "Nonprofit Brand",
+    "Neighborhood Bikes": "Retail Brand", "Civic Advocacy Org": "Nonprofit Brand", "Tide Magazine": "Media Brand",
 }
 REFERENCE_BRANDS = ["Global Coffee", "Global Sneakers"] + [f"Elsewhere Brand {i}" for i in range(10)]
 LOCAL_ARTISTS = ["Global Pop Star", "Block Party Band", "Local Jazz Trio"]
@@ -111,6 +123,20 @@ class FakeQloo:
     async def search(self, params: dict) -> dict:
         return {"results": []}
 
+    async def tags(self, params: dict) -> dict:
+        from app.qloo import QlooError
+
+        self.calls += 1
+        self.requests.append({"path": "/v2/tags", **params})
+        if self.fail:
+            raise QlooError("Qloo returned HTTP 401: invalid key")
+        query = params.get("filter.query", "").lower()
+        names = [name for name in TAG_CATALOG if query and (query in name.lower() or name.lower() in query)]
+        return {"results": {"tags": [
+            {"id": GENRES.get(name, f"urn:tag:genre:place:test_{slug(name)}"), "name": name, "type": "urn:tag:genre:place"}
+            for name in names
+        ]}}
+
     async def insights(self, params: dict) -> dict:
         from app.qloo import QlooError
 
@@ -123,6 +149,13 @@ class FakeQloo:
             return self._genre_ranking(params)
         if kind == "urn:entity:place":
             return self._places(params)
+        if kind in ("urn:entity:brand", "urn:entity:artist") and "signal.interests.tags" in params:
+            fans = FAN_TASTE.get(GENRE_BY_ID.get(params["signal.interests.tags"], ""), DEFAULT_FANS)
+            brand = kind == "urn:entity:brand"
+            return {"results": {"entities": [
+                entity(n, "brand" if brand else "artist", i, BRAND_TYPES.get(n, "Corporate Brand"))
+                for i, n in enumerate(fans["brands" if brand else "artists"])
+            ]}}
         if kind == "urn:entity:brand":
             names = LOCAL_BRANDS if at_site(params.get("signal.location", "")) else REFERENCE_BRANDS
             return {"results": {"entities": [
@@ -132,10 +165,7 @@ class FakeQloo:
             names = LOCAL_ARTISTS if at_site(params.get("signal.location", "")) else REFERENCE_ARTISTS
             return {"results": {"entities": [entity(n, "artist", i) for i, n in enumerate(names)]}}
         if kind == "urn:demographics":
-            return {"results": {"demographics": [{"entity_id": "x", "query": {
-                "age": {"24_and_younger": -0.1, "25_to_29": 0.3, "30_to_34": 0.2, "35_to_44": -0.1, "45_to_54": -0.2, "55_and_older": -0.3},
-                "gender": {"male": -0.05, "female": 0.05},
-            }}]}}
+            return {"results": {"demographics": [{"entity_id": "x", "query": CROWD_PROFILE}]}}
         if kind == "urn:heatmap":
             cells = []
             for i in range(30):

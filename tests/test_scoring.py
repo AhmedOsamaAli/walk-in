@@ -194,6 +194,23 @@ def test_relative_supply_is_normalised_by_site_baseline():
         assert abs(row["expected_nearby"] - row["nearby_count"]) <= 0.25 * row["nearby_count"] + 1
 
 
+def test_a_genre_tested_later_shares_the_table_baseline():
+    # Area ratio 1/4: every row expects 2 places; supply ratios 1.0, 5/3 and 7/3, so the table's baseline is 5/3.
+    table = scoring.score_gaps([_row("A", 1, 1, 2, 8), _row("B", 2, 2, 4, 8), _row("C", 3, 3, 6, 8)], 1.0, 4.0)
+    late = scoring.score_gaps([_row("D", 4, 4, 2, 8)], 1.0, 4.0, baseline_rows=table)[0]
+    assert late["relative_supply"] == 0.6
+    assert scoring.score_gaps([_row("D", 4, 4, 2, 8)], 1.0, 4.0)[0]["relative_supply"] == 1.0
+
+
+def test_free_text_categories_normalize_to_genre_names():
+    from app.engine import _normalize_genre
+
+    assert _normalize_genre("Bakeries") == _normalize_genre("bakery")
+    assert _normalize_genre("Wine  Bars") == _normalize_genre("Wine Bar")
+    assert _normalize_genre("Seafood restaurant") == _normalize_genre("Seafood")
+    assert _normalize_genre("Glass") == "glass"
+
+
 def test_reference_rank_uses_median_and_counts_missing_as_low():
     assert scoring.reference_rank([2, 4, 30]) == 4.0
     assert scoring.reference_rank([1, None, None]) == 51.0

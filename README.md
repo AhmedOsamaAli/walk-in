@@ -14,7 +14,7 @@ Landlords, brokers and founders decide what goes into a vacant unit by gut feel 
    - **demand**: the local rank against six same-size areas a few kilometres away;
    - **supply**: places inside the walk against what a block this dense typically holds;
    - **pull**: places locals love *more than the city does*, and whether they sit inside or outside the walk.
-4. **Designs the concept.** An agent inspects the strongest gaps with tools and proposes three concepts. Every claim is checked against the evidence: invented places and genres are dropped. Each concept opens into a design sheet: interior mood, materials, offer, a soundtrack from artists that over-index locally, partners, launch, and an interior image.
+4. **Designs the concept.** An agent works like an analyst. It forms hunches the gap table does not cover (sports teams among the area's favorite brands suggest a sports bar) and tests them live against Qloo, scored on the same scale as the table. It asks Qloo what local fans of a category also love: in Fort Greene, sports-bar fans share Bleacher Report, the Giants, 50 Cent and Fabolous with the area's own signature taste. Then it proposes three concepts. Every claim is checked against the evidence: invented places, genres, artists and partners are dropped. Each concept opens into a design sheet: interior mood, materials, offer, a soundtrack from what local fans of the category listen to, partners, launch, and an interior image.
 5. **Shows the work.** A live survey log, a map with the walk, every place, competitors, arcs to the places locals travel to, and Qloo's taste heatmap for the selected category.
 
 ## Why it needs Qloo
@@ -29,16 +29,19 @@ Landlords, brokers and founders decide what goes into a vacant unit by gut feel 
 | Who is the crowd? | `filter.type=urn:demographics` over the area's most popular places |
 | Which brands and artists over-index here? | `urn:entity:brand` and `urn:entity:artist` with `signal.location`, against three same-size reference areas |
 | Where is the taste strongest? | `filter.type=urn:heatmap` with `signal.interests.tags=<genre>` |
+| Does the agent's hunch hold up? | `/v2/tags` resolves free text to a place genre, then the supply and favorites calls above, scored on the table's scale |
+| What else do local fans of a category love? | `urn:entity:brand` and `urn:entity:artist` with `signal.interests.tags=<genre>` and `signal.location=<site>` |
 | What does the place look and feel like? | place tags (decor, ambience, setting, menu highlights, offerings) and review keywords of the locals' favorites |
 
 Without Qloo there is no block, no demand, no pull and no design DNA: the product cannot exist.
 
 ## What we measured, and changed because of it
 
-We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower East Side, East Austin, Zamalek). Two findings changed the method:
+We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower East Side, East Austin, Zamalek). Three findings changed the method:
 
 - **Comparing a neighborhood with the whole city is biased by scale.** At walk scale "New American" ranks #2 in both the Upper East Side and Williamsburg, but #17 across New York, which looked like a strong local preference. Against same-size areas around each site it ranks #3–#4: no real lift. Blank Space now compares against six same-size areas. Real lifts survive (Upper East Side fine dining #7 here vs #15.5 around; East Austin breweries #2 vs #5.5).
 - **Locals' favorite places are mostly the city's famous places.** For the same category, the top-10 favorites of a neighborhood overlap the city's top-10 by 6–10 of 10, so "most favorites are outside the walk" was true everywhere and meant nothing. The places locals love *more than the city does* are informative, and most of them are within a kilometre of the site. Travel ("pull") is now measured on those, and only claimed with at least four of them.
+- **Demographics per category do not separate categories; cross-domain taste does.** Qloo's age and gender skew for sports bars, brunch, seafood, bakeries and toy stores all came back as "45+, leaning female", and several categories returned none, so we dropped an audience-fit tool built on them. What local fans of a category also love is sharply different: sports-bar fans near Fort Greene love the Giants, UFC and DJ Premier; near East Austin, the Cowboys, the Texans and Parker McCollum. The agent and the design sheets use that instead.
 
 Other safeguards: categories Qloo barely knows locally are flagged as thin data and ranked last; categories whose local favorites are mostly hotels or malls (hotel spas in Cairo, for example) are flagged as atypical; partners are limited to makers, shops and designers (plus teams for sports concepts), never nonprofits, media groups or corporations; negated review keywords ("not crowded") are not counted as complaints.
 

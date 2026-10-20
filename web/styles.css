@@ -254,6 +254,7 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 .log .running .state::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
 .log .done .state { color: var(--blue); }
 .log .agent .msg { color: var(--blue); }
+.log .finding .msg { padding-left: 12px; border-left: 2px solid var(--blue); }
 .log .warn .msg { background: linear-gradient(transparent 55%, var(--yellow) 55%); }
 .log .err .msg { color: var(--red); }
 @keyframes blink { 50% { opacity: 0; } }
@@ -308,6 +309,7 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
   margin-left: 8px; padding: 2px 8px; border: 1px solid var(--ink); border-radius: 999px;
   background: var(--yellow); color: var(--ink); vertical-align: 3px;
 }
+.gap-name .flag.live { background: var(--blue); border-color: var(--blue); color: #fff; }
 .gap-why { display: block; margin: -4px 0 10px; font-size: 15.5px; line-height: 1.35; color: #2c2c29; }
 .gap.thin .gap-score { color: var(--ash); }
 .gap-bars { display: grid; gap: 7px; }

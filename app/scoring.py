@@ -8,6 +8,9 @@ from typing import Callable, Iterable
 
 from .geo import distance_m
 
+# Rank given to a genre that is missing from a top-50 ranking.
+UNRANKED = 51
+
 GENRE_TYPE = "urn:tag:genre:place"
 
 # Too broad to describe a business concept.
@@ -301,7 +304,7 @@ def summarize_block(places: Iterable[dict]) -> dict:
     }
 
 
-def reference_rank(ranks: list[int | None], missing: int = 51) -> float | None:
+def reference_rank(ranks: list[int | None], missing: int = UNRANKED) -> float | None:
     """Median rank of a genre across same-size reference areas; absent genres count as rank `missing`."""
     if not ranks:
         return None
@@ -355,7 +358,9 @@ def gap_signals(
     }
 
 
-def score_gaps(rows: list[dict], catchment_area_m2: float, around_area_m2: float) -> list[dict]:
+def score_gaps(
+    rows: list[dict], catchment_area_m2: float, around_area_m2: float, baseline_rows: list[dict] | None = None,
+) -> list[dict]:
     """Score every genre against same-size areas around the site (demand) and its own surroundings (supply).
 
     - demand: how highly locals rank the genre, plus how much higher they rank it than six same-size
@@ -365,15 +370,17 @@ def score_gaps(rows: list[dict], catchment_area_m2: float, around_area_m2: float
       median ratio so parks, rivers and highways in the surroundings do not bias every genre;
     - leakage: share of the places locals love more than the city does that lie outside the walk. The
       city's famous places are excluded because every neighborhood's favorites include them.
+
+    baseline_rows: an already-scored gap table whose supply baseline new rows must share, so a genre the
+    agent tests later is scored on the same scale as the table.
     """
     if not rows:
         return []
     area_ratio = catchment_area_m2 / around_area_m2 if around_area_m2 else 0.25
     for row in rows:
         row["expected_raw"] = round(row["around_count"] * area_ratio, 2)
-        # One pseudo-count on both sides: finding none where the surroundings predict 0.25 is not evidence of a gap.
-        row["_ratio"] = (row["nearby_count"] + 1) / (row["expected_raw"] + 1)
-    informative = [row["_ratio"] for row in rows if row["around_count"] >= 3]
+    # One pseudo-count on both sides: finding none where the surroundings predict 0.25 is not evidence of a gap.
+    informative = [_supply_ratio(row) for row in (baseline_rows or rows) if row["around_count"] >= 3]
     baseline = median(informative) if informative else 1.0
     baseline = baseline if baseline > 0 else 1.0
     for row in rows:
@@ -381,7 +388,7 @@ def score_gaps(rows: list[dict], catchment_area_m2: float, around_area_m2: float
         ref = row.get("ref_rank")
         lift = 0.0 if ref is None else max(-1.0, min(1.0, (ref - local) / 10))
         demand = 0.55 * max(0.0, 1 - (local - 1) / 15) + 0.45 * (lift + 1) / 2
-        relative = row.pop("_ratio") / baseline
+        relative = _supply_ratio(row) / baseline
         undersupply = 0.8 / (1 + relative) + 0.2 * (1 - row["nearby_count"] / (row["nearby_count"] + 6))
         total = row["favorites_total"]
         leakage = None
@@ -406,6 +413,10 @@ def score_gaps(rows: list[dict], catchment_area_m2: float, around_area_m2: float
             "gap_score": min(99, round(raw * 175)),
         })
     return sorted(rows, key=lambda row: (row["evidence"] != "ok", -row["gap_score"]))
+
+
+def _supply_ratio(row: dict) -> float:
+    return (row["nearby_count"] + 1) / (row["expected_raw"] + 1)
 
 
 def distinctive(local: list[dict], baseline: list[dict], limit: int = 8) -> list[dict]:

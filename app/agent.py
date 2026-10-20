@@ -43,6 +43,8 @@ class RunState:
     genres: list[dict] = field(default_factory=list)
     cues: list[str] = field(default_factory=list)
     gaps: list[dict] = field(default_factory=list)
+    explored: list[dict] = field(default_factory=list)  # genres the agent tested live, scored like the table
+    fans: dict[str, dict] = field(default_factory=dict)  # genre id -> what local fans of that genre also love
     taste: dict = field(default_factory=dict)
     demographics: dict | None = None
     concepts: list[dict] = field(default_factory=list)
@@ -101,22 +103,7 @@ def evidence_brief(run: RunState) -> dict:
             "rising_places": [name for name, _ in s.get("rising", [])[:4]],
             "fading_places": [name for name, _ in s.get("fading", [])[:4]],
         },
-        "gap_table": [
-            {
-                "genre": g["genre"],
-                "locals_rank_here": g["demand_rank"],
-                "median_rank_in_6_same_size_areas_around": g["ref_rank"],
-                "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
-                "typical_for_a_block_this_dense": g["expected_nearby"],
-                "relative_supply": g["relative_supply"],
-                "local_favorites_kind": g["favorites_kind"],
-                "local_favorites_outside_walk": f"{g['favorites_far']}/{g['favorites_total']}",
-                "median_distance_to_local_favorites_km": g["median_favorite_km"],
-                "evidence": g["evidence"],
-                "gap_score": g["gap_score"],
-            }
-            for g in run.gaps
-        ],
+        "gap_table": [gap_summary(g) for g in run.gaps],
         "taste_cues": run.cues,
         "local_brands": [b["name"] for b in run.taste.get("distinctive_brands", [])],
         "local_artists": [a["name"] for a in run.taste.get("distinctive_artists", [])],
@@ -124,9 +111,32 @@ def evidence_brief(run: RunState) -> dict:
     }
 
 
+def gap_summary(g: dict) -> dict:
+    return {
+        "genre": g["genre"],
+        "locals_rank_here": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
+        "median_rank_in_6_same_size_areas_around": g["ref_rank"],
+        "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
+        "typical_for_a_block_this_dense": g["expected_nearby"],
+        "relative_supply": g["relative_supply"],
+        "local_favorites_kind": g["favorites_kind"],
+        "local_favorites_outside_walk": f"{g['favorites_far']}/{g['favorites_total']}",
+        "median_distance_to_local_favorites_km": g["median_favorite_km"],
+        "evidence": g["evidence"],
+        "gap_score": g["gap_score"],
+    }
+
+
 def gap_for(run: RunState, genre: str) -> dict | None:
     wanted = (genre or "").strip().lower()
-    return next((g for g in run.gaps if g["genre"].lower() == wanted), None)
+    return next((g for g in run.gaps + run.explored if g["genre"].lower() == wanted), None)
+
+
+async def fans_of(q: QlooClient, run: RunState, genre_id: str) -> dict:
+    """What people near the site who love a genre also love; fetched once per run."""
+    if genre_id not in run.fans:
+        run.fans[genre_id] = await engine.fan_taste(q, run.site.lat, run.site.lon, genre_id)
+    return run.fans[genre_id]
 
 
 def inspect_payload(run: RunState, row: dict) -> dict:
@@ -187,7 +197,9 @@ def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
     nearby = f"{row['nearby_count']}{'+' if row['nearby_capped'] else ''}"
     lines = []
     ref = row.get("ref_rank")
-    if ref is not None:
+    if row["demand_rank"] >= scoring.UNRANKED:
+        lines.append(f"Locals do not rank {genre} among their top 50 place types here.")
+    elif ref is not None:
         ref_text = "outside the top 50" if ref >= 51 else f"#{ref:g}"
         lines.append(f"Locals rank {genre} #{row['demand_rank']} here, versus a median {ref_text} in same-size areas around.")
     else:
@@ -280,12 +292,49 @@ You only reason from Qloo evidence about the people inside the site's walking ca
 Demand is compared with six same-size areas around the site, not the whole city; supply is compared with what a block
 this dense would typically hold. Locals' favorites of kind "citywide" are just the city's famous places: do not treat
 them as evidence that locals travel.
-Use the tools to inspect the most promising gaps (at least two) before deciding. Prefer gaps with evidence "ok".
-Then call submit_concepts with exactly 3 distinct concepts, each built on a different genre from the gap table.
+Work like an analyst:
+1. Form at least one hypothesis the gap table does not cover, from the brands, artists and taste cues this area
+   over-indexes on (sports teams suggest a sports bar; a list of design brands suggests a concept store), and test it
+   with test_category, which queries Qloo live. You have at most 3 tests.
+2. Ask fan_taste what people near the site who love a category also love. Overlap with the area's own signature
+   brands and artists is evidence of fit; the names are material for programming, partners and music.
+3. Inspect the gaps you will build on with inspect_gap (at least two).
+4. Call submit_concepts with exactly 3 distinct concepts, each on a different genre from the gap table or your tests.
+   Prefer evidence "ok". A weak test result is a finding: mention it in risk or move on.
 Rules: cite numbers from the evidence in why_here; never invent places, brands or statistics;
 inspired_by must only contain names returned by inspect_gap; respect the owner's notes."""
 
+MAX_LIVE_TESTS = 3
+MAX_FAN_CHECKS = 4
+
 CONCEPT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "test_category",
+            "description": "Test a business category that is not in the gap table, live against Qloo: places inside the walk, "
+                           "what the surroundings predict, places locals love versus the city's, and a gap score on the same "
+                           "scale as the table. At most 3 per survey.",
+            "parameters": {
+                "type": "object",
+                "properties": {"category": {"type": "string", "description": "A storefront category, e.g. 'bakery' or 'sports bar'"}},
+                "required": ["category"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fan_taste",
+            "description": "Live Qloo cross-domain check: brands and artists that people near the site who love a category also "
+                           "love, and which of them belong to the area's own signature taste.",
+            "parameters": {
+                "type": "object",
+                "properties": {"category": {"type": "string", "description": "A genre from the gap table or a tested category"}},
+                "required": ["category"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -293,7 +342,7 @@ CONCEPT_TOOLS = [
             "description": "Competitors within walking distance (with review praise and complaints) and locals' favorite places of one genre, plus the design DNA of those favorites.",
             "parameters": {
                 "type": "object",
-                "properties": {"genre": {"type": "string", "description": "Genre exactly as written in the gap table"}},
+                "properties": {"genre": {"type": "string", "description": "Genre exactly as written in the gap table or a test result"}},
                 "required": ["genre"],
             },
         },
@@ -320,7 +369,7 @@ CONCEPT_TOOLS = [
                             "type": "object",
                             "properties": {
                                 "name": {"type": "string", "description": "A memorable venue name"},
-                                "genre": {"type": "string", "description": "Genre exactly as written in the gap table"},
+                                "genre": {"type": "string", "description": "Genre exactly as written in the gap table or a test result"},
                                 "one_liner": {"type": "string"},
                                 "for_whom": {"type": "string"},
                                 "price_level": {"type": "integer", "minimum": 1, "maximum": 4},
@@ -341,10 +390,12 @@ CONCEPT_TOOLS = [
 ]
 
 
-async def agent_concepts(llm: LLM, run: RunState, emit: Emit) -> list[dict]:
+async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> list[dict]:
+    fan_checks = 0
+
     async def inspect(args: dict) -> dict:
         row = gap_for(run, args.get("genre", ""))
-        return inspect_payload(run, row) if row else {"error": "Unknown genre. Use one from the gap table."}
+        return inspect_payload(run, row) if row else {"error": "Unknown genre. Use one from the gap table or a test result."}
 
     async def taste(_: dict) -> dict:
         return {
@@ -354,6 +405,65 @@ async def agent_concepts(llm: LLM, run: RunState, emit: Emit) -> list[dict]:
             "crowd": describe_age(run.demographics),
         }
 
+    async def refuse(message: str) -> dict:
+        await emit("finding", {"text": message})
+        return {"error": message}
+
+    async def resolve(query: str) -> dict | None:
+        row = gap_for(run, query)
+        if row:
+            return {"id": row["genre_id"], "name": row["genre"]}
+        return await engine.find_genre(q, run.genres, query)
+
+    async def test_category(args: dict) -> dict:
+        query = str(args.get("category") or "").strip()[:80]
+        try:
+            genre = await engine.find_genre(q, run.genres, query) if query else None
+        except QlooError as exc:
+            return await refuse(f"Qloo lookup for '{query}' failed: {exc}")
+        if not genre:
+            return await refuse(f"Qloo has no storefront category matching '{query}'.")
+        existing = gap_for(run, genre["name"])
+        if existing:
+            return {"already_measured": True, **gap_summary(existing)}
+        if not scoring.matches_focus(genre["name"], run.site.focus):
+            return await refuse(f"{genre['name']} is outside the owner's focus.")
+        if len(run.explored) >= MAX_LIVE_TESTS:
+            return await refuse(f"Live test budget used ({MAX_LIVE_TESTS} per survey).")
+        try:
+            row = await engine.probe_genre(q, run.catchment, genre, run.gaps)
+        except QlooError as exc:
+            return await refuse(f"Qloo test of {genre['name']} failed: {exc}")
+        row["source"] = "agent"
+        run.explored.append(row)
+        await emit("explored", {"row": public_gap(row)})
+        return {"tested_live": True, **gap_summary(row), "evidence": gap_evidence(row, run.site.minutes)}
+
+    async def fan_taste(args: dict) -> dict:
+        nonlocal fan_checks
+        query = str(args.get("category") or "").strip()[:80]
+        if fan_checks >= MAX_FAN_CHECKS:
+            return await refuse(f"Fan taste budget used ({MAX_FAN_CHECKS} per survey).")
+        try:
+            genre = await resolve(query) if query else None
+            if not genre:
+                return await refuse(f"Qloo has no storefront category matching '{query}'.")
+            fan_checks += 1
+            fans = await fans_of(q, run, genre["id"])
+        except QlooError as exc:
+            return await refuse(f"Qloo fan taste for '{query}' failed: {exc}")
+        brands = [b["name"] for b in fans["brands"]]
+        artists = [a["name"] for a in fans["artists"]]
+        signature = {e["name"] for e in run.taste.get("distinctive_brands", []) + run.taste.get("distinctive_artists", [])}
+        shared = [name for name in brands + artists if name in signature]
+        text = f"Local fans of {genre['name']} also love {', '.join(brands[:4]) or 'no brands Qloo knows'}"
+        text += f"; artists {', '.join(artists[:3])}." if artists else "."
+        if shared:
+            text += f" Shared with the area's signature taste: {', '.join(shared)}."
+        await emit("finding", {"text": text})
+        return {"category": genre["name"], "local_fans_also_love": {"brands": brands, "artists": artists},
+                "shared_with_area_signature": shared}
+
     async def on_call(name: str, args: dict, thought: str | None) -> None:
         if name != "submit_concepts":
             await emit("agent", {"tool": name, "args": args, "thought": thought})
@@ -362,8 +472,9 @@ async def agent_concepts(llm: LLM, run: RunState, emit: Emit) -> list[dict]:
         CONCEPT_SYSTEM,
         "Evidence pack:\n" + json.dumps(evidence_brief(run), ensure_ascii=False),
         CONCEPT_TOOLS,
-        {"inspect_gap": inspect, "local_taste": taste},
+        {"inspect_gap": inspect, "local_taste": taste, "test_category": test_category, "fan_taste": fan_taste},
         final_tool="submit_concepts",
+        max_steps=10,
         on_call=on_call,
     )
     return clean_concepts(run, (result or {}).get("concepts", []))
@@ -419,7 +530,7 @@ async def analyze_site(
             concepts, mode = [], "rules"
             if llm.enabled:
                 try:
-                    concepts, mode = await agent_concepts(llm, run, emit), "agent"
+                    concepts, mode = await agent_concepts(llm, q, run, emit), "agent"
                 except Exception as exc:  # LLM outages must not break the demo
                     log.warning("Concept agent failed; falling back to evidence rules", exc_info=True)
                     await emit("notice", {"message": f"LLM unavailable ({type(exc).__name__}); using evidence rules."})
@@ -442,20 +553,31 @@ async def analyze_site(
 
 
 DESIGN_SYSTEM = """You are Blank Space's concept designer. Turn a business concept into a design brief for an empty storefront.
-Ground every choice in the evidence: design DNA of the locals' favorite places, local artists, nearby places and local brands.
+Ground every choice in the evidence: design DNA of the locals' favorite places, what local fans of this category also
+love, local artists, nearby places and local brands.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), hours, music {direction, artists (list, only from local_artists)},
 partners (list of {name, why}; name only from nearby_places or partner_brands), launch (string), image_prompt
 (a photorealistic interior description with no text, logos or people's faces)."""
 
 
-async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) -> dict:
+async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int, q: QlooClient | None = None) -> dict:
     concept = run.concepts[index]
     row = gap_for(run, concept["genre"])
     dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
-    local_artists = [a["name"] for a in run.taste.get("distinctive_artists", []) + run.taste.get("artists", [])]
+    fans: dict = {"brands": [], "artists": []}
+    if row and q is not None:
+        try:
+            fans = await fans_of(q, run, row["genre_id"])
+        except QlooError:
+            log.warning("Fan taste lookup failed; designing from the area's taste only", exc_info=True)
+    fan_artists = [a["name"] for a in fans["artists"]]
+    area_artists = [a["name"] for a in run.taste.get("distinctive_artists", []) + run.taste.get("artists", [])]
+    # Artists loved by people near the site who love this category come first; the area's favorites fill in.
+    local_artists = list(dict.fromkeys(fan_artists + area_artists))
     nearby = [p.get("name") for p in run.block if p.get("name")]
-    brand_cards = list({b["name"]: b for b in run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])}.values())
+    area_brands = run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])
+    brand_cards = list({b["name"]: b for b in area_brands + fans["brands"]}.values())
     fitting_brands = [b["name"] for b in scoring.partner_brands(brand_cards, concept["genre"])]
     design: dict[str, Any] = {}
     mode = "rules"
@@ -469,6 +591,7 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) 
                 "local_artists": local_artists[:15],
                 "nearby_places": nearby[:40],
                 "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
+                "local_fans_of_this_category_also_love": {"brands": [b["name"] for b in fans["brands"]], "artists": fan_artists},
                 "partner_brands": fitting_brands[:8],
                 "taste_cues": run.cues,
                 "crowd": describe_age(run.demographics),
@@ -478,7 +601,7 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) 
             log.warning("Design brief LLM call failed; using evidence rules", exc_info=True)
             design = {}
     if not design:
-        design = rule_design(run, concept, dna, local_artists, fitting_brands)
+        design = rule_design(run, concept, dna, local_artists, fitting_brands, fan_led=bool(fan_artists))
         mode = "rules"
     music = design.get("music") or {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
@@ -530,7 +653,9 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
     return [p["name"] for p in candidates[:limit]]
 
 
-def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str]) -> dict:
+def rule_design(
+    run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str], fan_led: bool = False,
+) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
     minutes = run.site.minutes
@@ -557,7 +682,13 @@ def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], par
         "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),
         "hours": "To be set from local foot traffic",
-        "music": {"direction": "Built from artists that over-index locally", "artists": artists[:5]},
+        "music": {
+            "direction": (
+                f"What local {scoring.genre_title(concept['genre'])} fans also listen to"
+                if fan_led else "Built from artists that over-index locally"
+            ),
+            "artists": artists[:5],
+        },
         "partners": partners,
         "launch": f"Opening night with a nod to the neighborhood's love of {cue}." if cue else "Opening night with local partners.",
         "image_prompt": None,

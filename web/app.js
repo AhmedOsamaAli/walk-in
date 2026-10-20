@@ -559,6 +559,12 @@ function handle(event, data) {
     case "agent":
       logLine(agentText(data), "agent");
       break;
+    case "finding":
+      logLine(data.text, "finding");
+      break;
+    case "explored":
+      appendGap(data.row);
+      break;
     case "block":
       renderBlock(data);
       break;
@@ -623,6 +629,8 @@ function onStatus({ step, state: phase, label }) {
 function agentText({ tool, args }) {
   if (tool === "inspect_gap") return `Agent inspects the ${args?.genre || "unknown"} gap: competitors, favorites, design DNA`;
   if (tool === "local_taste") return "Agent reads local brands, artists and the crowd";
+  if (tool === "test_category") return `Agent tests a hunch live on Qloo: ${args?.category || "a new category"}`;
+  if (tool === "fan_taste") return `Agent asks Qloo what local fans of ${args?.category || "this category"} also love`;
   return `Agent calls ${tool}`;
 }
 
@@ -746,6 +754,18 @@ function renderGaps(rows) {
   toggleGap(0);
 }
 
+// A category the agent tested live joins the table on the same scale, marked as such.
+function appendGap(row) {
+  if (!row) return;
+  const box = $("#gaps");
+  const i = state.gaps.push(row) - 1;
+  box.insertAdjacentHTML("beforeend", gapHtml(row, i));
+  const item = box.lastElementChild;
+  $(".gap-row", item).addEventListener("click", () => toggleGap(i));
+  $$("[data-count]", item).forEach(countUp);
+  logLine(`Tested live: ${row.genre} scores ${row.gap_score} · ${row.nearby_count} inside the walk, ~${row.expected_nearby} typical`, "finding");
+}
+
 function gapWhy(gap) {
   const parts = [];
   if (gap.lift >= 0.5) parts.push("loved more here than in the areas around");
@@ -775,13 +795,15 @@ function gapHtml(gap, i) {
   const around = gap.ref_rank == null ? "" : gap.ref_rank >= 51 ? " · 50+ around" : ` · #${Number(gap.ref_rank).toFixed(0)} around`;
   const expected = gap.expected_nearby != null ? ` · ~${Number(gap.expected_nearby).toFixed(1)} typical` : "";
   const flag = gap.evidence === "ok" ? "" : `<small class="mono flag">${gap.evidence === "thin" ? "thin data" : "atypical"}</small>`;
+  const live = gap.source === "agent" ? '<small class="mono flag live">tested live by agent</small>' : "";
+  const rankHere = gap.demand_rank >= 51 ? "50+" : gap.demand_rank;
   const favoritesTitle = local ? `Places locals love more than the city does${median}` : "Locals' favorites (the city's famous spots)";
   return `
     <li class="gap${i === 0 ? " first" : ""}${gap.evidence !== "ok" ? " thin" : ""}" style="--i:${i}">
       <button class="gap-row" type="button" data-i="${i}" aria-expanded="false">
         <span class="gap-score" data-count="${Number(gap.gap_score) || 0}">0</span>
         <span>
-          <span class="gap-name">${esc(gap.genre)}<small class="mono muted">#${esc(gap.demand_rank)} here${esc(around)}</small>${flag}</span>
+          <span class="gap-name">${esc(gap.genre)}<small class="mono muted">#${esc(rankHere)} here${esc(around)}</small>${flag}${live}</span>
           <span class="gap-why serif">${esc(gapWhy(gap))}</span>
           <span class="gap-bars">
             <span class="meter"><span class="mono">Inside walk · ${esc(gap.nearby_count)}${gap.nearby_capped ? "+" : ""}${esc(expected)}</span><span class="pips">${pips || '<span class="mono muted">none</span>'}</span></span>

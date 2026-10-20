@@ -183,7 +183,7 @@ async def design(request: Request, body: DesignRequest) -> dict:
     if not request.app.state.design_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many design requests. Try again later.")
     services: Services = request.app.state.services
-    result = await agent.design_concept(services.llm, services.images, run_state, body.index)
+    result = await agent.design_concept(services.llm, services.images, run_state, body.index, services.qloo)
     run_state.designs[body.index] = result
     return result
 

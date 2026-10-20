@@ -100,71 +100,130 @@ def test_full_survey_in_rules_mode():
         partner_names = [p["name"] for p in sheet["partners"]]
         assert partner_names[-1] == "Riverside Cider Co"  # a maker, not the media brand or team that over-index more
         assert not {"Block News", "Local Sports Team"} & set(partner_names)
+        # The soundtrack starts from what local seafood fans listen to, then the area's own favorites.
+        assert sheet["music"]["artists"][:3] == ["Sea Shanty Crew", "Local Jazz Trio", "Block Party Band"]
+        assert sheet["music"]["direction"] == "What local Seafood fans also listen to"
         assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet  # cached
 
         assert client.post("/api/design", json={"run_id": "nope", "index": 0}).status_code == 404
 
 
-def test_agent_mode_grounds_what_the_llm_says():
+def tool_call(call_id: str, name: str, args: dict) -> dict:
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+
+
+DESIGN_REPLY = {
+    "name": "Tide & Table", "tagline": "Oysters on the corner", "concept_statement": "Because locals travel.",
+    "interior": {"mood": "lively", "materials": ["tile"], "lighting": "warm", "layout": "bar", "seating": "stools"},
+    "offer": ["Oysters", "Crudo"], "price_level": 3, "hours": "5pm-11pm",
+    "music": {"direction": "local jazz", "artists": ["Local Jazz Trio", "Invented Artist", "Sea Shanty Crew"]},
+    "partners": [{"name": "Block Place 1", "why": "next door"}, {"name": "Block News", "why": "press"},
+                 {"name": "Riverside Cider Co", "why": "cider pairing"}, {"name": "Tide Magazine", "why": "press"},
+                 {"name": "Invented Partner", "why": "?"}],
+    "launch": "Oyster night", "image_prompt": "a raw bar",
+}
+
+
+def scripted_llm(agent_steps: list[list[dict]]) -> LLM:
+    """An OpenAI-compatible endpoint that plays the agent's tool calls step by step and answers the JSON prompts."""
     def completion(message: dict) -> dict:
         return {"id": "x", "object": "chat.completion", "created": 0, "model": "test-model",
                 "choices": [{"index": 0, "finish_reason": "stop", "message": message}]}
-
-    def call(call_id: str, name: str, args: dict) -> dict:
-        return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         system = body["messages"][0]["content"]
         if body.get("tools"):
-            if not any(m.get("role") == "tool" for m in body["messages"]):
-                return httpx.Response(200, json=completion({"role": "assistant", "content": None, "tool_calls": [
-                    call("c1", "inspect_gap", {"genre": "Seafood"}), call("c2", "local_taste", {}),
-                ]}))
-            return httpx.Response(200, json=completion({"role": "assistant", "content": None, "tool_calls": [
-                call("c3", "submit_concepts", {"concepts": [
-                    {"name": "Tide & Table", "genre": "Seafood", "one_liner": "Raw bar for the block",
-                     "why_here": ["Seafood ranks #1 here"], "signature": ["Oysters"], "price_level": 3,
-                     "inspired_by": ["Harbor Oyster Bar", "Invented Place"]},
-                    {"name": "Ghost Concept", "genre": "Not A Genre", "one_liner": "x", "why_here": [], "signature": []},
-                    {"name": "Little Cellar", "genre": "Wine Bar", "one_liner": "Natural wine", "why_here": [], "signature": []},
-                ]}),
-            ]}))
+            step = sum(1 for m in body["messages"] if m.get("role") == "assistant")
+            return httpx.Response(200, json=completion({"role": "assistant", "content": None, "tool_calls": agent_steps[step]}))
         if system.startswith("You are a retail strategy consultant"):
             return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(
                 {"concepts": [{"name": "Generic Cafe", "genre": "Cafe", "one_liner": "Coffee for everyone"}]})}))
         if system.startswith("You are Blank Space's concept designer"):
-            return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps({
-                "name": "Tide & Table", "tagline": "Oysters on the corner", "concept_statement": "Because locals travel.",
-                "interior": {"mood": "lively", "materials": ["tile"], "lighting": "warm", "layout": "bar", "seating": "stools"},
-                "offer": ["Oysters", "Crudo"], "price_level": 3, "hours": "5pm-11pm",
-                "music": {"direction": "local jazz", "artists": ["Local Jazz Trio", "Invented Artist"]},
-                "partners": [{"name": "Block Place 1", "why": "next door"}, {"name": "Block News", "why": "press"},
-                             {"name": "Riverside Cider Co", "why": "cider pairing"}, {"name": "Invented Partner", "why": "?"}],
-                "launch": "Oyster night", "image_prompt": "a raw bar",
-            })}))
+            return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(DESIGN_REPLY)}))
         return httpx.Response(500, json={"error": {"message": "unexpected request"}})
 
-    llm = LLM("test-key", "https://llm.test/v1/", "test-model",
-              http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
-    with make_client(llm=llm) as client:
+    return LLM("test-key", "https://llm.test/v1/", "test-model",
+               http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+def test_agent_investigates_live_and_is_grounded():
+    investigate = [
+        tool_call("c1", "inspect_gap", {"genre": "Seafood"}),
+        tool_call("c2", "local_taste", {}),
+        tool_call("c3", "test_category", {"category": "ramen"}),
+        tool_call("c4", "test_category", {"category": "board game cafe"}),
+        tool_call("c5", "test_category", {"category": "art museum"}),
+        tool_call("c6", "test_category", {"category": "seafood"}),
+        tool_call("c7", "fan_taste", {"category": "Seafood"}),
+        tool_call("c8", "fan_taste", {"category": "Brunch"}),
+    ]
+    submit = [tool_call("c9", "submit_concepts", {"concepts": [
+        {"name": "Tide & Table", "genre": "Seafood", "one_liner": "Raw bar for the block",
+         "why_here": ["Seafood ranks #1 here"], "signature": ["Oysters"], "price_level": 3,
+         "inspired_by": ["Harbor Oyster Bar", "Invented Place"]},
+        {"name": "Ghost Concept", "genre": "Not A Genre", "one_liner": "x", "why_here": [], "signature": []},
+        {"name": "Slurp", "genre": "Ramen", "one_liner": "Ramen nobody nearby serves", "why_here": [], "signature": []},
+        {"name": "Little Cellar", "genre": "Wine Bar", "one_liner": "Natural wine", "why_here": [], "signature": []},
+    ]})]
+    qloo = FakeQloo()
+    with make_client(llm=scripted_llm([investigate, submit]), qloo=qloo) as client:
         events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
         names = [event for event, _ in events]
         assert "error" not in names and "notice" not in names
-        tools_used = [data["tool"] for event, data in events if event == "agent"]
-        assert tools_used == ["inspect_gap", "local_taste"]
+        assert [data["tool"] for event, data in events if event == "agent"] == [
+            "inspect_gap", "local_taste", "test_category", "test_category", "test_category", "test_category",
+            "fan_taste", "fan_taste",
+        ]
+
+        explored = {data["row"]["genre"]: data["row"] for event, data in events if event == "explored"}
+        assert list(explored) == ["Ramen", "Board Game Cafe"]  # art museum is not a storefront; seafood is already measured
+        ramen, board_games = explored["Ramen"], explored["Board Game Cafe"]
+        assert ramen["source"] == "agent" and ramen["demand_rank"] == 9 and ramen["ref_rank"] == 51
+        assert ramen["nearby_count"] == 0 and ramen["evidence"] == "ok"
+        assert board_games["demand_rank"] == 51 and board_games["ref_rank"] is None
+        assert ramen["gap_score"] > board_games["gap_score"]  # locals do not rank board game cafes at all
+        assert sum(1 for r in qloo.requests if r.get("path") == "/v2/tags") == 2
+
+        findings = [data["text"] for event, data in events if event == "finding"]
+        assert any("art museum" in text for text in findings)
+        assert (
+            "Local fans of Seafood also love Riverside Cider Co, Tide Magazine; artists Sea Shanty Crew, Local Jazz Trio. "
+            "Shared with the area's signature taste: Riverside Cider Co, Local Jazz Trio."
+        ) in findings
+        assert "Local fans of Brunch also love Global Coffee; artists Global Pop Star." in findings
 
         concepts = first(events, "concepts")
         assert concepts["mode"] == "agent"
-        assert [c["genre"] for c in concepts["concepts"]] == ["Seafood", "Wine Bar"]
+        assert [c["genre"] for c in concepts["concepts"]] == ["Seafood", "Ramen", "Wine Bar"]
         assert concepts["concepts"][0]["inspired_by"] == ["Harbor Oyster Bar"]
+        assert concepts["concepts"][1]["evidence"][0] == "Locals rank Ramen #9 here, versus a median outside the top 50 in same-size areas around."
         assert first(events, "baseline")["concepts"][0]["name"] == "Generic Cafe"
 
         run_id = first(events, "run")["run_id"]
         sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
         assert sheet["mode"] == "agent"
-        assert sheet["music"]["artists"] == ["Local Jazz Trio"]
+        assert sheet["music"]["artists"] == ["Local Jazz Trio", "Sea Shanty Crew"]  # fan artists are allowed, invented ones not
         assert [p["name"] for p in sheet["partners"]] == ["Block Place 1", "Riverside Cider Co"]
+        assert client.post("/api/design", json={"run_id": run_id, "index": 1}).json()["dna"]  # designs a tested genre
+
+
+def test_agent_live_tests_are_budgeted(monkeypatch):
+    from app import agent
+
+    monkeypatch.setattr(agent, "MAX_LIVE_TESTS", 1)
+    investigate = [
+        tool_call("c1", "test_category", {"category": "ramen"}),
+        tool_call("c2", "test_category", {"category": "board game cafe"}),
+    ]
+    submit = [tool_call("c3", "submit_concepts", {"concepts": [
+        {"name": "Slurp", "genre": "Ramen", "one_liner": "Ramen", "why_here": [], "signature": []},
+    ]})]
+    with make_client(llm=scripted_llm([investigate, submit])) as client:
+        events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
+        assert [data["row"]["genre"] for event, data in events if event == "explored"] == ["Ramen"]
+        assert any("budget used" in data["text"] for event, data in events if event == "finding")
+        assert [c["genre"] for c in first(events, "concepts")["concepts"]] == ["Ramen"]
 
 
 def test_qloo_failure_is_reported_and_the_stream_still_ends():
