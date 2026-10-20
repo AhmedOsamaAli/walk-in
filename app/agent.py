@@ -151,6 +151,14 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
     return cleaned[:3]
 
 
+def short_label(label: str) -> str:
+    """'Upper East Side, Manhattan' -> 'Upper East Side'; falls back to a neutral word for raw pins."""
+    first = (label or "").split(",")[0].strip()
+    if not first or first.lower() in {"selected site", "dropped pin"} or any(ch.isdigit() for ch in first[:3]):
+        return "Corner"
+    return first[:32]
+
+
 def gap_evidence(row: dict) -> list[str]:
     nearby = f"{row['nearby_count']}{'+' if row['nearby_capped'] else ''}"
     lines = [
@@ -172,7 +180,7 @@ def rule_concepts(run: RunState) -> list[dict]:
         complaints = [c for comp in row["competitors"] for c in comp.get("complaints", [])][:3]
         km = row["median_favorite_km"]
         concepts.append({
-            "name": f"The Neighborhood {row['genre']}",
+            "name": f"{short_label(run.site.label)} {row['genre']}",
             "genre": row["genre"],
             "genre_id": row["genre_id"],
             "gap_score": row["gap_score"],

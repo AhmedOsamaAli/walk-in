@@ -20,6 +20,8 @@ from .qloo import QlooClient, QlooError
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
 RUNS_PER_HOUR = 20
+DESIGNS_PER_HOUR = 40
+HEATMAPS_PER_HOUR = 200
 
 PRESETS = [
     {"id": "ues", "label": "Upper East Side, Manhattan", "lat": 40.7736, "lon": -73.9566,
@@ -97,6 +99,8 @@ async def lifespan(app: FastAPI):
     app.state.llm = LLM(settings.llm_api_key, settings.llm_base_url, settings.llm_model, settings.image_model)
     app.state.runs = agent.RunStore()
     app.state.limiter = RateLimiter(RUNS_PER_HOUR, 3600)
+    app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
+    app.state.heatmap_limiter = RateLimiter(HEATMAPS_PER_HOUR, 3600)
     app.state.geocoder = Geocoder()
     yield
     await app.state.qloo.aclose()
@@ -183,6 +187,8 @@ async def run(
 
 @app.post("/api/design")
 async def design(request: Request, body: DesignRequest) -> dict:
+    if not request.app.state.design_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many design requests. Try again later.")
     state = request.app.state.runs.get(body.run_id)
     if not state or not (0 <= body.index < len(state.concepts)):
         raise HTTPException(404, "Run or concept not found. Run the site again.")
@@ -196,6 +202,8 @@ async def heatmap(
     lon: float = Query(..., ge=-180, le=180),
     tag: str = Query(..., min_length=10, max_length=120, pattern=r"^urn:tag:[a-z0-9_:]+$"),
 ) -> dict:
+    if not request.app.state.heatmap_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many map requests. Try again later.")
     try:
         return {"cells": await engine.genre_heatmap(request.app.state.qloo, lat, lon, tag)}
     except QlooError as exc:
@@ -210,4 +218,13 @@ async def geocode(request: Request, q: str = Query(..., min_length=3, max_length
         raise HTTPException(502, "Address search is unavailable right now.") from exc
 
 
-app.mount("/", StaticFiles(directory=ROOT / "web", html=True), name="web")
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that browsers must revalidate, so a redeploy is picked up immediately."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", RevalidatingStaticFiles(directory=ROOT / "web", html=True), name="web")

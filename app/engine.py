@@ -150,6 +150,7 @@ async def genre_heatmap(q: QlooClient, lat: float, lon: float, tag: str, radius:
         {
             "lat": c["location"]["latitude"],
             "lon": c["location"]["longitude"],
+            "geohash": c["location"].get("geohash"),
             "affinity": round(c["query"].get("affinity_rank", c["query"].get("affinity", 0)), 3),
         }
         for c in cells

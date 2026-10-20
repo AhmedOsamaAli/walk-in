@@ -3,127 +3,209 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Blank Space: design the business a block is missing</title>
-  <meta name="description" content="Drop a pin on an empty storefront. Blank Space reads what the people within a 10-minute walk love, finds what is missing, and designs the business that fits, using Qloo's taste graph." />
+  <title>Blank Space: what should this empty storefront become?</title>
+  <meta name="description" content="Drop a pin on a vacant storefront. Blank Space reads what the people within a ten-minute walk love, finds what the block is missing, and designs the business that fits. Taste data by Qloo." />
+  <meta name="theme-color" content="#f6f6f3" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' fill='none' stroke='%23000' stroke-width='3'/%3E%3Crect x='3' y='17' width='26' height='12' fill='%230000ff'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Fraunces:ital,opsz,wght@0,9..144,100..400;1,9..144,100..400&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">Blank Space</span>
-    </div>
-    <p class="tagline">Drop a pin on an empty storefront. See what the people within a 10-minute walk are missing.</p>
-    <span class="powered">Taste data by <a href="https://www.qloo.com" target="_blank" rel="noopener">Qloo</a></span>
+  <header class="bar">
+    <a class="mark" href="/" aria-label="Blank Space, start over">
+      <span class="mark-square" aria-hidden="true"><i id="mark-fill"></i></span>
+      <span class="mark-word">Blank Space</span>
+    </a>
+    <nav class="bar-nav mono" aria-label="Survey sections">
+      <a href="#s-log" data-nav="s-log">01 Log</a>
+      <a href="#s-block" data-nav="s-block">02 Block</a>
+      <a href="#s-gaps" data-nav="s-gaps">03 Gaps</a>
+      <a href="#s-concepts" data-nav="s-concepts">04 Concepts</a>
+      <a href="#s-taste" data-nav="s-taste">05 Taste</a>
+    </nav>
+    <span class="bar-meta mono">Taste data <a href="https://www.qloo.com" target="_blank" rel="noopener">Qloo</a></span>
   </header>
 
-  <main class="layout">
-    <aside class="panel" id="panel">
-      <section class="card" id="site-card">
-        <h2>1. Choose a site</h2>
-        <div class="search">
-          <input id="search-input" type="search" placeholder="Search an address or neighborhood" autocomplete="off" aria-label="Search an address" />
-          <ul id="search-results" class="search-results" hidden></ul>
-        </div>
-        <p class="hint">Or click anywhere on the map, or try one of these:</p>
-        <div id="presets" class="chips"></div>
+  <main class="stage">
+    <article class="sheet" id="sheet">
 
-        <div id="site-selected" class="site-selected" hidden>
-          <span class="pin-dot" aria-hidden="true"></span>
+      <section id="s-brief" class="sec brief">
+        <p class="eyebrow mono"><b>00</b> Site survey system</p>
+        <h1 class="display headline" aria-label="What should this empty storefront become?">
+          <span class="line" style="--i:0"><span>What should</span></span>
+          <span class="line" style="--i:1"><span>this empty</span></span>
+          <span class="line" style="--i:2"><span>storefront</span></span>
+          <span class="line" style="--i:3"><span class="ink-blue">become?</span></span>
+        </h1>
+        <p class="lede serif">Drop a pin on a vacant unit. Blank Space reads what the people within a ten-minute walk love, what they leave the block for, and designs the business that keeps them here.</p>
+
+        <form class="capsule" id="search-form" role="search" autocomplete="off">
+          <label class="sr-only" for="search">Search an address, street or neighborhood</label>
+          <input id="search" type="search" placeholder="Search an address or neighborhood" aria-controls="search-results" aria-autocomplete="list" />
+          <button class="capsule-go" type="submit" aria-label="Search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M13 6l6 6-6 6" /></svg>
+          </button>
+          <ul id="search-results" class="results" role="listbox" hidden></ul>
+        </form>
+        <p class="hint mono">or click anywhere on the map</p>
+
+        <div class="index">
+          <div class="index-head mono"><span>Index of sites</span><span>Lat / Lon</span></div>
+          <ol id="presets" class="index-list"></ol>
+        </div>
+
+        <div class="brief-controls">
+          <div class="chosen" id="chosen" hidden>
+            <span class="mono label">Site</span>
+            <strong id="chosen-label"></strong>
+            <span class="mono muted" id="chosen-coords"></span>
+          </div>
+
+          <fieldset class="focus">
+            <legend class="mono label">Business type</legend>
+            <div class="seg" role="radiogroup">
+              <label><input type="radio" name="focus" value="any" checked /><span>Anything</span></label>
+              <label><input type="radio" name="focus" value="food_drink" /><span>Food &amp; drink</span></label>
+              <label><input type="radio" name="focus" value="retail" /><span>Retail</span></label>
+              <label><input type="radio" name="focus" value="leisure" /><span>Leisure</span></label>
+            </div>
+          </fieldset>
+
+          <details class="notes">
+            <summary class="mono">+ Owner constraints</summary>
+            <textarea id="notes" rows="2" maxlength="300" placeholder="e.g. no alcohol, 60 m² unit, mid-range prices"></textarea>
+          </details>
+
+          <button id="go" class="go" type="button" disabled>
+            <span>Survey this site</span>
+            <i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6" /></svg></i>
+          </button>
+        </div>
+      </section>
+
+      <section id="s-site" class="sec site-head" hidden>
+        <div class="site-row">
           <div>
-            <strong id="site-label"></strong>
-            <small id="site-coords"></small>
+            <p class="eyebrow mono"><b>Site</b> under survey</p>
+            <h2 class="site-title" id="site-title"></h2>
+            <p class="mono muted" id="site-coords"></p>
+          </div>
+          <button class="ghost mono" id="new-survey" type="button">New survey</button>
+        </div>
+      </section>
+
+      <section id="s-log" class="sec" hidden>
+        <header class="sec-head">
+          <span class="sec-no mono">01</span>
+          <h2 class="sec-title">Survey log</h2>
+        </header>
+        <ol class="log mono" id="log" aria-live="polite"></ol>
+        <p class="log-meta mono" id="log-meta"></p>
+      </section>
+
+      <section id="s-block" class="sec" hidden>
+        <header class="sec-head">
+          <span class="sec-no mono">02</span>
+          <h2 class="sec-title">The block today</h2>
+          <p class="sec-note serif">Everything Qloo knows within a ten-minute walk.</p>
+        </header>
+        <div class="stats" id="block-stats"></div>
+        <h3 class="label mono">Most common here</h3>
+        <div class="tags" id="block-genres"></div>
+        <div class="voices">
+          <div class="voice">
+            <h3 class="label mono">What reviews praise</h3>
+            <ul class="praise" id="praise"></ul>
+          </div>
+          <div class="voice">
+            <h3 class="label mono">What reviews complain about</h3>
+            <ul class="complaints" id="complaints"></ul>
           </div>
         </div>
+        <div class="momentum" id="momentum"></div>
+      </section>
 
-        <fieldset class="focus">
-          <legend>What kind of business?</legend>
-          <div class="segmented" role="radiogroup">
-            <label><input type="radio" name="focus" value="any" checked /><span>Anything</span></label>
-            <label><input type="radio" name="focus" value="food_drink" /><span>Food &amp; drink</span></label>
-            <label><input type="radio" name="focus" value="retail" /><span>Retail</span></label>
-            <label><input type="radio" name="focus" value="leisure" /><span>Leisure</span></label>
+      <section id="s-gaps" class="sec" hidden>
+        <header class="sec-head">
+          <span class="sec-no mono">03</span>
+          <h2 class="sec-title">What's missing</h2>
+          <p class="sec-note serif">Place types the locals love, ranked by how underserved they are within walking distance. Open one to see where people go instead.</p>
+        </header>
+        <div class="gap-key mono">
+          <span><i class="k-score"></i>Gap score</span>
+          <span><i class="k-supply"></i>Within a 10-min walk</span>
+          <span><i class="k-far"></i>Locals' favorites beyond it</span>
+        </div>
+        <ol class="gaps" id="gaps"></ol>
+      </section>
+
+      <section id="s-concepts" class="sec" hidden>
+        <header class="sec-head">
+          <span class="sec-no mono">04</span>
+          <h2 class="sec-title">What it should become</h2>
+          <p class="sec-note serif" id="concepts-note"></p>
+        </header>
+        <div class="posters" id="posters"></div>
+        <div class="without" id="without" hidden></div>
+      </section>
+
+      <section id="s-taste" class="sec" hidden>
+        <header class="sec-head">
+          <span class="sec-no mono">05</span>
+          <h2 class="sec-title">The wider taste</h2>
+          <p class="sec-note serif">What this neighborhood over-indexes on compared with the rest of the city.</p>
+        </header>
+        <div class="marquee" aria-hidden="true"><div class="marquee-track" id="marquee"></div></div>
+        <div class="taste-grid">
+          <div>
+            <h3 class="label mono">Brands</h3>
+            <ol class="names" id="brands"></ol>
           </div>
-        </fieldset>
-        <label class="notes">
-          <span>Owner notes (optional)</span>
-          <textarea id="notes" rows="2" maxlength="300" placeholder="e.g. no alcohol, small 60 m² unit, mid-range prices"></textarea>
-        </label>
-        <button id="run-btn" class="primary" disabled>Read this block</button>
+          <div>
+            <h3 class="label mono">Artists</h3>
+            <ol class="names" id="artists"></ol>
+          </div>
+        </div>
+        <div class="crowd-wrap">
+          <h3 class="label mono">Crowd <span class="muted" id="crowd-note"></span></h3>
+          <div class="crowd" id="crowd"></div>
+        </div>
+        <h3 class="label mono">Local passions, not storefronts</h3>
+        <div class="tags" id="cues"></div>
       </section>
 
-      <section class="card" id="timeline-card" hidden>
-        <h2>2. The agent at work</h2>
-        <ol id="timeline" class="timeline"></ol>
-        <p id="run-meta" class="meta"></p>
-      </section>
-
-      <section class="card" id="block-card" hidden>
-        <h2>The block today</h2>
-        <div id="block-stats" class="stats"></div>
-        <h3>Most common here</h3>
-        <div id="block-genres" class="chips static"></div>
-        <h3>What reviews praise nearby</h3>
-        <div id="block-praise" class="chips static good"></div>
-        <h3>What reviews complain about</h3>
-        <div id="block-complaints" class="chips static bad"></div>
-        <div id="block-momentum" class="momentum"></div>
-      </section>
-
-      <section class="card" id="gaps-card" hidden>
-        <h2>3. What's missing</h2>
-        <p class="hint">Genres the locals love, ranked by how underserved they are within a 10-minute walk.</p>
-        <div id="gaps" class="gaps"></div>
-      </section>
-
-      <section class="card" id="concepts-card" hidden>
-        <h2>4. What this space should become</h2>
-        <p id="concepts-mode" class="hint"></p>
-        <div id="concepts" class="concepts"></div>
-        <details id="baseline" class="baseline" hidden>
-          <summary>What a language model suggests with no data</summary>
-          <div id="baseline-list"></div>
-        </details>
-      </section>
-
-      <section class="card" id="taste-card" hidden>
-        <h2>The neighborhood's wider taste</h2>
-        <p id="crowd" class="crowd"></p>
-        <h3>Brands that over-index here</h3>
-        <div id="taste-brands" class="entities"></div>
-        <h3>Artists that over-index here</h3>
-        <div id="taste-artists" class="entities"></div>
-        <h3>Local passions (not storefronts)</h3>
-        <div id="taste-cues" class="chips static"></div>
-      </section>
-
-      <footer class="panel-footer">
-        <p>Taste data reflects aggregated, anonymized behavior and is thinner in less digitally active areas. Treat results as evidence for a decision, not a forecast.</p>
+      <footer class="sheet-foot mono">
+        <p>Taste data reflects aggregated, anonymized behaviour and is thinner in less digitally active areas. Read it as evidence for a decision, not a forecast.</p>
+        <p>Built for the Qloo Agentic Hackathon.</p>
       </footer>
-    </aside>
+    </article>
 
-    <section class="map-wrap">
-      <div id="map" aria-label="Map"></div>
-      <div class="legend" id="legend">
-        <span><i class="dot site"></i>Your site</span>
-        <span><i class="dot nearby"></i>Places within a 10-minute walk</span>
-        <span><i class="dot favorite"></i>Locals' favorites elsewhere</span>
-        <span><i class="swatch"></i>Where the taste is strongest</span>
+    <aside class="map-frame" aria-label="Map of the site and its surroundings">
+      <div id="map"></div>
+      <span class="crop tl" aria-hidden="true"></span><span class="crop tr" aria-hidden="true"></span>
+      <span class="crop bl" aria-hidden="true"></span><span class="crop br" aria-hidden="true"></span>
+      <div class="readout mono" id="readout" aria-hidden="true">N 40.7300 · W 73.9700</div>
+      <div class="map-hint mono" id="map-hint">Click the map to place a site</div>
+      <div class="legend mono" id="legend" hidden>
+        <span><i class="lg-site"></i>Site</span>
+        <span><i class="lg-ring"></i>10-min walk</span>
+        <span><i class="lg-place"></i>Places nearby</span>
+        <span><i class="lg-comp"></i>Competitors</span>
+        <span><i class="lg-fav"></i>Locals' favorites</span>
+        <span><i class="lg-grid"></i><b id="legend-grid">Taste grid</b></span>
       </div>
-    </section>
+    </aside>
   </main>
 
-  <dialog id="design-dialog" class="design-dialog">
-    <form method="dialog" class="dialog-close"><button aria-label="Close">×</button></form>
-    <div id="design-body"></div>
+  <dialog id="design" class="design" aria-labelledby="design-title">
+    <button class="design-close mono" id="design-close" type="button">Close</button>
+    <div class="design-body" id="design-body"></div>
   </dialog>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-  <script src="app.js" type="module"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
