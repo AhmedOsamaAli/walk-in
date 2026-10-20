@@ -14,8 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import agent, engine
+from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
 from .llm import LLM
+from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
@@ -96,29 +98,36 @@ class Geocoder:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.qloo = QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir)
-    app.state.llm = LLM(settings.llm_api_key, settings.llm_base_url, settings.llm_model, settings.image_model)
+    app.state.llm = build_llm(settings)
+    app.state.images = build_images(settings)
     app.state.runs = agent.RunStore()
     app.state.limiter = RateLimiter(RUNS_PER_HOUR, 3600)
     app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
     app.state.heatmap_limiter = RateLimiter(HEATMAPS_PER_HOUR, 3600)
     app.state.geocoder = Geocoder()
+    app.state.walker = CatchmentService(settings.walk_cache_dir)
     yield
     await app.state.qloo.aclose()
     await app.state.geocoder.aclose()
+    await app.state.walker.aclose()
+    await app.state.images.aclose()
 
 
 app = FastAPI(title="Blank Space", lifespan=lifespan)
 
 
 def client_ip(request: Request) -> str:
+    # The hosting proxy appends the address it saw, so the last entry cannot be forged by the client.
     forwarded = request.headers.get("x-forwarded-for")
-    return forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "unknown"
 
 
 @app.get("/api/health")
 async def health(request: Request) -> dict:
     llm: LLM = request.app.state.llm
-    return {"ok": True, "llm": llm.enabled, "image": bool(llm.image_model)}
+    return {"ok": True, "llm": llm.enabled, "model": llm.model if llm.enabled else None, "image": request.app.state.images.enabled}
 
 
 @app.get("/api/presets")
@@ -134,13 +143,18 @@ async def run(
     label: str = Query("Selected site", max_length=160),
     focus: str = Query("any"),
     notes: str = Query("", max_length=300),
+    minutes: int = Query(10),
 ) -> StreamingResponse:
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
+    if minutes not in ALLOWED_MINUTES:
+        raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
     if not request.app.state.limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many runs from this address. Try again in an hour.")
 
-    site = agent.Site(lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip())
+    site = agent.Site(
+        lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
+    )
     queue: asyncio.Queue = asyncio.Queue()
 
     async def emit(event: str, data: dict) -> None:
@@ -148,7 +162,8 @@ async def run(
 
     async def produce() -> None:
         llm: LLM = request.app.state.llm
-        tasks = [agent.analyze_site(request.app.state.qloo, llm, request.app.state.runs, site, emit)]
+        state = request.app.state
+        tasks = [agent.analyze_site(state.qloo, state.walker, llm, state.runs, site, emit)]
         if llm.enabled:
             async def baseline() -> None:
                 try:
@@ -187,12 +202,31 @@ async def run(
 
 @app.post("/api/design")
 async def design(request: Request, body: DesignRequest) -> dict:
-    if not request.app.state.design_limiter.allow(client_ip(request)):
-        raise HTTPException(429, "Too many design requests. Try again later.")
     state = request.app.state.runs.get(body.run_id)
     if not state or not (0 <= body.index < len(state.concepts)):
         raise HTTPException(404, "Run or concept not found. Run the site again.")
-    return await agent.design_concept(request.app.state.llm, state, body.index)
+    if body.index in state.designs:
+        return state.designs[body.index]
+    if not request.app.state.design_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many design requests. Try again later.")
+    result = await agent.design_concept(request.app.state.llm, request.app.state.images, state, body.index)
+    state.designs[body.index] = result
+    return result
+
+
+@app.get("/api/catchment")
+async def catchment(
+    request: Request,
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    minutes: int = Query(10),
+) -> dict:
+    if minutes not in ALLOWED_MINUTES:
+        raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
+    if not request.app.state.heatmap_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many map requests. Try again later.")
+    walk = await request.app.state.walker.walk(lat, lon, minutes)
+    return walk.public()
 
 
 @app.get("/api/heatmap")

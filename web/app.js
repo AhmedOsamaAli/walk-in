@@ -23,10 +23,11 @@ const AGE_LABELS = {
   "35_to_44": "35–44", "45_to_54": "45–54", "55_and_older": "55+",
 };
 const WALK_M = 800;
-const STEP_TOTAL = 6;
+const STEP_TOTAL = 7;
 
 const state = {
   site: null,
+  catchment: null,
   running: false,
   controller: null,
   runId: null,
@@ -107,11 +108,33 @@ map.on("mousemove", (event) => {
 map.on("click", (event) => {
   if (state.running || $("#s-brief").hidden) return;
   const { lat, lng } = event.latlng.wrap();
-  selectSite({ lat, lon: lng, label: "Dropped pin" }, { zoom: Math.max(map.getZoom(), 15) });
+  selectSite({ lat, lon: lng, label: "Dropped pin" });
 });
 
-function selectSite(site, { zoom = 15, reveal = false } = {}) {
+// Paths added while the map is flying are projected against a moving origin and appear offset until
+// the flight ends, so every overlay is drawn only once the map is idle.
+let mapMoving = false;
+const idleQueue = [];
+map.on("movestart", () => {
+  mapMoving = true;
+});
+map.on("moveend", () => {
+  mapMoving = false;
+  idleQueue.splice(0).forEach((fn) => fn());
+});
+
+function whenIdle(fn) {
+  if (mapMoving) idleQueue.push(fn);
+  else fn();
+}
+
+function walkMinutes() {
+  return Number($('input[name="minutes"]:checked')?.value || 10);
+}
+
+function selectSite(site, { reveal = false } = {}) {
   state.site = { id: site.id || null, label: site.label || "Dropped pin", lat: Number(site.lat), lon: Number(site.lon) };
+  state.catchment = null;
   $("#chosen").hidden = false;
   $("#chosen-label").textContent = state.site.label;
   $("#chosen-coords").textContent = coords(state.site.lat, state.site.lon);
@@ -119,46 +142,77 @@ function selectSite(site, { zoom = 15, reveal = false } = {}) {
   $("#map-hint").hidden = true;
   $$(".site-btn").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.id === state.site.id)));
   clearMapRun();
-  drawSite();
-  map.flyTo([state.site.lat, state.site.lon], zoom, { duration: reduced ? 0 : 1.4 });
+  layers.ring.clearLayers();
+  drawPin();
+  map.flyTo([state.site.lat, state.site.lon], Math.max(map.getZoom(), 15), { duration: reduced ? 0 : 1.4 });
+  loadCatchment();
   if (reveal) $("#go").scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
 }
 
-function drawSite() {
+function drawPin() {
   layers.site.clearLayers();
-  layers.ring.clearLayers();
-  const { lat, lon } = state.site;
   const icon = L.divIcon({
     className: "site-icon",
     iconSize: [0, 0],
     html: '<div class="site-pin"><span class="sq"></span><span class="tagl">Site</span></div>',
   });
-  L.marker([lat, lon], { icon, interactive: false, keyboard: false }).addTo(layers.site);
-  const ring = L.circle([lat, lon], {
-    radius: 1, color: "#0000ff", weight: 1.25, dashArray: "3 6",
-    fillColor: "#0000ff", fillOpacity: 0.035, interactive: false,
-  }).addTo(layers.ring);
-  growCircle(ring, WALK_M, reduced ? 0 : 1200);
+  L.marker([state.site.lat, state.site.lon], { icon, interactive: false, keyboard: false }).addTo(layers.site);
 }
 
-function growCircle(circle, radius, ms) {
-  if (!ms) {
-    circle.setRadius(radius);
-    return;
+let walkToken = 0;
+async function loadCatchment() {
+  if (!state.site) return;
+  const token = ++walkToken;
+  const { lat, lon } = state.site;
+  const minutes = walkMinutes();
+  $("#chosen-walk").textContent = `Tracing a ${minutes}-min walk…`;
+  let walk;
+  try {
+    walk = await api(`/api/catchment?lat=${lat}&lon=${lon}&minutes=${minutes}`);
+  } catch {
+    walk = circleWalk(lat, lon, minutes);
   }
-  const start = performance.now();
-  const frame = (now) => {
-    const t = Math.min(1, (now - start) / ms);
-    circle.setRadius(Math.max(1, radius * (1 - Math.pow(1 - t, 4))));
-    if (t < 1) requestAnimationFrame(frame);
-  };
-  requestAnimationFrame(frame);
+  if (token !== walkToken) return;
+  showCatchment(walk);
+}
+
+function circleWalk(lat, lon, minutes) {
+  const radius = minutes * 80;
+  const dLat = radius / 111320;
+  const dLon = radius / (111320 * Math.cos((lat * Math.PI) / 180));
+  const ring = Array.from({ length: 41 }, (_, i) => {
+    const a = (2 * Math.PI * (i % 40)) / 40;
+    return [lat + dLat * Math.sin(a), lon + dLon * Math.cos(a)];
+  });
+  return { minutes, source: "circle", ring, area_km2: +(Math.PI * (radius / 1000) ** 2).toFixed(3), radius_m: radius };
+}
+
+function showCatchment(walk) {
+  const previous = state.catchment;
+  state.catchment = walk;
+  $("#chosen-walk").textContent = `${walk.minutes}-min walk · ${walk.area_km2} km² · ${walk.source === "circle" ? "estimated circle" : "street network"}`;
+  $("#legend-walk").textContent = `${walk.minutes}-min walk`;
+  const same = previous && previous.minutes === walk.minutes && previous.ring?.length === walk.ring.length && layers.ring.getLayers().length;
+  if (!same) whenIdle(() => drawWalk(walk));
+}
+
+function drawWalk(walk) {
+  layers.ring.clearLayers();
+  L.polygon(walk.ring, {
+    color: "#0000ff", weight: 1.4, dashArray: "4 6", lineJoin: "round",
+    fillColor: "#0000ff", fillOpacity: 0.045, interactive: false, className: "walk",
+  }).addTo(layers.ring);
+}
+
+function walkBounds() {
+  return state.catchment ? L.latLngBounds(state.catchment.ring) : L.latLng(state.site.lat, state.site.lon).toBounds(1600);
 }
 
 function radarIcon() {
   const center = L.latLng(state.site.lat, state.site.lon);
+  const radius = state.catchment?.radius_m || walkMinutes() * 80;
   const a = map.latLngToLayerPoint(center);
-  const b = map.latLngToLayerPoint(L.latLng(center.lat + WALK_M / 111320, center.lng));
+  const b = map.latLngToLayerPoint(L.latLng(center.lat + radius / 111320, center.lng));
   const r = Math.max(12, Math.round(Math.abs(a.y - b.y)));
   return L.divIcon({ className: "radar-icon", iconSize: [r * 2, r * 2], iconAnchor: [r, r], html: '<div class="radar"></div>' });
 }
@@ -166,10 +220,13 @@ function radarIcon() {
 function startRadar() {
   stopRadar();
   if (!state.site || reduced) return;
-  radar = L.marker([state.site.lat, state.site.lon], {
-    icon: radarIcon(), pane: "radar", interactive: false, keyboard: false,
-  }).addTo(map);
-  map.on("zoomend", resizeRadar);
+  whenIdle(() => {
+    if (!state.running || radar) return;
+    radar = L.marker([state.site.lat, state.site.lon], {
+      icon: radarIcon(), pane: "radar", interactive: false, keyboard: false,
+    }).addTo(map);
+    map.on("zoomend", resizeRadar);
+  });
 }
 
 function resizeRadar() {
@@ -326,7 +383,7 @@ function pickResult(index) {
   const label = shortLabel(result.label);
   hideResults();
   searchInput.value = label;
-  selectSite({ lat: result.lat, lon: result.lon, label }, { zoom: 16, reveal: true });
+  selectSite({ lat: result.lat, lon: result.lon, label }, { reveal: true });
 }
 
 function shortLabel(label) {
@@ -338,6 +395,12 @@ function hideResults() {
   activeResult = -1;
 }
 
+$$('input[name="minutes"]').forEach((input) =>
+  input.addEventListener("change", () => {
+    if (state.site && !state.running && !$("#s-brief").hidden) loadCatchment();
+  }),
+);
+
 /* ---------- Survey run ---------- */
 
 $("#go").addEventListener("click", startSurvey);
@@ -347,12 +410,13 @@ async function startSurvey() {
   if (!state.site || state.running) return;
   const focus = $('input[name="focus"]:checked')?.value || "any";
   const notes = $("#notes").value.trim();
+  const minutes = walkMinutes();
   const site = state.site;
   resetResults();
   swapView(() => {
     $("#s-brief").hidden = true;
     $("#site-title").textContent = site.label;
-    $("#site-coords").textContent = [coords(site.lat, site.lon), FOCUS_LABELS[focus], notes ? "Owner constraints set" : ""]
+    $("#site-coords").textContent = [coords(site.lat, site.lon), `${minutes}-min walk`, FOCUS_LABELS[focus], notes ? "Owner constraints set" : ""]
       .filter(Boolean)
       .join(" · ");
     $("#s-site").hidden = false;
@@ -363,10 +427,12 @@ async function startSurvey() {
   state.startedAt = performance.now();
   setProgress(0.06);
   $("#legend").hidden = false;
-  map.flyTo([site.lat, site.lon], 15, { duration: reduced ? 0 : 1.2 });
+  map.flyToBounds(walkBounds(), { padding: [70, 70], maxZoom: 16, duration: reduced ? 0 : 1.2 });
   startRadar();
 
-  const params = new URLSearchParams({ lat: site.lat.toFixed(6), lon: site.lon.toFixed(6), label: site.label, focus, notes });
+  const params = new URLSearchParams({
+    lat: site.lat.toFixed(6), lon: site.lon.toFixed(6), label: site.label, focus, notes, minutes: String(minutes),
+  });
   const controller = new AbortController();
   state.controller = controller;
   try {
@@ -402,7 +468,6 @@ function resetResults() {
   $("#without").innerHTML = "";
   $$(".bar-nav a").forEach((link) => link.classList.remove("ready", "current"));
   clearMapRun();
-  if (state.site) drawSite();
 }
 
 function resetToBrief() {
@@ -487,6 +552,9 @@ function handle(event, data) {
       break;
     case "status":
       onStatus(data);
+      break;
+    case "catchment":
+      showCatchment(data);
       break;
     case "agent":
       logLine(agentText(data), "agent");
@@ -631,17 +699,20 @@ function countUp(el) {
 }
 
 function plotBlock(places) {
-  layers.block.clearLayers();
-  for (const place of places) {
-    if (place.lat == null || place.lon == null) continue;
-    const dot = L.circleMarker([place.lat, place.lon], {
-      radius: 3.4, stroke: false, fillColor: "#000", fillOpacity: 0.85, className: "pdot",
-    })
-      .bindTooltip(tipHtml(place), TIP)
-      .addTo(layers.block);
-    const el = dot.getElement();
-    if (el) el.style.animationDelay = reduced ? "0ms" : `${Math.round(((place.distance_m ?? 400) / WALK_M) * 1100)}ms`;
-  }
+  whenIdle(() => {
+    layers.block.clearLayers();
+    const reach = state.catchment?.radius_m || WALK_M;
+    for (const place of places) {
+      if (place.lat == null || place.lon == null) continue;
+      const dot = L.circleMarker([place.lat, place.lon], {
+        radius: 3.4, stroke: false, fillColor: "#000", fillOpacity: 0.85, className: "pdot",
+      })
+        .bindTooltip(tipHtml(place), TIP)
+        .addTo(layers.block);
+      const el = dot.getElement();
+      if (el) el.style.animationDelay = reduced ? "0ms" : `${Math.round(Math.min(1.3, (place.distance_m ?? reach / 2) / reach) * 1100)}ms`;
+    }
+  });
 }
 
 function tipHtml(place) {
@@ -675,31 +746,53 @@ function renderGaps(rows) {
   toggleGap(0);
 }
 
+function gapWhy(gap) {
+  const parts = [];
+  if (gap.lift >= 0.5) parts.push("loved more here than in the areas around");
+  else if (gap.lift <= -0.3) parts.push("loved less here than around");
+  if (gap.relative_supply <= 0.8) parts.push("fewer places than a block this dense usually has");
+  else if (gap.relative_supply >= 1.4) parts.push("already well supplied");
+  if (gap.leakage != null && gap.leakage >= 0.65) parts.push("locals travel for their own favorites");
+  else if (gap.leakage != null && gap.leakage <= 0.4) parts.push("locals' own favorites are already close by");
+  if (gap.evidence === "thin") parts.push("Qloo knows too few places of this type here to judge");
+  if (gap.evidence === "atypical") parts.push("favorites are mostly hotels or malls");
+  const text = parts.join("; ");
+  return text ? text[0].toUpperCase() + text.slice(1) + "." : "Demand and supply look typical for this block.";
+}
+
 function gapHtml(gap, i) {
   const supply = Math.min(gap.nearby_count, 24);
   const pips = "<i></i>".repeat(supply) + (gap.nearby_count > 24 || gap.nearby_capped ? '<i class="more">+</i>' : "");
-  const dots = Array.from({ length: gap.favorites_total || 0 }, (_, k) => `<i class="${k < gap.favorites_far ? "on" : ""}"></i>`).join("");
+  const local = gap.favorites_kind === "local";
+  const dots = local
+    ? Array.from({ length: gap.favorites_total || 0 }, (_, k) => `<i class="${k < gap.favorites_far ? "on" : ""}"></i>`).join("")
+    : '<span class="mono muted">same as the city\'s famous spots</span>';
   const competitors =
     (gap.competitors || []).slice(0, 6).map(competitorHtml).join("") ||
-    '<li class="muted">No direct competitor within walking distance.</li>';
+    '<li class="muted">Qloo lists no direct competitor inside the walk.</li>';
   const favorites = (gap.favorites || []).slice(0, 6).map(favoriteHtml).join("") || '<li class="muted">No favorites found.</li>';
-  const median = gap.median_favorite_km != null ? ` · median ${gap.median_favorite_km} km` : "";
+  const median = local && gap.median_favorite_km != null ? ` · median ${gap.median_favorite_km} km` : "";
+  const around = gap.ref_rank == null ? "" : gap.ref_rank >= 51 ? " · 50+ around" : ` · #${Number(gap.ref_rank).toFixed(0)} around`;
+  const expected = gap.expected_nearby != null ? ` · ~${Number(gap.expected_nearby).toFixed(1)} typical` : "";
+  const flag = gap.evidence === "ok" ? "" : `<small class="mono flag">${gap.evidence === "thin" ? "thin data" : "atypical"}</small>`;
+  const favoritesTitle = local ? `Places locals love more than the city does${median}` : "Locals' favorites (the city's famous spots)";
   return `
-    <li class="gap${i === 0 ? " first" : ""}" style="--i:${i}">
+    <li class="gap${i === 0 ? " first" : ""}${gap.evidence !== "ok" ? " thin" : ""}" style="--i:${i}">
       <button class="gap-row" type="button" data-i="${i}" aria-expanded="false">
         <span class="gap-score" data-count="${Number(gap.gap_score) || 0}">0</span>
         <span>
-          <span class="gap-name">${esc(gap.genre)}<small class="mono muted">locals' #${esc(gap.demand_rank)}</small></span>
+          <span class="gap-name">${esc(gap.genre)}<small class="mono muted">#${esc(gap.demand_rank)} here${esc(around)}</small>${flag}</span>
+          <span class="gap-why serif">${esc(gapWhy(gap))}</span>
           <span class="gap-bars">
-            <span class="meter"><span class="mono">Within walk · ${esc(gap.nearby_count)}${gap.nearby_capped ? "+" : ""}</span><span class="pips">${pips || '<span class="mono muted">none</span>'}</span></span>
-            <span class="meter"><span class="mono">Favorites beyond · ${esc(gap.favorites_far)}/${esc(gap.favorites_total)}</span><span class="dots">${dots}</span></span>
+            <span class="meter"><span class="mono">Inside walk · ${esc(gap.nearby_count)}${gap.nearby_capped ? "+" : ""}${esc(expected)}</span><span class="pips">${pips || '<span class="mono muted">none</span>'}</span></span>
+            <span class="meter"><span class="mono">${local ? `Local favorites outside · ${esc(gap.favorites_far)}/${esc(gap.favorites_total)}` : "Local favorites"}</span><span class="dots">${dots}</span></span>
           </span>
         </span>
         <span class="gap-toggle" aria-hidden="true">+</span>
       </button>
       <div class="gap-detail-wrap"><div class="gap-detail"><div class="gap-detail-inner">
-        <div><h4 class="label mono">Competitors within walk</h4><ul class="mini">${competitors}</ul></div>
-        <div><h4 class="label mono">Where locals go instead${median}</h4><ul class="mini">${favorites}</ul></div>
+        <div><h4 class="label mono">Competitors inside the walk</h4><ul class="mini">${competitors}</ul></div>
+        <div><h4 class="label mono">${esc(favoritesTitle)}</h4><ul class="mini">${favorites}</ul></div>
       </div></div></div>
     </li>`;
 }
@@ -713,8 +806,8 @@ function competitorHtml(place) {
 }
 
 function favoriteHtml(place) {
-  const km = place.distance_m != null ? `${(place.distance_m / 1000).toFixed(1)} km away` : "";
-  return `<li><span class="n">${esc(place.name)}</span><span class="km">${km}</span></li>`;
+  const where = place.within_walk ? "inside the walk" : place.distance_m != null ? `${(place.distance_m / 1000).toFixed(1)} km away` : "";
+  return `<li><span class="n">${esc(place.name)}</span><span class="km">${where}</span></li>`;
 }
 
 function toggleGap(index) {
@@ -725,8 +818,12 @@ function toggleGap(index) {
     item.classList.toggle("open", open);
     item.querySelector(".gap-row").setAttribute("aria-expanded", String(open));
   });
-  if (opening) drawGap(state.gaps[index]);
-  else clearGap();
+  if (opening) {
+    const gap = state.gaps[index];
+    whenIdle(() => drawGap(gap));
+  } else {
+    clearGap();
+  }
 }
 
 function clearGap() {
@@ -738,8 +835,8 @@ function clearGap() {
 }
 
 function drawGap(gap) {
+  if (!gap || !state.site || state.gaps[state.openGap] !== gap) return;
   clearGap();
-  if (!gap || !state.site) return;
   const site = L.latLng(state.site.lat, state.site.lon);
   const points = [site];
   for (const place of gap.competitors || []) {
@@ -750,26 +847,30 @@ function drawGap(gap) {
       .bindTooltip(tipHtml(place), TIP)
       .addTo(layers.gap);
   }
+  const local = gap.favorites_kind === "local";
   const favorites = (gap.favorites || []).filter((place) => place.lat != null && place.lon != null);
   for (const place of favorites) {
     points.push(L.latLng(place.lat, place.lon));
-    L.circleMarker([place.lat, place.lon], {
-      radius: 5.5, color: "#fff", weight: 1.5, fillColor: "#0000ff", fillOpacity: 1, className: "pdot",
-    })
+    L.circleMarker([place.lat, place.lon], local
+      ? { radius: 5.5, color: "#fff", weight: 1.5, fillColor: "#0000ff", fillOpacity: 1, className: "pdot" }
+      : { radius: 5, color: "#0000ff", weight: 1.5, fillColor: "#fff", fillOpacity: 1, className: "pdot" })
       .bindTooltip(tipHtml(place), TIP)
       .addTo(layers.gap);
   }
   $("#legend-grid").textContent = `Taste grid · ${gap.genre}`;
   if (points.length > 1) {
+    const travelled = local ? favorites.filter((place) => !place.within_walk) : [];
     afterMove(() =>
-      favorites.forEach((place, k) => {
+      travelled.forEach((place, k) => {
         const line = L.polyline(arc(site, L.latLng(place.lat, place.lon)), {
           color: "#0000ff", weight: 1.3, opacity: 0.8, interactive: false, className: "leak",
         }).addTo(layers.gap);
         drawLine(line, k * 80);
       }),
     );
-    map.flyToBounds(L.latLngBounds(points), { padding: [80, 80], maxZoom: 15, duration: reduced ? 0 : 1.2 });
+    const bounds = L.latLngBounds(points);
+    if (state.catchment) bounds.extend(walkBounds());
+    map.flyToBounds(bounds, { padding: [80, 80], maxZoom: 15, duration: reduced ? 0 : 1.2 });
   }
   drawGrid(gap);
 }
@@ -824,19 +925,22 @@ async function drawGrid(gap) {
     }
   }
   if (state.gaps[state.openGap] !== gap) return;
-  layers.grid.clearLayers();
-  for (const cell of cells) {
-    if (cell.affinity < 0.45) continue;
-    const [dLat, dLon] = cellSpan(cell.geohash);
-    const strength = (cell.affinity - 0.45) / 0.55;
-    L.rectangle(
-      [[cell.lat - dLat / 2, cell.lon - dLon / 2], [cell.lat + dLat / 2, cell.lon + dLon / 2]],
-      { renderer: gridRenderer, stroke: false, fillColor: "#0000ff", fillOpacity: 0.04 + 0.32 * strength ** 1.8, interactive: false },
-    ).addTo(layers.grid);
-  }
-  const pane = map.getPane("grid");
-  pane.classList.remove("in");
-  requestAnimationFrame(() => requestAnimationFrame(() => pane.classList.add("in")));
+  whenIdle(() => {
+    if (state.gaps[state.openGap] !== gap) return;
+    layers.grid.clearLayers();
+    for (const cell of cells) {
+      if (cell.affinity < 0.45) continue;
+      const [dLat, dLon] = cellSpan(cell.geohash);
+      const strength = (cell.affinity - 0.45) / 0.55;
+      L.rectangle(
+        [[cell.lat - dLat / 2, cell.lon - dLon / 2], [cell.lat + dLat / 2, cell.lon + dLon / 2]],
+        { renderer: gridRenderer, stroke: false, fillColor: "#0000ff", fillOpacity: 0.04 + 0.32 * strength ** 1.8, interactive: false },
+      ).addTo(layers.grid);
+    }
+    const pane = map.getPane("grid");
+    pane.classList.remove("in");
+    requestAnimationFrame(() => requestAnimationFrame(() => pane.classList.add("in")));
+  });
 }
 
 function cellSpan(geohash) {

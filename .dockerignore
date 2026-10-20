@@ -1,0 +1,14 @@
+.git
+.venv
+.cache
+.env
+.env.*
+!.env.example
+.vscode
+.playwright-mcp
+.pytest_cache
+**/__pycache__
+tests
+scripts
+*.md
+!README.md

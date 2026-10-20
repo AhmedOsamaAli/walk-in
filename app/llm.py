@@ -1,29 +1,56 @@
-"""Optional LLM layer over any OpenAI-compatible endpoint (OpenAI, Azure OpenAI v1, Gemini, Groq, OpenRouter...)."""
+"""Optional LLM layer over any OpenAI-compatible chat endpoint.
+
+Tested shape: Google Gemini's OpenAI-compatible endpoint (free tier), OpenAI, Groq, OpenRouter, Azure OpenAI v1.
+Nothing here is required: without LLM_API_KEY the app runs on deterministic evidence rules.
+"""
 from __future__ import annotations
 
 import json
 from typing import Any, Awaitable, Callable
 
-from openai import AsyncOpenAI
+import httpx
+from openai import AsyncOpenAI, BadRequestError
 
 ToolHandler = Callable[[dict], Awaitable[Any]]
 OnToolCall = Callable[[str, dict, str | None], Awaitable[None]]
 
 
 class LLM:
-    def __init__(self, api_key: str, base_url: str | None, model: str, image_model: str | None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None,
+        model: str,
+        temperature: float | None = None,
+        reasoning_effort: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.enabled = bool(api_key)
         self.model = model
-        self.image_model = image_model if self.enabled else None
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url) if self.enabled else None
-
-    async def json(self, system: str, user: str, temperature: float = 0.5) -> dict:
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            temperature=temperature,
-            response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
+        self._client = (
+            AsyncOpenAI(api_key=api_key, base_url=base_url, http_client=http_client, max_retries=2, timeout=60)
+            if self.enabled else None
         )
+
+    def _options(self) -> dict:
+        options: dict[str, Any] = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.reasoning_effort:
+            options["reasoning_effort"] = self.reasoning_effort
+        return options
+
+    async def json(self, system: str, user: str) -> dict:
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.model, messages=messages, response_format={"type": "json_object"}, **self._options()
+            )
+        except BadRequestError:
+            # Some providers reject response_format; the prompt still asks for JSON.
+            response = await self._client.chat.completions.create(model=self.model, messages=messages, **self._options())
         return parse_json(response.choices[0].message.content)
 
     async def run_tools(
@@ -40,18 +67,14 @@ class LLM:
         messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         for _ in range(max_steps):
             response = await self._client.chat.completions.create(
-                model=self.model, messages=messages, tools=tools, temperature=0.5
+                model=self.model, messages=messages, tools=tools, **self._options()
             )
             message = response.choices[0].message
             if not message.tool_calls:
                 messages.append({"role": "assistant", "content": message.content or ""})
                 messages.append({"role": "user", "content": f"Keep using the tools and finish by calling {final_tool}."})
                 continue
-            messages.append({
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [call.model_dump() for call in message.tool_calls],
-            })
+            messages.append(assistant_turn(message))
             for call in message.tool_calls:
                 name = call.function.name
                 try:
@@ -71,14 +94,13 @@ class LLM:
                 })
         return None
 
-    async def image(self, prompt: str) -> str | None:
-        if not self.image_model:
-            return None
-        result = await self._client.images.generate(model=self.image_model, prompt=prompt, size="1024x1024", n=1)
-        item = result.data[0]
-        if getattr(item, "b64_json", None):
-            return f"data:image/png;base64,{item.b64_json}"
-        return getattr(item, "url", None)
+
+def assistant_turn(message) -> dict:
+    """Echo an assistant tool-call turn back, keeping provider extras (Gemini returns thought signatures there)."""
+    turn: dict[str, Any] = {"role": "assistant", "content": message.content}
+    turn["tool_calls"] = [call.model_dump(exclude_none=True) for call in message.tool_calls]
+    turn.update(message.model_extra or {})
+    return turn
 
 
 def parse_json(text: str | None) -> dict:

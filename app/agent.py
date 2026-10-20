@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from . import engine, scoring
+from .catchment import Catchment, CatchmentService
+from .images import ImageGen
 from .llm import LLM
 from .qloo import QlooClient, QlooError
 
@@ -25,12 +27,14 @@ class Site:
     label: str
     focus: str = "any"
     notes: str = ""
+    minutes: int = 10
 
 
 @dataclass
 class RunState:
     id: str
     site: Site
+    catchment: Catchment | None = None
     block: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     genres: list[dict] = field(default_factory=list)
@@ -39,6 +43,8 @@ class RunState:
     taste: dict = field(default_factory=dict)
     demographics: dict | None = None
     concepts: list[dict] = field(default_factory=list)
+    designs: dict[int, dict] = field(default_factory=dict)
+    created_at: float = field(default_factory=time.time)
 
 
 class RunStore:
@@ -74,9 +80,15 @@ def describe_age(demographics: dict | None) -> str | None:
 def evidence_brief(run: RunState) -> dict:
     """Compact evidence pack handed to the LLM."""
     s = run.summary
+    walk = run.catchment
     return {
         "site": {"label": run.site.label, "focus": run.site.focus, "owner_notes": run.site.notes or None},
-        "walkable_block": {
+        "walk_catchment": {
+            "minutes": run.site.minutes,
+            "shape": walk.source if walk else "circle",
+            "area_km2": round(walk.area_m2 / 1e6, 2) if walk else None,
+        },
+        "block_inside_the_walk": {
             "places_scanned": s.get("place_count"),
             "most_common_genres": s.get("top_genres", [])[:8],
             "average_rating": s.get("avg_rating"),
@@ -89,10 +101,15 @@ def evidence_brief(run: RunState) -> dict:
         "gap_table": [
             {
                 "genre": g["genre"],
-                "locals_rank": g["demand_rank"],
-                "within_10_min_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
-                "locals_favorites_beyond_walk": f"{g['favorites_far']}/{g['favorites_total']}",
-                "median_distance_to_favorites_km": g["median_favorite_km"],
+                "locals_rank_here": g["demand_rank"],
+                "median_rank_in_6_same_size_areas_around": g["ref_rank"],
+                "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
+                "typical_for_a_block_this_dense": g["expected_nearby"],
+                "relative_supply": g["relative_supply"],
+                "local_favorites_kind": g["favorites_kind"],
+                "local_favorites_outside_walk": f"{g['favorites_far']}/{g['favorites_total']}",
+                "median_distance_to_local_favorites_km": g["median_favorite_km"],
+                "evidence": g["evidence"],
                 "gap_score": g["gap_score"],
             }
             for g in run.gaps
@@ -110,6 +127,7 @@ def gap_for(run: RunState, genre: str) -> dict | None:
 
 
 def inspect_payload(run: RunState, row: dict) -> dict:
+    entities, cards = storefront_favorites(row)
     return {
         "genre": row["genre"],
         "competitors_within_walk": [
@@ -118,10 +136,12 @@ def inspect_payload(run: RunState, row: dict) -> dict:
         ],
         "locals_favorites": [
             {"name": f["name"], "km_away": round((f.get("distance_m") or 0) / 1000, 1), "price_level": f.get("price_level"),
-             "praise": f.get("praise")}
-            for f in row["favorites"][:8]
+             "praise": f.get("praise"), "inside_walk": f.get("within_walk", False)}
+            for f in cards[:8]
         ],
-        "design_dna_of_favorites": scoring.design_dna(row["_favorite_entities"]),
+        "locals_favorites_kind": row.get("favorites_kind"),
+        "city_famous_favorites": row.get("city_favorites", []),
+        "design_dna_of_favorites": scoring.design_dna(entities),
     }
 
 
@@ -137,7 +157,7 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
         row = gap_for(run, concept.get("genre", ""))
         if not row:
             continue
-        favorites = {f["name"] for f in row["favorites"] if f.get("name")}
+        favorites = {card["name"] for card in storefront_favorites(row)[1] if card.get("name")}
         concept["genre"] = row["genre"]
         concept["genre_id"] = row["genre_id"]
         concept["gap_score"] = row["gap_score"]
@@ -146,7 +166,7 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
             concept["price_level"] = max(1, min(4, int(concept.get("price_level") or 2)))
         except (TypeError, ValueError):
             concept["price_level"] = 2
-        concept["evidence"] = gap_evidence(row)
+        concept["evidence"] = gap_evidence(row, run.site.minutes)
         cleaned.append(concept)
     return cleaned[:3]
 
@@ -159,56 +179,105 @@ def short_label(label: str) -> str:
     return first[:32]
 
 
-def gap_evidence(row: dict) -> list[str]:
+def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
+    genre = row["genre"]
     nearby = f"{row['nearby_count']}{'+' if row['nearby_capped'] else ''}"
-    lines = [
-        f"Locals rank {row['genre']} #{row['demand_rank']} among the place types they engage with.",
-        f"{nearby} {row['genre']} places within a 10-minute walk.",
-    ]
-    if row["favorites_total"]:
+    lines = []
+    ref = row.get("ref_rank")
+    if ref is not None:
+        ref_text = "outside the top 50" if ref >= 51 else f"#{ref:g}"
+        lines.append(f"Locals rank {genre} #{row['demand_rank']} here, versus a median {ref_text} in same-size areas around.")
+    else:
+        lines.append(f"Locals rank {genre} #{row['demand_rank']} among place types here.")
+    expected = row.get("expected_nearby")
+    if expected is not None:
         lines.append(
-            f"{row['favorites_far']} of locals' {row['favorites_total']} favorite {row['genre']} spots are beyond walking "
-            f"distance (median {row['median_favorite_km']} km away)."
+            f"Qloo lists {nearby} {genre} places inside the {minutes}-minute walk; a block this dense would typically have about {expected:g}."
         )
+    if row.get("favorites_kind") == "local" and row["favorites_total"]:
+        lines.append(
+            f"{row['favorites_far']} of {row['favorites_total']} {genre} places that locals love more than the city does "
+            f"are outside the walk (median {row['median_favorite_km']} km away)."
+        )
+    elif row["favorites_total"]:
+        lines.append(f"Locals' favorite {genre} places are the city's famous ones, so where they travel says little here.")
+    if row.get("evidence") == "thin":
+        lines.append("Thin evidence: Qloo knows at most one such place around here.")
+    elif row.get("evidence") == "atypical":
+        lines.append("Atypical: locals' favorites of this type are mostly hotels or malls, not storefronts.")
     return lines
+
+
+def one_liner(row: dict) -> str:
+    title = scoring.genre_title(row["genre"])
+    leakage = row.get("leakage")
+    if leakage is not None and leakage >= 0.65 and row["favorites_far"] >= 3 and row["median_favorite_km"]:
+        return f"{title}, close to home: locals travel {row['median_favorite_km']} km for the spots they love most."
+    if row.get("lift", 0) >= 0.5:
+        return f"{title} for a neighborhood that loves it more than the areas around it do."
+    if row.get("relative_supply", 1) <= 0.8:
+        return f"{title} where the block has fewer than its density predicts."
+    return f"A sharper {title.lower()} for a crowd that already loves the category."
+
+
+def concept_rows(run: RunState) -> list[dict]:
+    solid = [row for row in run.gaps if row.get("evidence") == "ok"]
+    return (solid or run.gaps)[:3]
+
+
+def storefront_favorites(row: dict) -> tuple[list[dict], list[dict]]:
+    """Locals' favorite places of a genre without hotels and malls, as (entities, cards)."""
+    pairs = [
+        (entity, card) for entity, card in zip(row["_favorite_entities"], row["favorites"]) if scoring.is_storefront_place(entity)
+    ]
+    return [entity for entity, _ in pairs], [card for _, card in pairs]
+
+
+def crowd_phrase(demographics: dict | None, minutes: int) -> str:
+    skew = describe_age(demographics)
+    if not skew or skew == "no strong age skew":
+        return f"Everyone within a {minutes}-minute walk; no strong age skew"
+    return f"A crowd that {skew.replace('-', '–')}"
 
 
 def rule_concepts(run: RunState) -> list[dict]:
     concepts = []
-    for row in run.gaps[:3]:
-        dna = scoring.design_dna(row["_favorite_entities"])
+    minutes = run.site.minutes
+    for row in concept_rows(run):
+        entities, cards = storefront_favorites(row)
+        dna = scoring.design_dna(entities)
         complaints = [c for comp in row["competitors"] for c in comp.get("complaints", [])][:3]
-        km = row["median_favorite_km"]
+        title = scoring.genre_title(row["genre"])
         concepts.append({
-            "name": f"{short_label(run.site.label)} {row['genre']}",
+            "name": f"{title}, {short_label(run.site.label)}",
             "genre": row["genre"],
             "genre_id": row["genre_id"],
             "gap_score": row["gap_score"],
-            "one_liner": (
-                f"{row['genre']}, close to home: locals currently travel {km} km for their favorites."
-                if km else f"The {row['genre']} this block is missing."
-            ),
-            "for_whom": describe_age(run.demographics) or "The people within a 10-minute walk",
+            "one_liner": one_liner(row),
+            "for_whom": crowd_phrase(run.demographics, minutes),
             "price_level": dna.get("typical_price_level") or 2,
-            "why_here": gap_evidence(row),
+            "why_here": gap_evidence(row, minutes),
             "beat_competitors": (
                 f"Nearby reviews flag: {', '.join(complaints)}. Design the service around avoiding these."
                 if complaints else "Few direct competitors nearby; win on quality and atmosphere."
             ),
-            "signature": dna.get("menu", [])[:3] or dna.get("offerings", [])[:3],
-            "inspired_by": [f["name"] for f in row["favorites"][:3]],
+            "signature": scoring.signature_items(row["genre"], dna),
+            "inspired_by": [card["name"] for card in cards[:3]],
             "risk": (
-                f"{row['nearby_count']} competitors already nearby." if row["nearby_count"] >= 10
+                f"{row['nearby_count']} competitors already inside the walk." if row["nearby_count"] >= 10
                 else "Demand is inferred from taste signals, not foot traffic; validate on site."
             ),
-            "evidence": gap_evidence(row),
+            "evidence": gap_evidence(row, minutes),
         })
     return concepts
 
 
 CONCEPT_SYSTEM = """You are Blank Space, a retail and hospitality strategist that designs businesses for empty storefronts.
-You only reason from Qloo evidence about the people within a 10-minute walk of the site.
-Use the tools to inspect the most promising gaps (at least two) before deciding.
+You only reason from Qloo evidence about the people inside the site's walking catchment.
+Demand is compared with six same-size areas around the site, not the whole city; supply is compared with what a block
+this dense would typically hold. Locals' favorites of kind "citywide" are just the city's famous places: do not treat
+them as evidence that locals travel.
+Use the tools to inspect the most promising gaps (at least two) before deciding. Prefer gaps with evidence "ok".
 Then call submit_concepts with exactly 3 distinct concepts, each built on a different genre from the gap table.
 Rules: cite numbers from the evidence in why_here; never invent places, brands or statistics;
 inspired_by must only contain names returned by inspect_gap; respect the owner's notes."""
@@ -230,7 +299,7 @@ CONCEPT_TOOLS = [
         "type": "function",
         "function": {
             "name": "local_taste",
-            "description": "Brands and artists that over-index in this neighborhood versus the wider metro, plus crowd age skew.",
+            "description": "Brands and artists this neighborhood over-indexes on versus same-size areas around it, plus crowd age skew.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -297,10 +366,12 @@ async def agent_concepts(llm: LLM, run: RunState, emit: Emit) -> list[dict]:
     return clean_concepts(run, (result or {}).get("concepts", []))
 
 
-async def analyze_site(q: QlooClient, llm: LLM, store: RunStore, site: Site, emit: Emit) -> RunState:
+async def analyze_site(
+    q: QlooClient, walker: CatchmentService, llm: LLM, store: RunStore, site: Site, emit: Emit,
+) -> RunState:
     run = RunState(id=uuid.uuid4().hex[:12], site=site)
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
-    await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "image": bool(llm.image_model)})
+    await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled})
 
     async def step(name: str, label: str, coro):
         await emit("status", {"step": name, "state": "running", "label": label})
@@ -308,11 +379,18 @@ async def analyze_site(q: QlooClient, llm: LLM, store: RunStore, site: Site, emi
         await emit("status", {"step": name, "state": "done", "label": label})
         return result
 
+    minutes = site.minutes
     try:
+        catchment = await step(
+            "walk", f"Tracing a {minutes}-minute walk over the street network", walker.walk(site.lat, site.lon, minutes)
+        )
+        run.catchment = catchment
+        await emit("catchment", catchment.public())
         block, (genres, cues), taste = await asyncio.gather(
-            step("block", "Reading every place within a 10-minute walk", engine.scan_block(q, site.lat, site.lon)),
-            step("demand", "Learning what people around here engage with", engine.demand_genres(q, site.lat, site.lon)),
-            step("taste", "Comparing local brands and artists with the wider city", engine.local_taste(q, site.lat, site.lon)),
+            step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_block(q, catchment)),
+            step("demand", "Ranking what locals engage with against six same-size areas around",
+                 engine.demand_genres(q, catchment)),
+            step("taste", "Finding brands and artists this area over-indexes on", engine.local_taste(q, site.lat, site.lon)),
         )
         run.block, run.genres, run.cues, run.taste = block, genres, cues, taste
         run.summary = scoring.summarize_block(block)
@@ -323,8 +401,8 @@ async def analyze_site(q: QlooClient, llm: LLM, store: RunStore, site: Site, emi
         await emit("demand", {"genres": genres[:12], "cues": cues})
 
         gaps, demographics = await asyncio.gather(
-            step("gaps", "Checking supply nearby and where locals travel for their favorites",
-                 engine.gap_table(q, site.lat, site.lon, genres, site.focus)),
+            step("gaps", "Comparing supply with the surroundings and finding places locals love more than the city",
+                 engine.gap_table(q, catchment, genres, site.focus)),
             step("crowd", "Reading the crowd's age and gender skew", engine.crowd_demographics(q, block)),
         )
         run.gaps, run.demographics = gaps, demographics
@@ -367,10 +445,10 @@ partners (list of {name, why}; name only from nearby_places or local_brands), la
 (a photorealistic interior description with no text, logos or people's faces)."""
 
 
-async def design_concept(llm: LLM, run: RunState, index: int) -> dict:
+async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) -> dict:
     concept = run.concepts[index]
     row = gap_for(run, concept["genre"])
-    dna = scoring.design_dna(row["_favorite_entities"]) if row else {}
+    dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
     local_artists = [a["name"] for a in run.taste.get("distinctive_artists", []) + run.taste.get("artists", [])]
     nearby = [p.get("name") for p in run.block if p.get("name")]
     brands = [b["name"] for b in run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])]
@@ -407,12 +485,30 @@ async def design_concept(llm: LLM, run: RunState, index: int) -> dict:
     design["dna"] = dna
     design["mode"] = mode
     design["image"] = None
-    if llm.image_model and design.get("image_prompt"):
+    if images.enabled:
+        prompt = design.get("image_prompt") or interior_prompt(run, concept, dna)
         try:
-            design["image"] = await llm.image(design["image_prompt"])
+            design["image"] = await images.generate(prompt)
         except Exception:
             design["image"] = None
     return design
+
+
+def interior_prompt(run: RunState, concept: dict, dna: dict) -> str:
+    """Image prompt assembled from the favorites' design DNA, used when no LLM wrote one."""
+    title = scoring.genre_title(concept["genre"]).lower()
+    details = [
+        ", ".join(dna.get("ambience", [])[:3]).lower(),
+        ", ".join(dna.get("decor", [])[:3]).lower(),
+        ", ".join(dna.get("setting", [])[:2]).lower(),
+        ", ".join(a.lower() for a in dna.get("amenities", [])[:3]),
+    ]
+    mood = "; ".join(part for part in details if part)
+    return (
+        f"Photorealistic interior of a small street-level {title} in {short_label(run.site.label)}, seen from the doorway. "
+        f"{mood}. Natural light, real materials, styled for opening day. Architectural photography, 35mm, "
+        "no people, no text, no logos, no signage."
+    )
 
 
 def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
@@ -429,10 +525,17 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
 def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], nearby: list[str], brands: list[str]) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
-    partners = [{"name": name, "why": "Popular within a 10-minute walk; cross-promote."} for name in partner_places(run, concept["genre"])]
+    minutes = run.site.minutes
+    partners = [
+        {"name": name, "why": f"Popular inside the {minutes}-minute walk and not a direct competitor; cross-promote."}
+        for name in partner_places(run, concept["genre"])
+    ]
     distinctive_brands = run.taste.get("distinctive_brands") or []
     if distinctive_brands:
-        partners.append({"name": distinctive_brands[0]["name"], "why": "Over-indexes in this neighborhood."})
+        partners.append({"name": distinctive_brands[0]["name"], "why": "Over-indexes here versus the areas around."})
+    cue = run.cues[0].lower() if run.cues else ""
+    if cue and not cue.endswith("s"):
+        cue += "s"
     return {
         "name": concept["name"],
         "tagline": concept.get("one_liner"),
@@ -444,13 +547,12 @@ def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], nea
             "layout": ", ".join(dna.get("setting", [])[:2]) or "Street-facing, open to the sidewalk",
             "seating": ", ".join(a for a in dna.get("amenities", []) if "seating" in a.lower()) or "Mixed bar and table seating",
         },
-        "offer": (dna.get("menu") or dna.get("offerings") or [])[:6],
+        "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),
         "hours": "To be set from local foot traffic",
         "music": {"direction": "Built from artists that over-index locally", "artists": artists[:5]},
         "partners": partners,
-        "launch": f"Opening night themed around the neighborhood's love of {run.cues[0].lower()}." if run.cues
-        else "Opening night with local partners.",
+        "launch": f"Opening night with a nod to the neighborhood's love of {cue}." if cue else "Opening night with local partners.",
         "image_prompt": None,
     }
 
@@ -461,6 +563,5 @@ async def plain_llm_concepts(llm: LLM, site: Site) -> list[dict]:
         "You are a retail strategy consultant.",
         f"There is an empty ground-floor storefront at {site.label} (lat {site.lat}, lon {site.lon}). "
         "Propose 3 business concepts likely to succeed there. Return JSON {\"concepts\": [{\"name\", \"genre\", \"one_liner\"}]}.",
-        temperature=0.7,
     )
     return [c for c in data.get("concepts", []) if isinstance(c, dict)][:3]

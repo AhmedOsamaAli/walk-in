@@ -35,6 +35,46 @@ def test_menu_items_with_complaint_words_are_not_complaints():
     assert scoring.is_complaint("dirty tables")
 
 
+def test_negated_complaints_are_praise():
+    assert not scoring.is_complaint("not crowded")
+    assert not scoring.is_complaint("no wait")
+    assert scoring.is_complaint("crowded")
+
+
+def test_hotels_are_not_storefront_inspiration():
+    hotel = place("Grand Hotel", ["Resort hotel"])
+    cafe = place("Corner Cafe", ["Cafe"])
+    assert not scoring.is_storefront_place(hotel)
+    assert scoring.is_storefront_place(cafe)
+    assert scoring.storefront_share([hotel, hotel, cafe]) == 1 / 3
+
+
+def test_nonprofit_brands_are_not_partners():
+    nonprofit = {"name": "Advocacy Org", "tags": [{"type": "urn:tag:brand_type:qloo", "name": "Nonprofit Brand"}]}
+    shop = {"name": "Cider Co", "tags": [{"type": "urn:tag:brand_type:qloo", "name": "Beverage Brand"}]}
+    assert not scoring.is_commercial_brand(nonprofit)
+    assert scoring.is_commercial_brand(shop)
+
+
+def test_signature_items_follow_the_kind_of_business():
+    dna = {"menu": ["Ramen"], "offerings": ["Cocktails", "Live music"], "amenities": ["Massage"], "activities": ["Karaoke"]}
+    assert scoring.signature_items("Japanese", dna)[0] == "Ramen"
+    assert scoring.signature_items("Lounge", dna) == ["Cocktails", "Live music", "Karaoke"]
+    assert scoring.signature_items("Spa", dna)[0] == "Cocktails"
+    generic_first = {"offerings": ["Alcohol", "Beer", "Craft cider", "Trivia night"]}
+    assert scoring.signature_items("Brewery", generic_first) == ["Craft cider", "Trivia night", "Alcohol"]
+    assert scoring.genre_title("Fine dining restaurant") == "Fine Dining"
+    assert scoring.genre_title("Tex-Mex") == "Tex-Mex"
+    assert scoring.genre_title("New American") == "New American"
+
+
+def test_leakage_is_shrunk_for_small_samples():
+    few = scoring.score_gaps([_row("Few", 3, 5, 4, 12, far=3, total=3)], 1.5e6, 6e6)[0]
+    many = scoring.score_gaps([_row("Many", 3, 5, 4, 12, far=9, total=10)], 1.5e6, 6e6)[0]
+    assert few["leakage"] == 0.8
+    assert 0.8 < many["leakage"] < 0.9
+
+
 def test_business_genre_filters_generic_and_cues():
     assert scoring.is_business_genre("Wine Bar")
     assert not scoring.is_business_genre("Restaurant")
@@ -42,26 +82,111 @@ def test_business_genre_filters_generic_and_cues():
     assert scoring.is_taste_cue("Art museum")
 
 
-def test_gap_score_rewards_demand_leakage_and_low_supply():
-    underserved = scoring.gap_score(rank=1, total=8, nearby_count=2, leakage=1.0)
-    saturated = scoring.gap_score(rank=1, total=8, nearby_count=45, leakage=1.0)
-    low_demand = scoring.gap_score(rank=8, total=8, nearby_count=2, leakage=1.0)
-    satisfied_locally = scoring.gap_score(rank=1, total=8, nearby_count=2, leakage=0.0)
-    assert underserved > saturated
-    assert underserved > low_demand
-    assert underserved > satisfied_locally
-    assert 0 <= saturated <= underserved <= 100
+def _row(name, local, ref, nearby, around, far=9, total=10, kind="local", storefront=1.0):
+    return {
+        "genre_id": name, "genre": name, "demand_rank": local, "ref_rank": ref,
+        "nearby_count": nearby, "nearby_capped": False, "around_count": around, "around_capped": False,
+        "favorites_kind": kind, "favorites_total": total, "favorites_far": far, "median_favorite_km": 3.0,
+        "storefront_share": storefront,
+    }
 
 
-def test_gap_row_measures_leakage_from_favorite_distances():
+def test_gap_signals_counts_favorites_outside_the_walk():
     site = (40.7736, -73.9566)
     near_fav = place("Near", lat=40.7740, lon=-73.9560)
     far_fav = place("Far", lat=40.7200, lon=-73.9900)
-    row = scoring.gap_row("g", "Wine Bar", 2, 8, [place("Comp")], [near_fav, far_fav], site, 800)
+
+    def within(lat, lon):
+        return abs(lat - site[0]) < 0.005 and abs(lon - site[1]) < 0.005
+
+    row = scoring.gap_signals(
+        "g", "Wine Bar", 2, 10.0, [place("Comp")], [place("A"), place("B")], [near_fav, far_fav], "local", 0.9, site, within,
+    )
     assert row["favorites_total"] == 2
     assert row["favorites_far"] == 1
     assert row["nearby_count"] == 1
+    assert row["around_count"] == 2
+    assert row["ref_rank"] == 10.0
+    assert row["favorites_kind"] == "local"
     assert row["median_favorite_km"] is not None
+
+
+def test_score_gaps_prefers_local_lift_and_relative_undersupply():
+    rows = [
+        _row("Over-supplied staple", 1, 1, 30, 60),
+        _row("Local favorite, few nearby", 3, 20, 1, 12),
+        _row("Loved more around than here", 2, 1, 5, 20),
+    ]
+    scored = scoring.score_gaps(rows, catchment_area_m2=1.5e6, around_area_m2=6e6)
+    assert scored[0]["genre"] == "Local favorite, few nearby"
+    assert scored[-1]["genre"] == "Over-supplied staple"
+    assert scored[0]["lift"] > 0
+    assert all(0 <= row["gap_score"] <= 99 for row in scored)
+    assert all("_ratio" not in row for row in scored)
+
+
+def test_missing_reference_rank_is_neutral_not_a_boost():
+    scored = scoring.score_gaps([_row("No refs", 3, None, 4, 12)], 1.5e6, 6e6)
+    assert scored[0]["lift"] == 0.0
+
+
+def test_score_gaps_ranks_thin_and_atypical_evidence_last():
+    rows = [
+        _row("Thin", 1, 30, 0, 1, far=0, total=0),
+        _row("Hotel spas", 1, 30, 0, 4, storefront=0.2),
+        _row("Solid", 5, 6, 2, 8),
+    ]
+    scored = scoring.score_gaps(rows, 1.5e6, 6e6)
+    assert scored[0]["genre"] == "Solid"
+    assert {row["genre"]: row["evidence"] for row in scored} == {"Thin": "thin", "Hotel spas": "atypical", "Solid": "ok"}
+
+
+def test_citywide_favorites_do_not_count_as_leakage():
+    scored = scoring.score_gaps([_row("Famous only", 3, 5, 4, 12, far=10, total=10, kind="citywide")], 1.5e6, 6e6)
+    assert scored[0]["leakage"] is None
+
+
+def test_relative_supply_is_normalised_by_site_baseline():
+    # Every genre is 3x denser inside the walk than around it (e.g. the surroundings include a park),
+    # so relative supply should come out near 1 for all of them.
+    rows = [_row(f"G{i}", i + 1, i + 1, 3 * n, 4 * n) for i, n in enumerate([2, 3, 4, 5])]
+    scored = scoring.score_gaps(rows, 1.5e6, 6e6)
+    assert all(0.8 <= row["relative_supply"] <= 1.25 for row in scored)
+    for row in scored:
+        # The density-adjusted expectation should sit close to what is actually there.
+        assert abs(row["expected_nearby"] - row["nearby_count"]) <= 0.25 * row["nearby_count"] + 1
+
+
+def test_reference_rank_uses_median_and_counts_missing_as_low():
+    assert scoring.reference_rank([2, 4, 30]) == 4.0
+    assert scoring.reference_rank([1, None, None]) == 51.0
+    assert scoring.reference_rank([]) is None
+
+
+def test_split_favorites_prefers_places_locals_love_more_than_the_city():
+    local = [{"entity_id": x} for x in "abcdefg"]
+    city = [{"entity_id": x} for x in "abc"]
+    kind, favorites = scoring.split_favorites(local, city)
+    assert kind == "local"
+    assert [f["entity_id"] for f in favorites] == ["d", "e", "f", "g"]
+    kind, favorites = scoring.split_favorites(local[:6], city)
+    assert kind == "citywide"
+    assert len(favorites) == 6
+
+
+def test_distinctive_by_rank_skips_items_popular_everywhere():
+    everywhere = {"entity_id": "airbnb", "name": "Airbnb"}
+    local_gem = {"entity_id": "gem", "name": "Local Gem"}
+    local = [everywhere, local_gem]
+    references = [[everywhere, *({"entity_id": f"x{i}", "name": f"X{i}"} for i in range(9))] for _ in range(3)]
+    assert [e["name"] for e in scoring.distinctive_by_rank(local, references)] == ["Local Gem"]
+    assert scoring.distinctive_by_rank(local, []) == []
+
+
+def test_storefront_filter_drops_malls_and_hotels():
+    assert not scoring.is_business_genre("Shopping mall")
+    assert not scoring.is_business_genre("Resort hotel")
+    assert scoring.is_business_genre("Fashion accessories store")
 
 
 def test_distinctive_keeps_local_only_entities():

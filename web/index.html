@@ -62,7 +62,18 @@
             <span class="mono label">Site</span>
             <strong id="chosen-label"></strong>
             <span class="mono muted" id="chosen-coords"></span>
+            <span class="mono walk-note" id="chosen-walk"></span>
           </div>
+
+          <fieldset class="focus">
+            <legend class="mono label">Walking catchment</legend>
+            <div class="seg" role="radiogroup" id="walk-seg">
+              <label><input type="radio" name="minutes" value="5" /><span>5 min</span></label>
+              <label><input type="radio" name="minutes" value="10" checked /><span>10 min</span></label>
+              <label><input type="radio" name="minutes" value="15" /><span>15 min</span></label>
+            </div>
+            <p class="seg-note serif">Traced over real streets, so rivers, parks and highways cut it. Cafés live on 5–10 minutes; destinations draw from 15.</p>
+          </fieldset>
 
           <fieldset class="focus">
             <legend class="mono label">Business type</legend>
@@ -70,7 +81,7 @@
               <label><input type="radio" name="focus" value="any" checked /><span>Anything</span></label>
               <label><input type="radio" name="focus" value="food_drink" /><span>Food &amp; drink</span></label>
               <label><input type="radio" name="focus" value="retail" /><span>Retail</span></label>
-              <label><input type="radio" name="focus" value="leisure" /><span>Leisure</span></label>
+              <label><input type="radio" name="focus" value="leisure" /><span>Leisure &amp; wellness</span></label>
             </div>
           </fieldset>
 
@@ -110,7 +121,7 @@
         <header class="sec-head">
           <span class="sec-no mono">02</span>
           <h2 class="sec-title">The block today</h2>
-          <p class="sec-note serif">Everything Qloo knows within a ten-minute walk.</p>
+          <p class="sec-note serif">Everything Qloo knows inside the walking catchment.</p>
         </header>
         <div class="stats" id="block-stats"></div>
         <h3 class="label mono">Most common here</h3>
@@ -132,12 +143,12 @@
         <header class="sec-head">
           <span class="sec-no mono">03</span>
           <h2 class="sec-title">What's missing</h2>
-          <p class="sec-note serif">Place types the locals love, ranked by how underserved they are within walking distance. Open one to see where people go instead.</p>
+          <p class="sec-note serif">Place types locals love, compared with same-size areas around the site and ranked by how under-supplied they are inside the walk. Open one to see the competitors and the places locals love most.</p>
         </header>
         <div class="gap-key mono">
           <span><i class="k-score"></i>Gap score</span>
-          <span><i class="k-supply"></i>Within a 10-min walk</span>
-          <span><i class="k-far"></i>Locals' favorites beyond it</span>
+          <span><i class="k-supply"></i>Inside the walk</span>
+          <span><i class="k-far"></i>Local favorites outside it</span>
         </div>
         <ol class="gaps" id="gaps"></ol>
       </section>
@@ -156,7 +167,7 @@
         <header class="sec-head">
           <span class="sec-no mono">05</span>
           <h2 class="sec-title">The wider taste</h2>
-          <p class="sec-note serif">What this neighborhood over-indexes on compared with the rest of the city.</p>
+          <p class="sec-note serif">What this neighborhood over-indexes on compared with same-size areas around it.</p>
         </header>
         <div class="marquee" aria-hidden="true"><div class="marquee-track" id="marquee"></div></div>
         <div class="taste-grid">
@@ -191,10 +202,11 @@
       <div class="map-hint mono" id="map-hint">Click the map to place a site</div>
       <div class="legend mono" id="legend" hidden>
         <span><i class="lg-site"></i>Site</span>
-        <span><i class="lg-ring"></i>10-min walk</span>
+        <span><i class="lg-ring"></i><b id="legend-walk">10-min walk</b></span>
         <span><i class="lg-place"></i>Places nearby</span>
         <span><i class="lg-comp"></i>Competitors</span>
-        <span><i class="lg-fav"></i>Locals' favorites</span>
+        <span><i class="lg-fav"></i>Loved here more than citywide</span>
+        <span><i class="lg-famous"></i>City's famous spots</span>
         <span><i class="lg-grid"></i><b id="legend-grid">Taste grid</b></span>
       </div>
     </aside>

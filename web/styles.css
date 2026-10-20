@@ -181,6 +181,8 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 }
 .chosen .label { margin: 0; color: var(--blue); }
 .chosen strong { font-size: 17px; font-weight: 500; }
+.walk-note { flex-basis: 100%; color: var(--blue); }
+.seg-note { max-width: 48ch; margin-top: 10px; font-size: 15px; line-height: 1.35; color: #4a4a46; }
 .focus { margin: 0; padding: 0; border: 0; min-width: 0; }
 .focus .label { margin: 0 0 10px; padding: 0; }
 .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; background: var(--card); border: 1.5px solid var(--ink); border-radius: 999px; }
@@ -302,8 +304,14 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 .gap.first .gap-score { color: var(--blue); }
 .gap-name { display: block; margin-bottom: 10px; font-size: 24px; font-weight: 500; line-height: 1.1; }
 .gap-name small { margin-left: 6px; }
+.gap-name .flag {
+  margin-left: 8px; padding: 2px 8px; border: 1px solid var(--ink); border-radius: 999px;
+  background: var(--yellow); color: var(--ink); vertical-align: 3px;
+}
+.gap-why { display: block; margin: -4px 0 10px; font-size: 15.5px; line-height: 1.35; color: #2c2c29; }
+.gap.thin .gap-score { color: var(--ash); }
 .gap-bars { display: grid; gap: 7px; }
-.meter { display: grid; grid-template-columns: 172px 1fr; gap: 10px; align-items: center; }
+.meter { display: grid; grid-template-columns: 210px 1fr; gap: 10px; align-items: center; }
 .meter > .mono { font-size: 10.5px; color: #555; }
 .pips, .dots { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; }
 .pips i { width: 9px; height: 9px; background: var(--ink); }
@@ -456,6 +464,7 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 .lg-place { width: 6px !important; height: 6px !important; margin: 3px; background: var(--ink); border-radius: 50%; }
 .lg-comp { background: #fff; border: 1.5px solid var(--ink); border-radius: 50%; }
 .lg-fav { background: var(--blue); border-radius: 50%; }
+.lg-famous { background: #fff; border: 1.5px solid var(--blue); border-radius: 50%; }
 .lg-grid { background: rgba(0, 0, 255, .35); }
 
 .leaflet-control-zoom.leaflet-bar { margin: 28px 28px 0 0; border: var(--rule); border-radius: 0; box-shadow: none; }
@@ -494,6 +503,8 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 @keyframes sweep { to { transform: rotate(360deg); } }
 .pdot { transform-box: fill-box; transform-origin: center; animation: dotIn .7s var(--ease) both; }
 @keyframes dotIn { from { opacity: 0; transform: scale(3); } }
+.walk { transform-box: fill-box; transform-origin: center; animation: walkIn 1.1s var(--ease) both; }
+@keyframes walkIn { from { opacity: 0; transform: scale(.55); } }
 .leak { stroke-linecap: round; transition: stroke-dashoffset 1.5s var(--ease); }
 
 .leaflet-tooltip.tip {
