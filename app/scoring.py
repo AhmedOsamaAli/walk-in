@@ -36,8 +36,11 @@ NOT_STOREFRONT_GENRES = {
 GENERIC_OFFERINGS = {
     "alcohol", "hard liquor", "beer", "wine", "coffee", "food", "drinks", "corporate events", "wedding services",
     "marketplace", "private events", "event space", "catering", "parking", "restroom", "vegetarian options",
-    "vegan options", "quick bite", "comfort food", "healthy options", "kids menu", "late-night food", "dine-in",
+    "vegan options", "quick bite", "comfort food", "healthy options", "kids menu", "late-night food", "late night food", "dine-in",
     "takeout", "delivery", "seating", "outdoor seating", "wi fi", "wifi", "bar", "full bar", "restaurant",
+    # Activity and attribute tags that describe nearly every bar or restaurant.
+    "dining drinking", "social community", "nightlife", "entertainment", "ok to order just drinks",
+    "sports recreation", "culture arts", "nature outdoors", "tours", "celebrations",
 }
 
 COMPLAINT_PATTERN = re.compile(
@@ -56,6 +59,9 @@ NOT_COMPLAINT_PATTERN = re.compile(
 # "not crowded", "no wait": a complaint word that is negated reads as praise.
 NEGATED_PATTERN = re.compile(r"^\s*(not|never|no longer|hardly)\s+|\bno (wait|waiting|lines?|queues?|crowds?)\b", re.IGNORECASE)
 NON_COMMERCIAL_BRAND = re.compile(r"nonprofit|non-profit|political|government|religious|advocacy", re.IGNORECASE)
+# Makers, shops and designers can co-brand with a small storefront; media groups and corporations cannot.
+# Teams (Qloo's "entertainment" brands) are added for sports concepts only.
+PARTNER_BRAND_KINDS = {"product", "retail", "personal"}
 
 DESIGN_FAMILIES = {
     "decor": "urn:tag:decor",
@@ -133,16 +139,30 @@ def signature_items(genre: str, dna: dict, limit: int = 3) -> list[str]:
     if kind == "food":
         items = (dna.get("menu") or []) + (dna.get("offerings") or [])
     elif kind == "venue":
-        items = (dna.get("offerings") or []) + (dna.get("activities") or []) + (dna.get("menu") or [])
+        # What people go there to do comes first: game day viewing, concerts, brewery tours.
+        items = (dna.get("activities") or []) + (dna.get("offerings") or []) + (dna.get("menu") or [])
     else:
         items = (dna.get("offerings") or []) + (dna.get("amenities") or []) + (dna.get("activities") or [])
     unique: list[str] = []
+    seen: set[str] = set()
     for item in items:
-        if item and item not in unique:
+        if item and item.lower() not in seen:
+            seen.add(item.lower())
             unique.append(item)
     specific = [item for item in unique if item.lower() not in GENERIC_OFFERINGS]
     generic = [item for item in unique if item.lower() in GENERIC_OFFERINGS]
-    return (specific + generic)[:limit] if len(specific) < limit else specific[:limit]
+    # "Steak" adds nothing next to "Steak frites"; only specific items can cover others.
+    covering = [_words(item) for item in specific]
+    specific = [item for item in specific if not any(_words(item) < other for other in covering)]
+    generic = [item for item in generic if not any(_words(item) < other for other in covering)]
+    # Generic items only pad a short list; they never trail specific ones.
+    if len(specific) >= min(limit, 3):
+        return specific[:limit]
+    return (specific + generic)[: min(limit, 3)]
+
+
+def _words(text: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z]+", text.lower()))
 
 
 def genre_title(name: str) -> str:
@@ -459,9 +479,27 @@ def average_demographics(rows: list[dict]) -> dict | None:
 
 def entity_card(entity: dict) -> dict:
     props = entity.get("properties") or {}
-    return {
+    card = {
         "id": item_id(entity),
         "name": entity.get("name"),
         "image": (props.get("image") or {}).get("url"),
         "popularity": round(entity.get("popularity") or 0, 3),
     }
+    kind = brand_kind(entity)
+    if kind:
+        card["kind"] = kind
+    return card
+
+
+def brand_kind(entity: dict) -> str | None:
+    """Qloo's brand type in short form: 'Product Brand' -> 'product'."""
+    for tag in entity.get("tags") or []:
+        if tag.get("type") == "urn:tag:brand_type:qloo" and tag.get("name"):
+            return re.sub(r"\s*brand$", "", tag["name"].strip(), flags=re.IGNORECASE).lower() or None
+    return None
+
+
+def partner_brands(brands: list[dict], genre: str) -> list[dict]:
+    """Brand cards a small storefront of this genre could realistically collaborate with."""
+    kinds = PARTNER_BRAND_KINDS | ({"entertainment"} if re.search(r"sport", genre, re.IGNORECASE) else set())
+    return [brand for brand in brands if brand.get("kind") in kinds]

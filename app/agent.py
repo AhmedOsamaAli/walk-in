@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections import OrderedDict
@@ -14,6 +15,8 @@ from .catchment import Catchment, CatchmentService
 from .images import ImageGen
 from .llm import LLM
 from .qloo import QlooClient, QlooError
+
+log = logging.getLogger("blankspace")
 
 Emit = Callable[[str, dict], Awaitable[None]]
 
@@ -418,6 +421,7 @@ async def analyze_site(
                 try:
                     concepts, mode = await agent_concepts(llm, run, emit), "agent"
                 except Exception as exc:  # LLM outages must not break the demo
+                    log.warning("Concept agent failed; falling back to evidence rules", exc_info=True)
                     await emit("notice", {"message": f"LLM unavailable ({type(exc).__name__}); using evidence rules."})
             if not concepts:
                 concepts, mode = rule_concepts(run), "rules"
@@ -441,7 +445,7 @@ DESIGN_SYSTEM = """You are Blank Space's concept designer. Turn a business conce
 Ground every choice in the evidence: design DNA of the locals' favorite places, local artists, nearby places and local brands.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), hours, music {direction, artists (list, only from local_artists)},
-partners (list of {name, why}; name only from nearby_places or local_brands), launch (string), image_prompt
+partners (list of {name, why}; name only from nearby_places or partner_brands), launch (string), image_prompt
 (a photorealistic interior description with no text, logos or people's faces)."""
 
 
@@ -451,7 +455,8 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) 
     dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
     local_artists = [a["name"] for a in run.taste.get("distinctive_artists", []) + run.taste.get("artists", [])]
     nearby = [p.get("name") for p in run.block if p.get("name")]
-    brands = [b["name"] for b in run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])]
+    brand_cards = list({b["name"]: b for b in run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])}.values())
+    fitting_brands = [b["name"] for b in scoring.partner_brands(brand_cards, concept["genre"])]
     design: dict[str, Any] = {}
     mode = "rules"
     if llm.enabled:
@@ -463,20 +468,22 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) 
                 "design_dna_of_locals_favorites": dna,
                 "local_artists": local_artists[:15],
                 "nearby_places": nearby[:40],
-                "local_brands": brands[:15],
+                "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
+                "partner_brands": fitting_brands[:8],
                 "taste_cues": run.cues,
                 "crowd": describe_age(run.demographics),
             }, ensure_ascii=False))
             mode = "agent"
         except Exception:
+            log.warning("Design brief LLM call failed; using evidence rules", exc_info=True)
             design = {}
     if not design:
-        design = rule_design(run, concept, dna, local_artists, nearby, brands)
+        design = rule_design(run, concept, dna, local_artists, fitting_brands)
         mode = "rules"
     music = design.get("music") or {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
     design["music"] = music
-    allowed_partners = {name.lower(): name for name in set(nearby) | set(brands)}
+    allowed_partners = {name.lower(): name for name in set(nearby) | set(fitting_brands)}
     design["partners"] = [
         {**p, "name": allowed_partners[p["name"].lower()]}
         for p in design.get("partners") or []
@@ -490,6 +497,7 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int) 
         try:
             design["image"] = await images.generate(prompt)
         except Exception:
+            log.warning("Interior image generation failed", exc_info=True)
             design["image"] = None
     return design
 
@@ -522,7 +530,7 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
     return [p["name"] for p in candidates[:limit]]
 
 
-def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], nearby: list[str], brands: list[str]) -> dict:
+def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str]) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
     minutes = run.site.minutes
@@ -530,9 +538,8 @@ def rule_design(run: RunState, concept: dict, dna: dict, artists: list[str], nea
         {"name": name, "why": f"Popular inside the {minutes}-minute walk and not a direct competitor; cross-promote."}
         for name in partner_places(run, concept["genre"])
     ]
-    distinctive_brands = run.taste.get("distinctive_brands") or []
-    if distinctive_brands:
-        partners.append({"name": distinctive_brands[0]["name"], "why": "Over-indexes here versus the areas around."})
+    if partner_brands:
+        partners.append({"name": partner_brands[0], "why": "A brand this area over-indexes on; a natural co-branded launch."})
     cue = run.cues[0].lower() if run.cues else ""
     if cue and not cue.endswith("s"):
         cue += "s"

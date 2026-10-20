@@ -1,14 +1,15 @@
-"""FastAPI server: streams agent runs over server-sent events and serves the web app."""
+"""HTTP layer: composes the services, streams survey runs over server-sent events and serves the web app."""
 from __future__ import annotations
 
 import asyncio
 import json
-import time
-from collections import defaultdict, deque
+import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Callable
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,14 +17,19 @@ from pydantic import BaseModel
 from . import agent, engine
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
+from .geocode import Geocoder
+from .images import ImageGen
 from .llm import LLM
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
+from .ratelimit import RateLimiter, client_ip
+
+log = logging.getLogger("blankspace")
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
 RUNS_PER_HOUR = 20
 DESIGNS_PER_HOUR = 40
-HEATMAPS_PER_HOUR = 200
+MAP_REQUESTS_PER_HOUR = 200
 
 PRESETS = [
     {"id": "ues", "label": "Upper East Side, Manhattan", "lat": 40.7736, "lon": -73.9566,
@@ -38,104 +44,71 @@ PRESETS = [
      "blurb": "Works beyond the US: Cairo's island district"},
 ]
 
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' https://unpkg.com",
+    "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+
+
+@dataclass
+class Services:
+    """Everything the endpoints talk to; swapped for fakes in tests."""
+
+    qloo: QlooClient
+    walker: CatchmentService
+    llm: LLM
+    images: ImageGen
+    geocoder: Geocoder
+
+    async def aclose(self) -> None:
+        for service in (self.qloo, self.walker, self.images, self.geocoder):
+            await service.aclose()
+
+
+def default_services() -> Services:
+    return Services(
+        qloo=QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir),
+        walker=CatchmentService(settings.walk_cache_dir),
+        llm=build_llm(settings),
+        images=build_images(settings),
+        geocoder=Geocoder(),
+    )
+
 
 class DesignRequest(BaseModel):
     run_id: str
     index: int
 
 
-class RateLimiter:
-    def __init__(self, limit: int, window_s: int) -> None:
-        self.limit, self.window_s = limit, window_s
-        self._hits: dict[str, deque] = defaultdict(deque)
-
-    def allow(self, key: str) -> bool:
-        now = time.time()
-        hits = self._hits[key]
-        while hits and now - hits[0] > self.window_s:
-            hits.popleft()
-        if len(hits) >= self.limit:
-            return False
-        hits.append(now)
-        return True
+router = APIRouter(prefix="/api")
 
 
-class Geocoder:
-    """OpenStreetMap Nominatim, throttled to its 1 request/second policy and cached in memory."""
-
-    def __init__(self) -> None:
-        self._cache: dict[str, list[dict]] = {}
-        self._lock = asyncio.Lock()
-        self._last = 0.0
-        self._http = httpx.AsyncClient(
-            base_url="https://nominatim.openstreetmap.org",
-            headers={"User-Agent": "BlankSpace/0.1 (Qloo Agentic Hackathon demo)"},
-            timeout=15,
-        )
-
-    async def search(self, query: str) -> list[dict]:
-        key = query.strip().lower()
-        if key in self._cache:
-            return self._cache[key]
-        async with self._lock:
-            wait = 1.0 - (time.time() - self._last)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            response = await self._http.get("/search", params={"q": query, "format": "jsonv2", "limit": 5})
-            self._last = time.time()
-        response.raise_for_status()
-        results = [
-            {"label": item.get("display_name"), "lat": float(item["lat"]), "lon": float(item["lon"])}
-            for item in response.json()
-        ]
-        self._cache[key] = results
-        return results
-
-    async def aclose(self) -> None:
-        await self._http.aclose()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.qloo = QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir)
-    app.state.llm = build_llm(settings)
-    app.state.images = build_images(settings)
-    app.state.runs = agent.RunStore()
-    app.state.limiter = RateLimiter(RUNS_PER_HOUR, 3600)
-    app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
-    app.state.heatmap_limiter = RateLimiter(HEATMAPS_PER_HOUR, 3600)
-    app.state.geocoder = Geocoder()
-    app.state.walker = CatchmentService(settings.walk_cache_dir)
-    yield
-    await app.state.qloo.aclose()
-    await app.state.geocoder.aclose()
-    await app.state.walker.aclose()
-    await app.state.images.aclose()
-
-
-app = FastAPI(title="Blank Space", lifespan=lifespan)
-
-
-def client_ip(request: Request) -> str:
-    # The hosting proxy appends the address it saw, so the last entry cannot be forged by the client.
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
-
-
-@app.get("/api/health")
+@router.get("/health")
 async def health(request: Request) -> dict:
-    llm: LLM = request.app.state.llm
-    return {"ok": True, "llm": llm.enabled, "model": llm.model if llm.enabled else None, "image": request.app.state.images.enabled}
+    services: Services = request.app.state.services
+    return {
+        "ok": True,
+        "qloo": services.qloo.configured,
+        "llm": services.llm.enabled,
+        "model": services.llm.model if services.llm.enabled else None,
+        "image": services.images.enabled,
+    }
 
 
-@app.get("/api/presets")
+@router.get("/presets")
 async def presets() -> list[dict]:
     return PRESETS
 
 
-@app.get("/api/run")
+@router.get("/run")
 async def run(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -149,9 +122,11 @@ async def run(
         raise HTTPException(400, "Unknown focus")
     if minutes not in ALLOWED_MINUTES:
         raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
-    if not request.app.state.limiter.allow(client_ip(request)):
+    if not request.app.state.run_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many runs from this address. Try again in an hour.")
 
+    services: Services = request.app.state.services
+    runs: agent.RunStore = request.app.state.runs
     site = agent.Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
     )
@@ -161,15 +136,13 @@ async def run(
         await queue.put((event, data))
 
     async def produce() -> None:
-        llm: LLM = request.app.state.llm
-        state = request.app.state
-        tasks = [agent.analyze_site(state.qloo, state.walker, llm, state.runs, site, emit)]
-        if llm.enabled:
+        tasks = [agent.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit)]
+        if services.llm.enabled:
             async def baseline() -> None:
                 try:
-                    await emit("baseline", {"concepts": await agent.plain_llm_concepts(llm, site)})
+                    await emit("baseline", {"concepts": await agent.plain_llm_concepts(services.llm, site)})
                 except Exception:
-                    pass
+                    log.warning("No-data baseline failed", exc_info=True)
             tasks.append(baseline())
         try:
             await asyncio.gather(*tasks)
@@ -200,21 +173,22 @@ async def run(
     )
 
 
-@app.post("/api/design")
+@router.post("/design")
 async def design(request: Request, body: DesignRequest) -> dict:
-    state = request.app.state.runs.get(body.run_id)
-    if not state or not (0 <= body.index < len(state.concepts)):
+    run_state = request.app.state.runs.get(body.run_id)
+    if not run_state or not (0 <= body.index < len(run_state.concepts)):
         raise HTTPException(404, "Run or concept not found. Run the site again.")
-    if body.index in state.designs:
-        return state.designs[body.index]
+    if body.index in run_state.designs:
+        return run_state.designs[body.index]
     if not request.app.state.design_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many design requests. Try again later.")
-    result = await agent.design_concept(request.app.state.llm, request.app.state.images, state, body.index)
-    state.designs[body.index] = result
+    services: Services = request.app.state.services
+    result = await agent.design_concept(services.llm, services.images, run_state, body.index)
+    run_state.designs[body.index] = result
     return result
 
 
-@app.get("/api/catchment")
+@router.get("/catchment")
 async def catchment(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -223,31 +197,31 @@ async def catchment(
 ) -> dict:
     if minutes not in ALLOWED_MINUTES:
         raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
-    if not request.app.state.heatmap_limiter.allow(client_ip(request)):
+    if not request.app.state.map_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many map requests. Try again later.")
-    walk = await request.app.state.walker.walk(lat, lon, minutes)
+    walk = await request.app.state.services.walker.walk(lat, lon, minutes)
     return walk.public()
 
 
-@app.get("/api/heatmap")
+@router.get("/heatmap")
 async def heatmap(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     tag: str = Query(..., min_length=10, max_length=120, pattern=r"^urn:tag:[a-z0-9_:]+$"),
 ) -> dict:
-    if not request.app.state.heatmap_limiter.allow(client_ip(request)):
+    if not request.app.state.map_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many map requests. Try again later.")
     try:
-        return {"cells": await engine.genre_heatmap(request.app.state.qloo, lat, lon, tag)}
+        return {"cells": await engine.genre_heatmap(request.app.state.services.qloo, lat, lon, tag)}
     except QlooError as exc:
         raise HTTPException(502, str(exc)) from exc
 
 
-@app.get("/api/geocode")
+@router.get("/geocode")
 async def geocode(request: Request, q: str = Query(..., min_length=3, max_length=160)) -> list[dict]:
     try:
-        return await request.app.state.geocoder.search(q)
+        return await request.app.state.services.geocoder.search(q)
     except httpx.HTTPError as exc:
         raise HTTPException(502, "Address search is unavailable right now.") from exc
 
@@ -261,4 +235,33 @@ class RevalidatingStaticFiles(StaticFiles):
         return response
 
 
-app.mount("/", RevalidatingStaticFiles(directory=ROOT / "web", html=True), name="web")
+def create_app(services_factory: Callable[[], Services] = default_services) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        services = services_factory()
+        app.state.services = services
+        app.state.runs = agent.RunStore()
+        app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
+        app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
+        app.state.map_limiter = RateLimiter(MAP_REQUESTS_PER_HOUR, 3600)
+        try:
+            yield
+        finally:
+            await services.aclose()
+
+    app = FastAPI(title="Blank Space", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        return response
+
+    app.include_router(router)
+    app.mount("/", RevalidatingStaticFiles(directory=ROOT / "web", html=True), name="web")
+    return app
+
+
+app = create_app()

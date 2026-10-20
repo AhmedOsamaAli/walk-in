@@ -27,8 +27,8 @@ class QlooClient:
         max_concurrency: int = 6,
         timeout: float = 45.0,
     ) -> None:
-        if not api_key:
-            raise QlooError("QLOO_API_KEY is not set")
+        # A missing key only fails live calls; cached responses keep working (useful after the hackathon key expires).
+        self.configured = bool(api_key)
         self._http = httpx.AsyncClient(
             base_url=base_url,
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
@@ -72,6 +72,8 @@ class QlooClient:
             self._inflight.pop(key, None)
 
     async def _fetch(self, path: str, params: dict[str, Any]) -> dict:
+        if not self.configured:
+            raise QlooError("QLOO_API_KEY is not set, and this request is not cached.")
         async with self._gate:
             for attempt in range(4):
                 try:

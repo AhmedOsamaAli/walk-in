@@ -59,13 +59,50 @@ def test_nonprofit_brands_are_not_partners():
 def test_signature_items_follow_the_kind_of_business():
     dna = {"menu": ["Ramen"], "offerings": ["Cocktails", "Live music"], "amenities": ["Massage"], "activities": ["Karaoke"]}
     assert scoring.signature_items("Japanese", dna)[0] == "Ramen"
-    assert scoring.signature_items("Lounge", dna) == ["Cocktails", "Live music", "Karaoke"]
+    assert scoring.signature_items("Lounge", dna) == ["Karaoke", "Cocktails", "Live music"]
     assert scoring.signature_items("Spa", dna)[0] == "Cocktails"
     generic_first = {"offerings": ["Alcohol", "Beer", "Craft cider", "Trivia night"]}
     assert scoring.signature_items("Brewery", generic_first) == ["Craft cider", "Trivia night", "Alcohol"]
     assert scoring.genre_title("Fine dining restaurant") == "Fine Dining"
     assert scoring.genre_title("Tex-Mex") == "Tex-Mex"
     assert scoring.genre_title("New American") == "New American"
+
+
+def test_signature_items_drop_items_contained_in_a_longer_one():
+    dna = {"menu": ["Steak frites", "Steak", "steak frites", "Salmon burger", "Burger", "Fries"]}
+    assert scoring.signature_items("Brunch", dna, limit=6) == ["Steak frites", "Salmon burger", "Fries"]
+    # A generic tag never knocks out a specific item it happens to contain.
+    assert scoring.signature_items("Diner", {"menu": ["Vegetarian"], "offerings": ["Vegetarian options"]}) == ["Vegetarian", "Vegetarian options"]
+
+
+def test_generic_items_only_pad_short_lists():
+    short = {"menu": ["Chicken and waffles", "Fries"], "offerings": ["Alcohol", "Wine", "Beer"]}
+    assert scoring.signature_items("Brunch", short, limit=6) == ["Chicken and waffles", "Fries", "Alcohol"]
+    longer = {"menu": ["Chicken and waffles", "Fries", "Grits", "Biscuits"], "offerings": ["Alcohol"]}
+    assert scoring.signature_items("Brunch", longer, limit=6) == ["Chicken and waffles", "Fries", "Grits", "Biscuits"]
+
+
+def test_venues_lead_with_what_people_go_there_to_do():
+    dna = {
+        "menu": ["Buffalo chicken wings", "Sliders"],
+        "offerings": ["Cocktails", "Ok to order just drinks", "Alcohol"],
+        "activities": ["Dining drinking", "Social community", "Nightlife", "Game day viewing", "Live entertainment"],
+    }
+    assert scoring.signature_items("Sports Bar", dna, limit=6) == [
+        "Game day viewing", "Live entertainment", "Cocktails", "Buffalo chicken wings", "Sliders",
+    ]
+
+
+def test_partner_brands_fit_the_business():
+    def card(name, brand_type):
+        return scoring.entity_card({"entity_id": name, "name": name, "tags": [{"type": "urn:tag:brand_type:qloo", "name": brand_type}]})
+
+    brands = [card("Daily News", "Media Brand"), card("City FC", "Entertainment Brand"), card("Big Motors", "Corporate Brand"),
+              card("Cider Co", "Product Brand"), card("Corner Books", "Retail Brand")]
+    assert [b["kind"] for b in brands] == ["media", "entertainment", "corporate", "product", "retail"]
+    assert [b["name"] for b in scoring.partner_brands(brands, "Seafood")] == ["Cider Co", "Corner Books"]
+    assert [b["name"] for b in scoring.partner_brands(brands, "Sports Bar")] == ["City FC", "Cider Co", "Corner Books"]
+    assert "kind" not in scoring.entity_card({"entity_id": "a", "name": "An Artist"})
 
 
 def test_leakage_is_shrunk_for_small_samples():

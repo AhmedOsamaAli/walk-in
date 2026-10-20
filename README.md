@@ -40,7 +40,7 @@ We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower Ea
 - **Comparing a neighborhood with the whole city is biased by scale.** At walk scale "New American" ranks #2 in both the Upper East Side and Williamsburg, but #17 across New York, which looked like a strong local preference. Against same-size areas around each site it ranks #3–#4: no real lift. Blank Space now compares against six same-size areas. Real lifts survive (Upper East Side fine dining #7 here vs #15.5 around; East Austin breweries #2 vs #5.5).
 - **Locals' favorite places are mostly the city's famous places.** For the same category, the top-10 favorites of a neighborhood overlap the city's top-10 by 6–10 of 10, so "most favorites are outside the walk" was true everywhere and meant nothing. The places locals love *more than the city does* are informative, and most of them are within a kilometre of the site. Travel ("pull") is now measured on those, and only claimed with at least four of them.
 
-Other safeguards: categories Qloo barely knows locally are flagged as thin data and ranked last; categories whose local favorites are mostly hotels or malls (hotel spas in Cairo, for example) are flagged as atypical; nonprofit and political brands are never suggested as partners; negated review keywords ("not crowded") are not counted as complaints.
+Other safeguards: categories Qloo barely knows locally are flagged as thin data and ranked last; categories whose local favorites are mostly hotels or malls (hotel spas in Cairo, for example) are flagged as atypical; partners are limited to makers, shops and designers (plus teams for sports concepts), never nonprofits, media groups or corporations; negated review keywords ("not crowded") are not counted as complaints.
 
 ## Limitations
 
@@ -60,7 +60,7 @@ copy .env.example .env            # macOS/Linux: cp .env.example .env, then add 
 uvicorn app.main:app --port 8765
 ```
 
-Open http://127.0.0.1:8765. Tests: `pytest`. Full evaluation over the preset sites: `python scripts/evaluate_sites.py`.
+Open http://127.0.0.1:8765. Tests: `pytest` (unit tests for the scoring, plus end-to-end tests that drive the real HTTP app and pipeline against a synthetic Qloo world and a mocked LLM, so they run offline). Full evaluation over the preset sites with live Qloo data: `python scripts/evaluate_sites.py`.
 
 ## Configuration
 

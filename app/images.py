@@ -27,7 +27,7 @@ class ImageGen:
         self._api_key = api_key
         self._base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self._model = model
-        self._http = http_client or httpx.AsyncClient(timeout=60)
+        self._http_client = http_client
         if self.provider == "cloudflare":
             self.enabled = bool(cf_account_id and cf_api_token)
         elif self.provider == "openai":
@@ -35,8 +35,16 @@ class ImageGen:
         else:
             self.enabled = False
 
+    @property
+    def _http(self) -> httpx.AsyncClient:
+        # Created on first use, so a disabled generator never loads TLS certificates.
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=60)
+        return self._http_client
+
     async def aclose(self) -> None:
-        await self._http.aclose()
+        if self._http_client is not None:
+            await self._http_client.aclose()
 
     async def generate(self, prompt: str) -> str | None:
         """Returns a data URL (or https URL) for the image, or None when disabled or failing."""
