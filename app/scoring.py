@@ -210,10 +210,16 @@ def genre_tags(entity: dict) -> list[tuple[str, str]]:
     ]
 
 
+def primary_genre_tag(entity: dict) -> tuple[str, str] | None:
+    """Qloo's main category for a place as (tag id, name); its tag list is unordered ('Izakaya' may come first)."""
+    tag = (entity.get("properties") or {}).get("primary_genre") or {}
+    name, tag_id = tag.get("name"), tag.get("id")
+    return (tag_id, name) if isinstance(name, str) and tag_id and is_business_genre(name) else None
+
+
 def primary_genre(entity: dict) -> str | None:
-    """Qloo's main category for a place ('Egyptian restaurant'); its tag list is unordered ('Izakaya' may come first)."""
-    name = ((entity.get("properties") or {}).get("primary_genre") or {}).get("name")
-    return name if isinstance(name, str) and is_business_genre(name) else None
+    tag = primary_genre_tag(entity)
+    return tag[1] if tag else None
 
 
 def is_business_genre(name: str) -> bool:
@@ -378,12 +384,11 @@ def clock_text(hour: float) -> str:
     return f"{shown}{f':{minutes:02d}' if minutes else ''} {suffix}"
 
 
-def typical_hours(places: Iterable[dict], minimum: int = 3) -> dict | None:
-    """The opening hours most places of a type keep, per day group, from Qloo's listed hours.
+def hours_by_group(places: Iterable[dict], minimum: int = 3) -> tuple[dict[str, tuple[float, float] | str], int] | None:
+    """Median opening and closing hour per day group ('closed' when most places close then), and the sample size.
 
-    Medians are rounded to the half hour; a day group most of the places close on is reported as closed. About 7 % of
-    places are listed as closed every day, including busy chains and cinemas, which means their hours are unknown, so
-    only places listed as open on at least one day count.
+    Medians are rounded to the half hour. About 7 % of places are listed as closed every day, including busy chains and
+    cinemas, which means their hours are unknown, so only places listed as open on at least one day count.
     """
     weekly = [
         hours for p in places
@@ -391,27 +396,40 @@ def typical_hours(places: Iterable[dict], minimum: int = 3) -> dict | None:
     ]
     if len(weekly) < minimum:
         return None
-    groups = []
+    groups: dict[str, tuple[float, float] | str] = {}
     for label, days in DAY_GROUPS:
         spans = [span for hours in weekly for day in days if (span := day_span(hours.get(day)))]
         closed = sum(1 for hours in weekly for day in days if any(i.get("closed") for i in hours.get(day) or []))
         if closed > len(spans):
-            groups.append((label, "closed"))
-            continue
-        if not spans:
-            continue
-        opens = round(median(o for o, _ in spans) * 2) / 2
-        closes = round(median(c for _, c in spans) * 2) / 2
-        groups.append((label, "24 hours" if closes - opens >= 24 else f"{clock_text(opens)}–{clock_text(closes)}"))
+            groups[label] = "closed"
+        elif spans:
+            groups[label] = (round(median(o for o, _ in spans) * 2) / 2, round(median(c for _, c in spans) * 2) / 2)
+    return groups, len(weekly)
+
+
+def span_text(span: tuple[float, float] | str) -> str:
+    if isinstance(span, str):
+        return span
+    opens, closes = span
+    return "24 hours" if closes - opens >= 24 else f"{clock_text(opens)}–{clock_text(closes)}"
+
+
+def typical_hours(places: Iterable[dict], minimum: int = 3) -> dict | None:
+    """The opening hours most places of a type keep, per day group, from Qloo's listed hours."""
+    found = hours_by_group(places, minimum)
+    if not found:
+        return None
+    groups, sample = found
     merged: list[list[str]] = []
-    for label, text in groups:
+    for label, span in groups.items():
+        text = span_text(span)
         if merged and merged[-1][1] == text:
             merged[-1][0] = f"{merged[-1][0].split('–')[0]}–{label.split('–')[-1]}"
         else:
             merged.append([label, text])
     if len(merged) == 1:
         merged[0][0] = "Daily"
-    return {"text": " · ".join(f"{label} {text}" for label, text in merged), "sample": len(weekly)}
+    return {"text": " · ".join(f"{label} {text}" for label, text in merged), "sample": sample}
 
 
 def reference_rank(ranks: list[int | None], missing: int = UNRANKED) -> float | None:

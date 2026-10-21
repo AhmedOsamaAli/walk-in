@@ -51,6 +51,13 @@ def evidence_brief(run: RunState) -> dict:
     unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
     if unit:
         brief["unit"] = unit
+    verdict = run.verdict
+    if verdict and verdict.get("found"):
+        row = next((r for r in run.gaps + run.explored if r["genre_id"] == verdict["genre_id"]), None)
+        brief["owner_request"] = {
+            "genre": verdict["genre"], "verdict": verdict["headline"], "rank_among_gaps": f"#{verdict['position']} of {verdict['of']}",
+            "evidence": gap_summary(row) if row else None,
+        }
     return brief
 
 

@@ -438,6 +438,10 @@ def test_map_and_lookup_endpoints():
     ({**RUN_PARAMS, "kitchen": "industrial"}, 422),
     ({**RUN_PARAMS, "size_m2": 4}, 422),
     ({**RUN_PARAMS, "outdoor": "maybe"}, 422),
+    ({**RUN_PARAMS, "intent": "pivot"}, 422),
+    ({**RUN_PARAMS, "intent": "open"}, 400),
+    ({**RUN_PARAMS, "intent": "improve"}, 400),
+    ({**RUN_PARAMS, "intent": "improve", "place_id": "../etc"}, 422),
 ])
 def test_run_rejects_bad_input(params, status):
     with make_client() as client:
@@ -476,6 +480,75 @@ def test_a_unit_nothing_fits_gets_an_honest_answer():
         concepts = first(events, "concepts")
         assert concepts["concepts"] == [] and concepts["mode"] == "none"
         assert concepts["note"] == "None of the categories the block is missing fits this unit."
+
+
+def test_open_intent_judges_the_requested_business_and_designs_it_first():
+    with make_client() as client:
+        events = sse_events(client.get("/api/run", params={**RUN_PARAMS, "intent": "open", "business": "ramen"}).text)
+        assert "verdict" in {data["step"] for event, data in events if event == "status"}
+        verdict = first(events, "verdict")
+        # Ramen is outside the gap table, so it is measured live on the same baseline before it is judged.
+        assert verdict["found"] and verdict["genre"] == "Ramen" and verdict["row"]["source"] == "owner"
+        assert verdict["row"]["nearby_count"] == 0 and verdict["of"] == 9
+        assert verdict["headline"].startswith("Ramen is ") and f"#{verdict['position']} of 9" in verdict["headline"]
+        assert verdict["evidence"][0] == "Locals rank Ramen #9 here, versus a median outside the top 50 in same-size areas around."
+        concepts = first(events, "concepts")["concepts"]
+        assert concepts[0]["genre"] == "Ramen" and len(concepts) == 3
+
+
+def test_open_intent_is_honest_when_the_business_does_not_fit_or_is_unknown():
+    with make_client() as client:
+        params = {**RUN_PARAMS, "intent": "open", "business": "seafood", "kitchen": "none"}
+        events = sse_events(client.get("/api/run", params=params).text)
+        verdict = first(events, "verdict")
+        assert verdict["level"] == "misfit"
+        assert verdict["headline"] == (
+            "Seafood does not fit this unit: it needs a full kitchen with extraction; the unit has no kitchen."
+        )
+        assert "Seafood" not in [c["genre"] for c in first(events, "concepts")["concepts"]]
+
+        events = sse_events(client.get("/api/run", params={**RUN_PARAMS, "intent": "open", "business": "submarine dealer"}).text)
+        verdict = first(events, "verdict")
+        assert verdict["found"] is False and verdict["headline"] == "Qloo has no storefront category matching 'submarine dealer'."
+        assert len(first(events, "concepts")["concepts"]) == 3  # the survey still shows what fits
+
+
+def test_improve_intent_compares_the_place_with_the_ones_locals_love():
+    with make_client() as client:
+        found = client.get("/api/places", params={"q": "fish shack", "lat": SITE[0], "lon": SITE[1]}).json()
+        assert [p["name"] for p in found] == ["Corner Fish Shack"]  # Qloo's repeated results are merged
+        assert client.get("/api/places", params={"q": "nothing like it", "lat": SITE[0], "lon": SITE[1]}).json() == []
+
+        params = {**RUN_PARAMS, "intent": "improve", "place_id": found[0]["id"]}
+        events = sse_events(client.get("/api/run", params=params).text)
+        names = [event for event, _ in events]
+        assert "error" not in names and "concepts" not in names and names[-1] == "done"
+        assert first(events, "place")["place"]["name"] == "Corner Fish Shack"
+        result = first(events, "improve")
+        assert result["genre"] == "Seafood"
+        comparison = result["comparison"]
+        # Compared with the favorites at a similar price ($$-$$$$ for a $$$ place): three of the five.
+        assert comparison["peers"] == 3 and comparison["peers_label"] == "places locals love at a similar price"
+        assert comparison["complaints"] == ["slow service"]
+        assert comparison["offer"]["menu"]["missing"] == [{"name": "House seafood special", "places": 3}]
+        assert comparison["hours"]["place"] == {"Mon–Thu": "noon–9 pm", "Fri–Sat": "noon–9 pm", "Sun": "noon–9 pm"}
+        assert set(comparison["hours"]) == {"place", "peers"}
+        assert [move["title"] for move in result["moves"]] == [
+            "Fix what reviews flag", "Consider house seafood special", "Stay open later Fri–Sat", "Stay open later Mon–Thu",
+            "Close the rating gap", "Win back the trips", "Program for the neighborhood",
+        ]
+        assert result["moves"][2]["why"] == (
+            "The Seafood places locals love at a similar price close around 11:30 pm; Corner Fish Shack closes at 9 pm."
+        )
+        assert result["moves"][1]["why"] == (
+            "3 of the 3 Seafood places locals love at a similar price are known for it; Corner Fish Shack is not."
+        )
+
+
+def test_improve_intent_reports_a_place_qloo_does_not_know():
+    with make_client() as client:
+        events = sse_events(client.get("/api/run", params={**RUN_PARAMS, "intent": "improve", "place_id": "missing-id"}).text)
+        assert "not on Qloo" in first(events, "error")["message"] and events[-1][0] == "done"
 
 
 def test_heatmap_rejects_non_tag_input():

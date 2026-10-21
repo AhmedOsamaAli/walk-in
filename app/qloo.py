@@ -100,5 +100,8 @@ class QlooClient:
     async def search(self, params: dict[str, Any]) -> dict:
         return await self.get("/search", params)
 
+    async def entities(self, params: dict[str, Any]) -> dict:
+        return await self.get("/entities", params)
+
     async def tags(self, params: dict[str, Any]) -> dict:
         return await self.get("/v2/tags", params)

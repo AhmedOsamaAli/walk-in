@@ -155,7 +155,9 @@ async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dic
     the query's (exactly, more specific or broader): "art gallery" must not become "Aboriginal art gallery".
     """
     wanted = _normalize_genre(query)
-    exact = next((genre for genre in ranked if _normalize_genre(genre["name"]) == wanted), None)
+    exact = next(
+        (genre for genre in ranked if _normalize_genre(genre["name"]).replace(" ", "") == wanted.replace(" ", "")), None,
+    )
     if exact:
         return exact, None
     data = await q.tags({"filter.query": query.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 10})
@@ -177,7 +179,7 @@ async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dic
 
 
 def _match_quality(query: str, name: str) -> int:
-    if query == name:
+    if query == name or query.replace(" ", "") == name.replace(" ", ""):  # "bookstore" is Qloo's "Book store"
         return 3
     query_words, name_words = set(query.split()), set(name.split())
     if query_words <= name_words:
@@ -260,6 +262,33 @@ async def local_taste(q: QlooClient, lat: float, lon: float) -> dict:
             taste[domain] = [scoring.entity_card(e) for e in local if scoring.is_safe_name(e.get("name"))][:12]
         taste[f"distinctive_{domain}"] = [scoring.entity_card(e) for e in scoring.distinctive_by_rank(local, references)]
     return taste
+
+
+async def search_places(q: QlooClient, query: str, lat: float, lon: float, miles: int = 2, take: int = 8) -> list[dict]:
+    """Places whose name matches, near a point. Qloo's search radius is in miles and results are ranked by relevance."""
+    data = await q.search({
+        "query": query.strip()[:80], "types": "urn:entity:place", "filter.location": f"{lat},{lon}",
+        "filter.radius": miles, "take": take,
+    })
+    results = data.get("results")
+    return [e for e in results if isinstance(e, dict) and e.get("entity_id")] if isinstance(results, list) else []
+
+
+async def place_by_id(q: QlooClient, entity_id: str) -> dict | None:
+    """The full record of a place.
+
+    /entities returns a thin record (no keywords, reviews or Michelin), so the place is found through it and then read
+    from insights within a few meters of its location, where Qloo returns everything it knows.
+    """
+    data = await q.entities({"entity_ids": entity_id})
+    results = data.get("results")
+    found = results if isinstance(results, list) else (results or {}).get("entities", []) if isinstance(results, dict) else []
+    thin = next((e for e in found if scoring.item_id(e) == entity_id), None)
+    location = scoring.place_location(thin) if thin else None
+    if not location:
+        return thin
+    around = await places_in(q, circle_filter(*location, 60), take=20)
+    return next((e for e in around if scoring.item_id(e) == entity_id), thin)
 
 
 async def genre_heatmap(q: QlooClient, lat: float, lon: float, tag: str, radius: int = 3000) -> list[dict]:

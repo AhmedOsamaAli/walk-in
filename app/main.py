@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import engine
+from . import engine, scoring
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
@@ -138,11 +138,18 @@ async def run(
     size_m2: float | None = Query(None, ge=10, le=2000, description="Floor area of the unit in square meters"),
     kitchen: Literal["full", "light", "none"] | None = Query(None, description="The kitchen the unit has"),
     outdoor: bool | None = Query(None, description="Whether the unit has outdoor space"),
+    intent: Literal["explore", "open", "improve"] = Query("explore", description="What the owner wants"),
+    business: str = Query("", max_length=80, description="The business to open (intent=open)"),
+    place_id: str = Query("", max_length=64, pattern=r"^[A-Za-z0-9-]*$", description="The owner's place (intent=improve)"),
 ) -> StreamingResponse:
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
     if minutes not in ALLOWED_MINUTES:
         raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
+    if intent == "open" and not business.strip():
+        raise HTTPException(400, "Say which business you want to open")
+    if intent == "improve" and not place_id:
+        raise HTTPException(400, "Pick your place first")
     if not request.app.state.run_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many runs from this address. Try again in an hour.")
 
@@ -150,7 +157,7 @@ async def run(
     runs: RunStore = request.app.state.runs
     site = Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
-        size_m2=size_m2, kitchen=kitchen, outdoor=outdoor,
+        size_m2=size_m2, kitchen=kitchen, outdoor=outdoor, intent=intent, business=business.strip(), place_id=place_id,
     )
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -283,6 +290,31 @@ async def heatmap(
         return {"cells": await engine.genre_heatmap(request.app.state.services.qloo, lat, lon, tag)}
     except QlooError as exc:
         raise HTTPException(502, str(exc)) from exc
+
+
+@router.get("/places")
+async def places(
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=80),
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+) -> list[dict]:
+    """The owner's place: Qloo places matching a name within about 3 km, nearest first."""
+    if not request.app.state.map_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many searches. Try again later.")
+    try:
+        found = await engine.search_places(request.app.state.services.qloo, q, lat, lon)
+    except QlooError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    cards, seen = [], set()
+    for entity in found:
+        card = scoring.place_card(entity, (lat, lon))
+        key = (card["name"], card["address"])
+        if card["lat"] is None or key in seen:
+            continue
+        seen.add(key)
+        cards.append({k: card[k] for k in ("id", "name", "address", "genres", "rating", "lat", "lon", "distance_m")})
+    return sorted(cards, key=lambda c: c["distance_m"])
 
 
 @router.get("/geocode")

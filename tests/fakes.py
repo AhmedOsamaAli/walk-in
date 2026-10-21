@@ -83,8 +83,9 @@ def parse_point(wkt: str) -> tuple[float, float] | None:
 
 
 def at_site(wkt: str) -> bool:
+    """Signals centered near the site (an owner's place is a short walk from it); reference areas are 2.5 km+ away."""
     point = parse_point(wkt)
-    return bool(point) and distance_m(*point, *SITE) < 50
+    return bool(point) and distance_m(*point, *SITE) < 500
 
 
 def slug(text: str) -> str:
@@ -124,6 +125,22 @@ def entity(name: str, kind: str, index: int, brand_type: str = "Corporate Brand"
     return {"entity_id": f"{kind}-{slug(name)}", "name": name, "popularity": 0.8, "tags": tags, "properties": props or {}}
 
 
+def owner_place() -> dict:
+    """The owner's seafood spot: it closes early, reviews flag slow service, and it lacks the favorites' house special."""
+    shop = place("Corner Fish Shack", "Seafood", *offset(120, 45), 3)
+    shop["tags"] = [t for t in shop["tags"] if "menu_highlight" not in t["type"]]
+    early = {day: [{"opens": "T12:00:00", "closes": "T21:00:00", "closed": False}] for day in WEEK_HOURS}
+    shop["properties"].update({
+        "hours": early, "business_rating": 3.9, "price_level": 3,
+        "keywords": [{"name": "fresh oysters", "count": 12}, {"name": "slow service", "count": 6}],
+        "primary_genre": {"id": GENRES["Seafood"], "name": "Seafood restaurant"},
+    })
+    return shop
+
+
+OWNER_PLACE = owner_place()
+
+
 class FakeQloo:
     configured = True
 
@@ -137,7 +154,16 @@ class FakeQloo:
         pass
 
     async def search(self, params: dict) -> dict:
-        return {"results": []}
+        self.calls += 1
+        self.requests.append({"path": "/search", **params})
+        query = params.get("query", "").lower()
+        hits = [OWNER_PLACE, OWNER_PLACE] if query and query in OWNER_PLACE["name"].lower() else []  # Qloo repeats places
+        return {"results": hits}
+
+    async def entities(self, params: dict) -> dict:
+        self.calls += 1
+        self.requests.append({"path": "/entities", **params})
+        return {"results": [OWNER_PLACE] if params.get("entity_ids") == OWNER_PLACE["entity_id"] else []}
 
     async def tags(self, params: dict) -> dict:
         from app.qloo import QlooError

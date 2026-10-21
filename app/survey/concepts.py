@@ -27,6 +27,7 @@ from .evidence import (
     with_fit,
 )
 from .experience import fans_of
+from .intents import requested_row
 from .models import Emit, RunState, Site
 
 log = logging.getLogger("blankspace")
@@ -114,9 +115,14 @@ def one_liner(row: dict) -> str:
 
 
 def concept_rows(run: RunState) -> list[dict]:
+    """The rows concepts are built on: the strongest gaps the unit can host, the owner's requested business first."""
     fitting = [row for row in run.gaps if fits(row)]
     solid = [row for row in fitting if row.get("evidence") == "ok"]
-    return (solid or fitting)[:3]
+    rows = (solid or fitting)[:3]
+    wanted = requested_row(run)
+    if wanted:
+        rows = [wanted] + [row for row in rows if row["genre_id"] != wanted["genre_id"]][:2]
+    return rows
 
 
 def for_whom(row: dict, minutes: int) -> str:
@@ -131,35 +137,45 @@ def for_whom(row: dict, minutes: int) -> str:
 
 
 def rule_concepts(run: RunState) -> list[dict]:
-    concepts = []
+    return [rule_concept(run, row) for row in concept_rows(run)]
+
+
+def rule_concept(run: RunState, row: dict) -> dict:
     minutes = run.site.minutes
-    for row in concept_rows(run):
-        entities, cards = storefront_favorites(row)
-        dna = scoring.design_dna(entities)
-        complaints = [c for comp in row["competitors"] for c in comp.get("complaints", [])][:3]
-        title = scoring.genre_title(row["genre"])
-        concepts.append({
-            "name": f"{title}, {short_label(run.site.label)}",
-            "genre": row["genre"],
-            "genre_id": row["genre_id"],
-            "gap_score": row["gap_score"],
-            "one_liner": one_liner(row),
-            "for_whom": for_whom(row, minutes),
-            "price_level": dna.get("typical_price_level") or 2,
-            "why_here": gap_evidence(row, minutes),
-            "beat_competitors": (
-                f"Nearby reviews flag: {', '.join(complaints)}. Design the service around avoiding these."
-                if complaints else "Few direct competitors nearby; win on quality and atmosphere."
-            ),
-            "signature": scoring.signature_items(row["genre"], dna),
-            "inspired_by": [card["name"] for card in cards[:3]],
-            "risk": (
-                f"{row['nearby_count']} competitors already inside the walk." if row["nearby_count"] >= 10
-                else "Demand is inferred from taste signals, not foot traffic; validate on site."
-            ),
-            "evidence": gap_evidence(row, minutes),
-        })
-    return concepts
+    entities, cards = storefront_favorites(row)
+    dna = scoring.design_dna(entities)
+    complaints = [c for comp in row["competitors"] for c in comp.get("complaints", [])][:3]
+    title = scoring.genre_title(row["genre"])
+    return {
+        "name": f"{title}, {short_label(run.site.label)}",
+        "genre": row["genre"],
+        "genre_id": row["genre_id"],
+        "gap_score": row["gap_score"],
+        "one_liner": one_liner(row),
+        "for_whom": for_whom(row, minutes),
+        "price_level": dna.get("typical_price_level") or 2,
+        "why_here": gap_evidence(row, minutes),
+        "beat_competitors": (
+            f"Nearby reviews flag: {', '.join(complaints)}. Design the service around avoiding these."
+            if complaints else "Few direct competitors nearby; win on quality and atmosphere."
+        ),
+        "signature": scoring.signature_items(row["genre"], dna),
+        "inspired_by": [card["name"] for card in cards[:3]],
+        "risk": (
+            f"{row['nearby_count']} competitors already inside the walk." if row["nearby_count"] >= 10
+            else "Demand is inferred from taste signals, not foot traffic; validate on site."
+        ),
+        "evidence": gap_evidence(row, minutes),
+    }
+
+
+def requested_first(run: RunState, concepts: list[dict]) -> list[dict]:
+    """The owner's requested business leads the concepts; the evidence rules design it when the agent did not."""
+    wanted = requested_row(run)
+    if not wanted or not concepts:
+        return concepts
+    mine = next((c for c in concepts if c["genre_id"] == wanted["genre_id"]), None) or rule_concept(run, wanted)
+    return [mine] + [c for c in concepts if c["genre_id"] != wanted["genre_id"]][:2]
 
 
 CONCEPT_SYSTEM = """You are Blank Space, a retail and hospitality strategist that designs businesses for empty storefronts.
@@ -180,7 +196,9 @@ Rules: why_here cites numbers exactly as they appear in the evidence; never inve
 inspired_by only contains names returned by inspect_gap; concept names are original and never reuse or echo the
 name of an existing place; for_whom describes people only through the evidence (what they love, where they go for it
 now) and never guesses age, gender, income or ethnicity; when the evidence has a unit, every concept must fit it
-(never a category whose fits_the_unit starts with "no"), so test categories that fit it; respect the owner's notes."""
+(never a category whose fits_the_unit starts with "no"), so test categories that fit it; when the evidence has an
+owner_request, the first concept is that business (its genre exactly as given), designed to win at this site, and the
+other two are the strongest alternatives; respect the owner's notes."""
 
 
 MAX_LIVE_TESTS = 3
@@ -454,7 +472,7 @@ async def concepts_from_agent(
         if saved:
             await emit("replay", {"saved_at": saved.get("saved_at"), "model": saved.get("model")})
             concepts = await replay_agent(q, run, saved, emit)
-            return concepts, {"model": saved.get("model"), "replayed_from": saved.get("saved_at")}
+            return requested_first(run, concepts), {"model": saved.get("model"), "replayed_from": saved.get("saved_at")}
         result = await agent_concepts(llm, q, run, emit)
     except LLMUnavailable:
         log.warning("Every LLM model is resting; falling back to evidence rules", exc_info=True)
@@ -466,7 +484,7 @@ async def concepts_from_agent(
         return [], {}
     if result.concepts and answers:
         answers.put("concepts", key, {"trail": result.trail, "raw_concepts": result.raw_concepts, "model": result.model})
-    return result.concepts, {"model": result.model}
+    return requested_first(run, result.concepts), {"model": result.model}
 
 
 BASELINE_SYSTEM = "You are a retail strategy consultant."

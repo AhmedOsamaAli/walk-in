@@ -24,6 +24,10 @@ class Site:
     size_m2: float | None = None
     kitchen: str | None = None
     outdoor: bool | None = None
+    # What the owner wants: explore what fits, open a business of their choice, or improve their place on Qloo.
+    intent: str = "explore"
+    business: str = ""
+    place_id: str = ""
 
 
 @dataclass
@@ -39,6 +43,9 @@ class RunState:
     explored: list[dict] = field(default_factory=list)  # genres the agent tested live, scored like the table
     fans: dict[str, dict] = field(default_factory=dict)  # genre id -> what local fans of that genre also love
     taste: dict = field(default_factory=dict)
+    verdict: dict | None = None  # how the business the owner wants to open fits this site
+    place: dict | None = None  # the owner's place, when improving it
+    improve: dict | None = None
     concepts: list[dict] = field(default_factory=list)
     designs: dict[int, dict] = field(default_factory=dict)
     renders: dict[tuple[int, str], asyncio.Future] = field(default_factory=dict)  # (concept, shot) -> render
