@@ -203,7 +203,7 @@ def test_a_genre_tested_later_shares_the_table_baseline():
 
 
 def test_demand_comparisons_are_stated_in_words_for_the_agent():
-    from app.agent import demand_comparison, gap_summary
+    from app.survey.evidence import demand_comparison, gap_summary
 
     assert demand_comparison({"demand_rank": 2, "ref_rank": 1.0}) == "about the same as in the areas around"
     assert demand_comparison({"demand_rank": 8, "ref_rank": 25.5}).startswith("ranked higher here")

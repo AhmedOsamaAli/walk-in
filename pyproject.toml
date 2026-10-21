@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 125
+target-version = "py312"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, bugbear, pyupgrade, simplify
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# Prompts and evidence sentences are long strings; wrapping them hurts more than it helps.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts put the repository root on sys.path before importing the app.
+"scripts/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]

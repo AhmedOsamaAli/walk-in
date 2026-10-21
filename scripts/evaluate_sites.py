@@ -12,16 +12,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import agent  # noqa: E402
 from app.answers import AnswerCache  # noqa: E402
 from app.catchment import CatchmentService  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.main import PRESETS  # noqa: E402
 from app.providers import build_llm  # noqa: E402
 from app.qloo import QlooClient  # noqa: E402
+from app.survey import pipeline  # noqa: E402
+from app.survey.evidence import describe_age  # noqa: E402
+from app.survey.models import RunState, RunStore, Site  # noqa: E402
 
 
-def print_report(run: agent.RunState, events: list[tuple[str, dict]]) -> None:
+def print_report(run: RunState, events: list[tuple[str, dict]]) -> None:
     done = next((data for event, data in events if event == "done"), {})
     walk = run.catchment
     print(f"\n{'=' * 88}\n{run.site.label}  ({run.site.minutes}-min walk, focus={run.site.focus})")
@@ -50,7 +52,7 @@ def print_report(run: agent.RunState, events: list[tuple[str, dict]]) -> None:
     taste = run.taste
     print("taste: brands", ", ".join(b["name"] for b in taste.get("distinctive_brands", [])[:6]) or "-")
     print("       artists", ", ".join(a["name"] for a in taste.get("distinctive_artists", [])[:6]) or "-")
-    print("       crowd", agent.describe_age(run.demographics), "| cues:", ", ".join(run.cues) or "-")
+    print("       crowd", describe_age(run.demographics), "| cues:", ", ".join(run.cues) or "-")
     for row in run.explored:
         print(
             f"  TESTED LIVE {row['gap_score']:>3} {row['genre']:<24} #{row['demand_rank']} here"
@@ -81,18 +83,18 @@ async def main() -> None:
     walker = CatchmentService(settings.walk_cache_dir)
     llm = build_llm(settings)
     answers = AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache and not args.fresh)
-    store = agent.RunStore()
+    store = RunStore()
     try:
         for preset in PRESETS:
             if args.sites and preset["id"] not in args.sites:
                 continue
             events: list[tuple[str, dict]] = []
 
-            async def emit(event: str, data: dict) -> None:
+            async def emit(event: str, data: dict, events: list = events) -> None:
                 events.append((event, data))
 
-            site = agent.Site(preset["lat"], preset["lon"], preset["label"], args.focus, "", args.minutes)
-            run = await agent.analyze_site(qloo, walker, llm, store, site, emit, answers)
+            site = Site(preset["lat"], preset["lon"], preset["label"], args.focus, "", args.minutes)
+            run = await pipeline.analyze_site(qloo, walker, llm, store, site, emit, answers)
             print_report(run, events)
     finally:
         await qloo.aclose()

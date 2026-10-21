@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.images import ImageGen
-from app.llm import SIGNATURE_SENTINEL, LLM, LLMUnavailable, neutralize_signatures, parse_json
+from app.llm import LLM, SIGNATURE_SENTINEL, LLMUnavailable, neutralize_signatures, parse_json
 
 
 def completion(message: dict, model: str = "test-model") -> dict:

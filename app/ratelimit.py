@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import Request
 
@@ -33,7 +33,7 @@ class DailyBudget:
         self.used = 0
 
     def allow(self) -> bool:
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now(UTC).date().isoformat()
         if today != self._day:
             self._day, self.used = today, 0
         if self.used >= self.limit:

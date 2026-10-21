@@ -14,7 +14,8 @@ import json
 import logging
 import re
 import time
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, BadRequestError
@@ -166,7 +167,7 @@ class LLM:
             if final is not None:
                 return final, model
             results = await asyncio.gather(*(run_tool(handlers, call.function.name, args) for call, args in calls))
-            for (call, _), result in zip(calls, results):
+            for (call, _), result in zip(calls, results, strict=True):
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,

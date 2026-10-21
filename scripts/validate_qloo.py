@@ -194,7 +194,7 @@ def scan_supply() -> dict:
         supply[slug] = places
         count = len(places)
 
-        def share(subset: list) -> str:
+        def share(subset: list, count: int = count) -> str:
             return f"{round(100 * len(subset) / count)}%" if count else "-"
 
         props = [(p, p.get("properties") or {}) for p in places]

@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -14,7 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, engine
+from . import engine
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
@@ -24,6 +25,9 @@ from .llm import LLM
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
+from .survey import concepts, pipeline
+from .survey import design as designs
+from .survey.models import RunStore, Site
 
 log = logging.getLogger("blankspace")
 
@@ -140,8 +144,8 @@ async def run(
         raise HTTPException(429, "Too many runs from this address. Try again in an hour.")
 
     services: Services = request.app.state.services
-    runs: agent.RunStore = request.app.state.runs
-    site = agent.Site(
+    runs: RunStore = request.app.state.runs
+    site = Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
     )
     queue: asyncio.Queue = asyncio.Queue()
@@ -150,11 +154,11 @@ async def run(
         await queue.put((event, data))
 
     async def produce() -> None:
-        tasks = [agent.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit, services.answers)]
+        tasks = [pipeline.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit, services.answers)]
         if services.llm.enabled:
             async def baseline() -> None:
                 try:
-                    await emit("baseline", {"concepts": await agent.baseline_concepts(services.llm, site, services.answers)})
+                    await emit("baseline", {"concepts": await concepts.baseline_concepts(services.llm, site, services.answers)})
                 except Exception:
                     log.warning("No-data baseline failed", exc_info=True)
             tasks.append(baseline())
@@ -169,7 +173,7 @@ async def run(
             while True:
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=15)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keep-alive\n\n"
                     continue
                 if item is None:
@@ -197,7 +201,7 @@ async def design(request: Request, body: DesignRequest) -> dict:
     if not request.app.state.design_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many design requests. Try again later.")
     services: Services = request.app.state.services
-    result = await agent.design_concept(
+    result = await designs.design_concept(
         services.llm, services.images, run_state, body.index, services.qloo, services.answers,
     )
     run_state.designs[body.index] = result
@@ -218,7 +222,7 @@ async def render(request: Request, body: RenderRequest) -> dict:
     key = (body.index, body.shot)
     task = run_state.renders.get(key)
     if task is None:
-        saved = agent.saved_render(services.images, shot, services.answers)
+        saved = designs.saved_render(services.images, shot, services.answers)
         if saved:
             return {"image": saved[0], "model": saved[1]}
         # Resuming a render that is still queued is not a new render, so it does not count against the limits.
@@ -227,7 +231,7 @@ async def render(request: Request, body: RenderRequest) -> dict:
                 raise HTTPException(429, "Too many renders from this address. Try again later.")
             if not request.app.state.render_budget.allow():
                 raise HTTPException(429, "Today's render budget is used up. Try again tomorrow.")
-        task = asyncio.ensure_future(agent.render(services.images, shot, services.answers))
+        task = asyncio.ensure_future(designs.render(services.images, shot, services.answers))
         run_state.renders[key] = task
     try:
         image, model = await asyncio.shield(task)
@@ -299,7 +303,7 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
     async def lifespan(app: FastAPI):
         services = services_factory()
         app.state.services = services
-        app.state.runs = agent.RunStore()
+        app.state.runs = RunStore()
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
         app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
         app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)

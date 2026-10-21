@@ -23,12 +23,12 @@ def ring_area_m2(ring: list[tuple[float, float]], lat0: float) -> float:
     """Planar area of a closed (lon, lat) ring, using a local equirectangular projection."""
     kx = _M_PER_DEG * math.cos(math.radians(lat0))
     pts = [(lon * kx, lat * _M_PER_DEG) for lon, lat in ring]
-    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2
+    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1], strict=True))) / 2
 
 
 def point_in_ring(lat: float, lon: float, ring: list[tuple[float, float]]) -> bool:
     inside = False
-    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1], strict=True):
         if (y1 > lat) != (y2 > lat) and lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1:
             inside = not inside
     return inside

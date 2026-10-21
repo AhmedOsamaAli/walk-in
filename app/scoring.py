@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable, Iterable
 from statistics import mean, median
-from typing import Callable, Iterable
 
 from .geo import distance_m
 

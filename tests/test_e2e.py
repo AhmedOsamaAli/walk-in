@@ -302,9 +302,9 @@ def test_repeated_checks_reuse_the_first_result_without_new_log_lines():
 
 
 def test_agent_live_tests_are_budgeted(monkeypatch):
-    from app import agent
+    from app.survey import concepts
 
-    monkeypatch.setattr(agent, "MAX_LIVE_TESTS", 1)
+    monkeypatch.setattr(concepts, "MAX_LIVE_TESTS", 1)
     investigate = [
         tool_call("c1", "test_category", {"category": "ramen", **because("A hunch")}),
         tool_call("c2", "test_category", {"category": "board game cafe", **because("Another hunch")}),
