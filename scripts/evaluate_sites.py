@@ -19,7 +19,6 @@ from app.main import PRESETS  # noqa: E402
 from app.providers import build_llm  # noqa: E402
 from app.qloo import QlooClient  # noqa: E402
 from app.survey import pipeline  # noqa: E402
-from app.survey.evidence import describe_age  # noqa: E402
 from app.survey.models import RunState, RunStore, Site  # noqa: E402
 
 
@@ -35,6 +34,9 @@ def print_report(run: RunState, events: list[tuple[str, dict]]) -> None:
     print("  common:", ", ".join(f"{g} {n}" for g, n in s.get("top_genres", [])[:6]))
     print("  praise:", ", ".join(k for k, _ in s.get("praise", [])[:6]))
     print("  complaints:", ", ".join(k for k, _ in s.get("complaints", [])[:6]) or "-")
+    for classic in s.get("classics", []):
+        badge = f"Michelin {classic['michelin']}" if classic.get("michelin") else f"{classic['reviews']} reviews"
+        print(f"  classic: {classic['name']} ({classic['genre']}, {badge}) {', '.join(classic['praise']) or '-'}")
     print("gaps:")
     for row in run.gaps[:6]:
         print(
@@ -52,7 +54,7 @@ def print_report(run: RunState, events: list[tuple[str, dict]]) -> None:
     taste = run.taste
     print("taste: brands", ", ".join(b["name"] for b in taste.get("distinctive_brands", [])[:6]) or "-")
     print("       artists", ", ".join(a["name"] for a in taste.get("distinctive_artists", [])[:6]) or "-")
-    print("       crowd", describe_age(run.demographics), "| cues:", ", ".join(run.cues) or "-")
+    print("       cues:", ", ".join(run.cues) or "-")
     for row in run.explored:
         print(
             f"  TESTED LIVE {row['gap_score']:>3} {row['genre']:<24} #{row['demand_rank']} here"

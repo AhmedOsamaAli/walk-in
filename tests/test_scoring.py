@@ -1,9 +1,15 @@
 from app import scoring
 
 
-def place(name, genres=(), keywords=(), rating=None, price=None, growth=None, lat=None, lon=None, extra_tags=()):
+def place(name, genres=(), keywords=(), rating=None, price=None, reviews=None, lat=None, lon=None, extra_tags=(),
+          michelin=None, hours=None):
     tags = [{"id": f"urn:tag:genre:place:{g.lower().replace(' ', '_')}", "name": g, "type": "urn:tag:genre:place"} for g in genres]
     tags += [{"id": f"{t}:{n.lower().replace(' ', '_')}", "name": n, "type": t} for t, n in extra_tags]
+    external = {}
+    if reviews is not None:
+        external["tripadvisor"] = [{"id": "d1", "rating": 4.5, "rating_count": reviews}]
+    if michelin is not None:
+        external["michelin"] = [{"id": "m1", "stars": michelin or None}]
     entity = {
         "entity_id": name.lower().replace(" ", "-"),
         "name": name,
@@ -12,8 +18,9 @@ def place(name, genres=(), keywords=(), rating=None, price=None, growth=None, la
             "keywords": [{"name": k, "count": c} for k, c in keywords],
             "business_rating": rating,
             "price_level": price,
+            **({"hours": hours} if hours else {}),
         },
-        "query": {"measurements": {"audience_growth": growth}},
+        "external": external,
     }
     if lat is not None:
         entity["location"] = {"lat": lat, "lon": lon}
@@ -309,19 +316,86 @@ def test_offensive_names_are_filtered():
     assert [e["name"] for e in scoring.distinctive(local, [])] == ["Solange"]
 
 
-def test_summarize_block_counts_genres_keywords_and_growth():
+def test_summarize_block_counts_genres_keywords_and_classics():
     places = [
-        place("Cafe One", ["Coffee shop", "Restaurant"], [("great espresso", 10), ("slow service", 4)], 4.5, 2, 0.3),
-        place("Bar Two", ["Wine Bar"], [("natural wine", 7)], 4.1, 3, -0.2),
+        place("Cafe One", ["Coffee shop", "Restaurant"], [("great espresso", 10), ("slow service", 4)], 4.5, 2, reviews=900),
+        place("Bar Two", ["Wine Bar"], [("natural wine", 7)], 4.1, 3, reviews=40),
+        place("Chez Three", ["French"], [("tasting menu", 3)], 4.8, 4, reviews=120, michelin=1),
     ]
     summary = scoring.summarize_block(places)
-    assert summary["place_count"] == 2
-    assert dict(summary["top_genres"]) == {"Coffee shop": 1, "Wine Bar": 1}
+    assert summary["place_count"] == 3
+    assert dict(summary["top_genres"]) == {"Coffee shop": 1, "Wine Bar": 1, "French": 1}
     assert ("slow service", 4) in summary["complaints"]
     assert ("great espresso", 10) in summary["praise"]
-    assert summary["rising"][0][0] == "Cafe One"
-    assert summary["fading"][0][0] == "Bar Two"
-    assert summary["avg_rating"] == 4.3
+    assert summary["avg_rating"] == 4.47
+    # Michelin first, then review history; a place with few reviews is not called established (and never "new").
+    assert [c["name"] for c in summary["classics"]] == ["Chez Three", "Cafe One"]
+    assert summary["classics"][0]["michelin"] == "1 star"
+    assert summary["classics"][1] == {
+        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "reviews": 900, "praise": ["great espresso"],
+    }
+
+
+def test_classics_use_the_primary_genre_and_skip_hotels():
+    egyptian = place("Abou Test", ["Izakaya restaurant", "Egyptian restaurant"], [("michelin star", 3), ("okra", 2)], reviews=1500)
+    egyptian["properties"]["primary_genre"] = {"id": "urn:tag:genre:place:restaurant:egyptian", "name": "Egyptian restaurant"}
+    generic = place("Plain Test", ["Pizza takeout"], reviews=600)
+    generic["properties"]["primary_genre"] = {"id": "urn:tag:genre:place:restaurant", "name": "Restaurant"}
+    hotel = place("Grand Test Hotel", ["Extended stay hotel", "Hotel"], reviews=2000)
+    classics = scoring.summarize_block([egyptian, generic, hotel])["classics"]
+    assert [(c["name"], c["genre"]) for c in classics] == [("Abou Test", "Egyptian"), ("Plain Test", "Pizza Takeout")]
+    assert classics[0]["praise"] == ["okra"]
+
+
+def test_standing_needs_michelin_or_a_long_review_history():
+    assert scoring.standing(place("A", reviews=250)) == {"reviews": 250}
+    assert scoring.standing(place("B", reviews=249)) is None
+    assert scoring.standing(place("C")) is None
+    assert scoring.standing(place("D", michelin=0)) == {"reviews": None, "michelin": "listed"}
+    assert scoring.standing(place("E", reviews=10, michelin=2)) == {"reviews": 10, "michelin": "2 stars"}
+
+
+def week(opens, closes, weekend_closes=None, closed=()):
+    days = {}
+    for day in scoring.DAYS:
+        late = weekend_closes if weekend_closes and day in ("friday", "saturday") else closes
+        days[day] = [{"opens": opens, "closes": late, "closed": day in closed}]
+    return days
+
+
+def test_day_span_handles_split_shifts_and_closing_after_midnight():
+    assert scoring.day_span([{"opens": "T11:00:00", "closes": "T15:00:00"}, {"opens": "T17:30:00", "closes": "T22:00:00"}]) == (11, 22)
+    assert scoring.day_span([{"opens": "T18:00:00", "closes": "T02:00:00"}]) == (18, 26)
+    assert scoring.day_span([{"opens": "T18:00:00", "closes": "", "closed": False}]) is None
+    assert scoring.day_span([{"opens": "T09:00:00", "closes": "T17:00:00", "closed": True}]) is None
+    assert scoring.day_span(None) is None
+
+
+def test_typical_hours_takes_medians_per_day_group():
+    places = [
+        place("A", hours=week("T08:00:00", "T22:00:00", "T00:00:00")),
+        place("B", hours=week("T09:00:00", "T22:00:00", "T01:00:00")),
+        place("C", hours=week("T08:00:00", "T21:30:00", "T00:00:00", closed=("sunday",))),
+        place("D"),  # no listed hours
+    ]
+    hours = scoring.typical_hours(places)
+    assert hours == {"text": "Mon–Thu 8 am–10 pm · Fri–Sat 8 am–midnight · Sun 8:30 am–10 pm", "sample": 3}
+    assert scoring.typical_hours(places[:2]) is None  # too few places to call it typical
+
+
+def test_typical_hours_merges_equal_days_and_reports_closed_days():
+    same = [place(n, hours=week("T07:00:00", "T15:30:00")) for n in "ABC"]
+    assert scoring.typical_hours(same)["text"] == "Daily 7 am–3:30 pm"
+    sundays_off = [place(n, hours=week("T10:00:00", "T19:00:00", closed=("sunday",))) for n in "ABC"]
+    assert scoring.typical_hours(sundays_off)["text"] == "Mon–Sat 10 am–7 pm · Sun closed"
+
+
+def test_places_listed_as_closed_every_day_have_unknown_hours():
+    # Qloo lists some busy places (chains, cinemas) as closed all week: their hours are unknown, not closed.
+    never_open = [place(n, hours={day: [{"opens": None, "closes": None, "closed": True}] for day in scoring.DAYS}) for n in "XYZ"]
+    assert scoring.typical_hours(never_open) is None
+    open_ones = [place(n, hours=week("T08:00:00", "T20:00:00")) for n in "ABC"]
+    assert scoring.typical_hours(never_open + open_ones) == {"text": "Daily 8 am–8 pm", "sample": 3}
 
 
 def test_design_dna_aggregates_tag_families_and_keywords():
@@ -336,16 +410,6 @@ def test_design_dna_aggregates_tag_families_and_keywords():
     assert dna["menu"] == ["Small plates"]
     assert dna["keywords"] == ["candlelit"]
     assert dna["typical_price_level"] in (2, 3)
-
-
-def test_average_demographics():
-    rows = [
-        {"query": {"age": {"25_to_29": 0.4}, "gender": {"female": 0.2}}},
-        {"query": {"age": {"25_to_29": 0.2}, "gender": {"female": 0.0}}},
-    ]
-    result = scoring.average_demographics(rows)
-    assert result == {"age": {"25_to_29": 0.3}, "gender": {"female": 0.1}}
-    assert scoring.average_demographics([]) is None
 
 
 def test_focus_matching():

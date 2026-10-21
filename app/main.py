@@ -135,6 +135,9 @@ async def run(
     focus: str = Query("any"),
     notes: str = Query("", max_length=300),
     minutes: int = Query(10),
+    size_m2: float | None = Query(None, ge=10, le=2000, description="Floor area of the unit in square meters"),
+    kitchen: Literal["full", "light", "none"] | None = Query(None, description="The kitchen the unit has"),
+    outdoor: bool | None = Query(None, description="Whether the unit has outdoor space"),
 ) -> StreamingResponse:
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
@@ -147,6 +150,7 @@ async def run(
     runs: RunStore = request.app.state.runs
     site = Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
+        size_m2=size_m2, kitchen=kitchen, outdoor=outdoor,
     )
     queue: asyncio.Queue = asyncio.Queue()
 

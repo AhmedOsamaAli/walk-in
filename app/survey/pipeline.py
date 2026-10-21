@@ -12,7 +12,7 @@ from ..catchment import CatchmentService
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
 from .concepts import concepts_from_agent, rule_concepts
-from .evidence import describe_age, public_gap
+from .evidence import public_gap, with_fit
 from .models import Emit, RunState, RunStore, Site
 
 log = logging.getLogger("blankspace")
@@ -53,14 +53,13 @@ async def analyze_site(
         })
         await emit("demand", {"genres": genres[:12], "cues": cues})
 
-        gaps, demographics = await asyncio.gather(
-            step("gaps", "Comparing supply with the surroundings and finding places locals love more than the city",
-                 engine.gap_table(q, catchment, genres, site.focus)),
-            step("crowd", "Reading the crowd's age and gender skew", engine.crowd_demographics(q, block)),
+        await emit("taste", taste)
+        gaps = await step(
+            "gaps", "Comparing supply with the surroundings and finding places locals love more than the city",
+            engine.gap_table(q, catchment, genres, site.focus),
         )
-        run.gaps, run.demographics = gaps, demographics
-        await emit("gaps", {"rows": [public_gap(g) for g in gaps]})
-        await emit("taste", {**taste, "demographics": demographics, "crowd": describe_age(demographics)})
+        run.gaps = [with_fit(run, row) for row in gaps]
+        await emit("gaps", {"rows": [public_gap(g) for g in run.gaps]})
 
         if not gaps:
             await emit("concepts", {"concepts": [], "mode": "none", "note": "Not enough Qloo data around this site."})
@@ -72,6 +71,8 @@ async def analyze_site(
                 mode = "agent" if concepts else "rules"
             if not concepts:
                 concepts, mode, about = rule_concepts(run), "rules", {}
+            if not concepts:
+                mode, about = "none", {"note": "None of the categories the block is missing fits this unit."}
             run.concepts = concepts
             await emit("status", {"step": "concepts", "state": "done", "label": "Designing concepts from the gaps"})
             await emit("concepts", {"concepts": concepts, "mode": mode, **about})

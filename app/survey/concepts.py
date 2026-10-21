@@ -15,8 +15,8 @@ from ..answers import AnswerCache, fingerprint
 from ..llm import LLM, LLMUnavailable
 from ..qloo import QlooClient, QlooError
 from .evidence import (
-    describe_age,
     evidence_brief,
+    fits,
     gap_evidence,
     gap_for,
     gap_summary,
@@ -24,6 +24,7 @@ from .evidence import (
     public_gap,
     short_label,
     storefront_favorites,
+    with_fit,
 )
 from .experience import fans_of
 from .models import Emit, RunState, Site
@@ -44,7 +45,7 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
         if not isinstance(concept, dict):
             continue
         row = gap_for(run, str(concept.get("genre") or ""))
-        if not row or any(c["genre_id"] == row["genre_id"] for c in cleaned):
+        if not row or not fits(row) or any(c["genre_id"] == row["genre_id"] for c in cleaned):
             continue
         favorites = {card["name"] for card in storefront_favorites(row)[1] if card.get("name")}
         concept["genre"] = row["genre"]
@@ -113,15 +114,20 @@ def one_liner(row: dict) -> str:
 
 
 def concept_rows(run: RunState) -> list[dict]:
-    solid = [row for row in run.gaps if row.get("evidence") == "ok"]
-    return (solid or run.gaps)[:3]
+    fitting = [row for row in run.gaps if fits(row)]
+    solid = [row for row in fitting if row.get("evidence") == "ok"]
+    return (solid or fitting)[:3]
 
 
-def crowd_phrase(demographics: dict | None, minutes: int) -> str:
-    skew = describe_age(demographics)
-    if not skew or skew == "no strong age skew":
-        return f"Everyone within a {minutes}-minute walk; no strong age skew"
-    return f"A crowd that {skew.replace('-', '–')}"
+def for_whom(row: dict, minutes: int) -> str:
+    """Who the evidence points to. Qloo's age and gender skews describe visitors inconsistently, so none are guessed."""
+    neighbors = f"Neighbors within a {minutes}-minute walk"
+    title = scoring.genre_title(row["genre"])
+    if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3 and row.get("median_favorite_km"):
+        return f"{neighbors}; the {title} places they love most are a median {row['median_favorite_km']} km away"
+    if row["demand_rank"] < scoring.UNRANKED:
+        return f"{neighbors}, who rank {title} #{row['demand_rank']} among place types"
+    return neighbors
 
 
 def rule_concepts(run: RunState) -> list[dict]:
@@ -138,7 +144,7 @@ def rule_concepts(run: RunState) -> list[dict]:
             "genre_id": row["genre_id"],
             "gap_score": row["gap_score"],
             "one_liner": one_liner(row),
-            "for_whom": crowd_phrase(run.demographics, minutes),
+            "for_whom": for_whom(row, minutes),
             "price_level": dna.get("typical_price_level") or 2,
             "why_here": gap_evidence(row, minutes),
             "beat_competitors": (
@@ -172,7 +178,9 @@ Work like an analyst, in as few turns as possible. Tools called in the same turn
 Give every tool call a one-sentence reason that names the evidence behind it.
 Rules: why_here cites numbers exactly as they appear in the evidence; never invent places, brands or statistics;
 inspired_by only contains names returned by inspect_gap; concept names are original and never reuse or echo the
-name of an existing place; respect the owner's notes."""
+name of an existing place; for_whom describes people only through the evidence (what they love, where they go for it
+now) and never guesses age, gender, income or ethnicity; when the evidence has a unit, every concept must fit it
+(never a category whose fits_the_unit starts with "no"), so test categories that fit it; respect the owner's notes."""
 
 
 MAX_LIVE_TESTS = 3
@@ -310,11 +318,13 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         return await engine.find_genre(q, run.genres, query)
 
     async def measure(genre: dict) -> dict:
-        row = await engine.probe_genre(q, run.catchment, genre, run.gaps)
+        row = with_fit(run, await engine.probe_genre(q, run.catchment, genre, run.gaps))
         row["source"] = "agent"
         run.explored.append(row)
         trail.append(["explored", {"genre": genre}])
         await emit("explored", {"row": public_gap(row)})
+        if not fits(row):
+            await record("finding", {"text": f"{row['genre']} does not fit this unit: it {row['fit']['reason']}."})
         return row
 
     async def test_category(args: dict) -> dict:
@@ -414,7 +424,7 @@ async def replay_agent(q: QlooClient, run: RunState, saved: dict, emit: Emit) ->
     """Re-emits a saved investigation for identical evidence; live tests are re-measured from the Qloo cache."""
     for event, data in saved.get("trail", []):
         if event == "explored":
-            row = await engine.probe_genre(q, run.catchment, data["genre"], run.gaps)
+            row = with_fit(run, await engine.probe_genre(q, run.catchment, data["genre"], run.gaps))
             row["source"] = "agent"
             run.explored.append(row)
             await emit("explored", {"row": public_gap(row)})

@@ -1,7 +1,7 @@
 """Views of a run's evidence: what the agent sees, and what each gap says in plain words."""
 from __future__ import annotations
 
-from .. import scoring
+from .. import scoring, space
 from .models import RunState
 
 
@@ -9,24 +9,22 @@ def public_gap(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def describe_age(demographics: dict | None) -> str | None:
-    if not demographics or not demographics.get("age"):
-        return None
-    labels = {
-        "24_and_younger": "under 25", "25_to_29": "25-29", "30_to_34": "30-34",
-        "35_to_44": "35-44", "45_to_54": "45-54", "55_and_older": "55+",
-    }
-    leaning = sorted(demographics["age"].items(), key=lambda kv: -kv[1])
-    over = [labels.get(bucket, bucket) for bucket, value in leaning if value > 0.05][:2]
-    return f"skews {' and '.join(over)}" if over else "no strong age skew"
+def with_fit(run: RunState, row: dict) -> dict:
+    row["fit"] = space.fit(row["genre"], run.site.size_m2, run.site.kitchen)
+    return row
+
+
+def fits(row: dict) -> bool:
+    return (row.get("fit") or {}).get("fits", True)
 
 
 def evidence_brief(run: RunState) -> dict:
     """Compact evidence pack handed to the LLM."""
     s = run.summary
     walk = run.catchment
-    return {
-        "site": {"label": run.site.label, "focus": run.site.focus, "owner_notes": run.site.notes or None},
+    site = run.site
+    brief = {
+        "site": {"label": site.label, "focus": site.focus, "owner_notes": site.notes or None},
         "walk_catchment": {
             "minutes": run.site.minutes,
             "shape": walk.source if walk else "circle",
@@ -39,16 +37,16 @@ def evidence_brief(run: RunState) -> dict:
             "price_levels": s.get("price_levels"),
             "what_reviews_praise": [k for k, _ in s.get("praise", [])[:8]],
             "what_reviews_complain_about": [k for k, _ in s.get("complaints", [])[:6]],
-            "rising_places": [name for name, _ in s.get("rising", [])[:4]],
-            "fading_places": [name for name, _ in s.get("fading", [])[:4]],
         },
         "gap_table": [gap_summary(g) for g in run.gaps],
         "taste_cues": run.cues,
         "brands_this_area_over_indexes_on": [b["name"] for b in run.taste.get("distinctive_brands", [])],
         "artists_this_area_over_indexes_on": [a["name"] for a in run.taste.get("distinctive_artists", [])],
-        "most_popular_brands_here": [b["name"] for b in run.taste.get("brands", [])[:10]],
-        "crowd": describe_age(run.demographics),
     }
+    unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
+    if unit:
+        brief["unit"] = unit
+    return brief
 
 
 def gap_summary(g: dict) -> dict:
@@ -60,7 +58,7 @@ def gap_summary(g: dict) -> dict:
         )
     else:
         travel = "no evidence: locals' favorites of this type are just the city's famous places"
-    return {
+    summary = {
         "genre": g["genre"],
         "locals_rank_here": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
         "median_rank_in_6_same_size_areas_around": g["ref_rank"],
@@ -72,6 +70,12 @@ def gap_summary(g: dict) -> dict:
         "evidence": g["evidence"],
         "gap_score": g["gap_score"],
     }
+    fit = g.get("fit")
+    if fit:
+        summary["fits_the_unit"] = "yes" if fit["fits"] else f"no: {fit['reason']}"
+        if fit.get("capacity_text"):
+            summary["unit_capacity"] = fit["capacity_text"]
+    return summary
 
 
 def demand_comparison(g: dict) -> str:

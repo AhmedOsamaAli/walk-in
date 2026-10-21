@@ -6,13 +6,13 @@ import json
 import logging
 from typing import Any
 
-from .. import scoring
+from .. import scoring, space
 from ..answers import AnswerCache, fingerprint
 from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
 from .concepts import ground_names
-from .evidence import describe_age, gap_for, storefront_favorites
+from .evidence import gap_for, storefront_favorites
 from .experience import fans_of
 from .models import RunState
 
@@ -22,12 +22,13 @@ log = logging.getLogger("blankspace")
 DESIGN_SYSTEM = """You are Blank Space's concept designer. Turn a business concept into a design brief for an empty storefront.
 Ground every choice in the evidence: design DNA of the locals' favorite places, what local fans of this category also
 love, local artists, nearby places and local brands.
+Design for the unit: no patio, terrace or sidewalk seating unless unit.outdoor_space is yes. When a unit is given,
+layout and seating fit its size and capacity, and there is no cooking line unless it has a full kitchen.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
-offer (list of 4-6 items), price_level (1-4), hours, music {direction, artists (list, only from local_artists)},
-partners (list of {name, why}; name only from nearby_places or partner_brands), launch (an opening-night idea; never
-mention dates or years), image_prompt (a photorealistic wide view of the whole interior: layout, materials, lighting
-and seating; no people, text or logos), facade_prompt (the shopfront seen from a typical street of this neighborhood,
-with a sign that reads exactly the concept name; no people)."""
+offer (list of 4-6 items), price_level (1-4), music {direction, artists (list, only from local_artists)},
+partners (list of {name, why}; name only from nearby_places or partner_brands), image_prompt (a photorealistic wide
+view of the whole interior: layout, materials, lighting and seating; no people, text or logos), facade_prompt (the
+shopfront seen from a typical street of this neighborhood, with a sign that reads exactly the concept name; no people)."""
 
 
 async def design_concept(
@@ -44,19 +45,24 @@ async def design_concept(
         except QlooError:
             log.warning("Fan taste lookup failed; designing from the area's taste only", exc_info=True)
     fan_artists = [a["name"] for a in fans["artists"]]
-    area_artists = [a["name"] for a in run.taste.get("distinctive_artists", []) + run.taste.get("artists", [])]
-    # Artists loved by people near the site who love this category come first; the area's favorites fill in.
+    area_artists = [a["name"] for a in run.taste.get("distinctive_artists", [])]
+    # Artists loved by people near the site who love this category come first; the area's signature artists fill in.
+    # The area's merely popular artists are left out: they are popular everywhere and say nothing about this place.
     local_artists = list(dict.fromkeys(fan_artists + area_artists))
     nearby = [p.get("name") for p in run.block if p.get("name")]
-    area_brands = run.taste.get("distinctive_brands", []) + run.taste.get("brands", [])
+    area_brands = run.taste.get("distinctive_brands", [])
     brand_cards = list({b["name"]: b for b in area_brands + fans["brands"]}.values())
     fitting_brands = [b["name"] for b in scoring.partner_brands(brand_cards, concept["genre"])]
+    site = run.site
+    unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
+    fit = space.fit(concept["genre"], site.size_m2, site.kitchen)
+    capacity = fit["capacity_text"] if fit else None
     design: dict[str, Any] = {}
     mode, model = "rules", None
     if llm.enabled:
-        payload = json.dumps({
-            "site": run.site.label,
-            "owner_notes": run.site.notes or None,
+        brief: dict[str, Any] = {
+            "site": site.label,
+            "owner_notes": site.notes or None,
             "concept": {k: concept.get(k) for k in ("name", "genre", "one_liner", "for_whom", "price_level", "signature")},
             "design_dna_of_locals_favorites": dna,
             "local_artists": local_artists[:15],
@@ -65,8 +71,10 @@ async def design_concept(
             "local_fans_of_this_category_also_love": {"brands": [b["name"] for b in fans["brands"]], "artists": fan_artists},
             "partner_brands": fitting_brands[:8],
             "taste_cues": run.cues,
-            "crowd": describe_age(run.demographics),
-        }, ensure_ascii=False)
+        }
+        if unit:
+            brief["unit"] = {**unit, "capacity": capacity or "unknown"}
+        payload = json.dumps(brief, ensure_ascii=False)
         key = fingerprint("design", DESIGN_SYSTEM, payload)
         saved = answers.get("design", key) if answers else None
         try:
@@ -82,7 +90,7 @@ async def design_concept(
             log.warning("Design brief LLM call failed; using evidence rules", exc_info=True)
             design = {}
     if not design:
-        design = rule_design(run, concept, dna, local_artists, fitting_brands, fan_led=bool(fan_artists))
+        design = rule_design(run, concept, dna, local_artists, fitting_brands, fan_led=bool(fan_artists), capacity=capacity)
         mode, model = "rules", None
     music = design.get("music") if isinstance(design.get("music"), dict) else {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
@@ -94,6 +102,12 @@ async def design_concept(
         if isinstance(p, dict) and isinstance(p.get("name"), str) and p["name"].lower() in allowed_partners
     ][:4]
     design["dna"] = dna
+    # Hours come from the places themselves, never from the model; launch ideas were dropped as ungrounded.
+    design.pop("launch", None)
+    design["hours"], design["hours_basis"] = opening_hours(row)
+    design["unit"] = unit
+    design["capacity"] = capacity
+    design["capacity_basis"] = CAPACITY_BASIS if capacity else None
     design["mode"] = mode
     design["model"] = model
     design["shots"] = design_shots(run, concept, design, dna)
@@ -113,12 +127,26 @@ FACADE_STYLE = (
 )
 
 
+CAPACITY_BASIS = (
+    "Planning estimate from the International Building Code occupant load factors (15 ft² per seated guest, 5 per "
+    "standing guest) after kitchen, storage and circulation. Check the local code and the unit's certificate."
+)
+
+
+def room_scale(run: RunState) -> str:
+    size = space.size_text(run.site.size_m2)
+    return f"The room is about {size}, furnished at a realistic scale for that size. " if size else ""
+
+
 def design_shots(run: RunState, concept: dict, design: dict, dna: dict) -> list[dict]:
     """Prompts for the two renders. The server keeps them, so a client can only render the shots it was given."""
     sign = sign_text(str(design.get("name") or concept["name"]))
     interior = design.get("image_prompt")
     facade = design.get("facade_prompt")
-    interior = f"{interior.strip()} {INTERIOR_STYLE}" if isinstance(interior, str) and interior.strip() else interior_prompt(run, concept, dna, design)
+    if isinstance(interior, str) and interior.strip():
+        interior = f"{interior.strip()} {room_scale(run)}{INTERIOR_STYLE}"
+    else:
+        interior = interior_prompt(run, concept, dna, design)
     if isinstance(facade, str) and facade.strip():
         facade = facade.strip()
         if sign.lower() not in facade.lower():
@@ -167,7 +195,7 @@ def interior_prompt(run: RunState, concept: dict, dna: dict, design: dict | None
         f"lighting: {interior['lighting']}" if interior.get("lighting") else "",
     ]
     described = ". ".join(part for part in details if part and not part.endswith(": "))
-    return f"Interior of a small street-level {noun} in {run.site.label}. {described}. {INTERIOR_STYLE}"
+    return f"Interior of a small street-level {noun} in {run.site.label}. {described}. {room_scale(run)}{INTERIOR_STYLE}"
 
 
 def facade_prompt(run: RunState, concept: dict, dna: dict, design: dict, sign: str) -> str:
@@ -231,28 +259,41 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
     return [name for _, _, name in sorted(candidates)[:limit]]
 
 
+def opening_hours(row: dict | None) -> tuple[str | None, str | None]:
+    """Hours the places locals love of this type keep (competitors inside the walk when too few list theirs)."""
+    if not row:
+        return None, None
+    genre = scoring.genre_title(row["genre"])
+    found = scoring.typical_hours(storefront_favorites(row)[0])
+    if found:
+        return found["text"], f"Typical hours of the {found['sample']} {genre} places locals love that list them"
+    found = scoring.typical_hours(row.get("_nearby_entities") or [])
+    if found:
+        return found["text"], f"Typical hours of {found['sample']} {genre} places inside the walk"
+    return None, None
+
+
 def rule_design(
     run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str], fan_led: bool = False,
+    capacity: str | None = None,
 ) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
     minutes = run.site.minutes
     title = scoring.genre_title(concept["genre"])
     layout = LAYOUTS.get(scoring.genre_kind(concept["genre"]), LAYOUTS["food"])
-    if any("outdoor" in amenity.lower() for amenity in dna.get("amenities", [])):
+    # Only space the owner says the unit has: favorites with patios say nothing about this unit.
+    if run.site.outdoor:
         layout += ", plus sidewalk seating"
+    seating = ", ".join(
+        a for a in dna.get("amenities", []) if "seating" in a.lower() and "outdoor" not in a.lower()
+    ) or "Mixed bar and table seating"
     partners = [
         {"name": name, "why": f"Popular inside the {minutes}-minute walk and complements rather than competes; cross-promote."}
         for name in partner_places(run, concept["genre"])
     ]
     if partner_brands:
-        partners.append({"name": partner_brands[0], "why": "A brand this area over-indexes on; a natural co-branded launch."})
-    if partners and fan_led and artists:
-        launch = f"Opening night co-hosted with {partners[0]['name']}, playing artists local {title} fans love ({', '.join(artists[:2])})."
-    elif partners:
-        launch = f"Opening night co-hosted with {partners[0]['name']}."
-    else:
-        launch = f"Opening night for the neighbors within a {minutes}-minute walk."
+        partners.append({"name": partner_brands[0], "why": "A brand this area over-indexes on; a natural co-branding partner."})
     return {
         "name": concept["name"],
         "tagline": concept.get("one_liner"),
@@ -262,18 +303,14 @@ def rule_design(
             "materials": decor,
             "lighting": "Warm, layered lighting" if "romantic" in ambience or "cozy" in ambience else "Bright, natural light",
             "layout": layout,
-            "seating": ", ".join(
-                a for a in dna.get("amenities", []) if "seating" in a.lower() and "outdoor" not in a.lower()
-            ) or "Mixed bar and table seating",
+            "seating": f"{seating}; {capacity}" if capacity else seating,
         },
         "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),
-        "hours": "To be set from local foot traffic",
         "music": {
             "direction": f"What local {title} fans also listen to" if fan_led else "Built from artists that over-index locally",
             "artists": artists[:5],
         },
         "partners": partners,
-        "launch": launch,
         "image_prompt": None,
     }

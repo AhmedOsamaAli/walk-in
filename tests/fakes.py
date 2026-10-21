@@ -38,9 +38,10 @@ NEARBY = {"Seafood": 1, "Brunch": 12, "Wine Bar": 9, "Coffee shop": 14, "Japanes
           "Yoga studio": 0, "Ramen": 0, "Board Game Cafe": 0}
 AROUND = {"Seafood": 12, "Brunch": 30, "Wine Bar": 22, "Coffee shop": 34, "Japanese": 13, "Bakery": 10,
           "Gift shop": 5, "Yoga studio": 1, "Ramen": 9, "Board Game Cafe": 2}
-CROWD_PROFILE = {
-    "age": {"24_and_younger": -0.1, "25_to_29": 0.3, "30_to_34": 0.2, "35_to_44": -0.1, "45_to_54": -0.2, "55_and_older": -0.3},
-    "gender": {"male": -0.05, "female": 0.05},
+# Every synthetic place keeps these hours: 11 am to 10 pm, until 11:30 pm on Fridays and Saturdays.
+WEEK_HOURS = {
+    day: [{"opens": "T11:00:00", "closes": "T23:30:00" if day in ("friday", "saturday") else "T22:00:00", "closed": False}]
+    for day in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 }
 # What people near the site who love a genre also love; Seafood fans share two names with the area's signature taste.
 FAN_TASTE = {"Seafood": {"brands": ["Riverside Cider Co", "Tide Magazine"], "artists": ["Sea Shanty Crew", "Local Jazz Trio"]}}
@@ -98,8 +99,11 @@ def place(name: str, genre: str, lat: float, lon: float, index: int = 0, genre_t
             "business_rating": 4.0 + (index % 9) / 10,
             "price_level": 1 + index % 3,
             "keywords": [{"name": "outdoor seating", "count": 20 + index}, {"name": "long wait" if index % 4 == 0 else "friendly staff", "count": 5}],
+            "hours": WEEK_HOURS,
         },
-        "query": {"affinity": 0.9, "measurements": {"audience_growth": 0.4 if index % 7 == 0 else (-0.3 if index % 11 == 0 else 0)}},
+        # Every fifth place has a long review history, so blocks and favorites have established places.
+        "external": {"tripadvisor": [{"id": f"d{index}", "rating": 4.5, "rating_count": 1000 - index if index % 5 == 0 else 30}]},
+        "query": {"affinity": 0.9},
     }
 
 
@@ -164,8 +168,6 @@ class FakeQloo:
         if kind == "urn:entity:artist":
             names = LOCAL_ARTISTS if at_site(params.get("signal.location", "")) else REFERENCE_ARTISTS
             return {"results": {"entities": [entity(n, "artist", i) for i, n in enumerate(names)]}}
-        if kind == "urn:demographics":
-            return {"results": {"demographics": [{"entity_id": "x", "query": CROWD_PROFILE}]}}
         if kind == "urn:heatmap":
             cells = []
             for i in range(30):

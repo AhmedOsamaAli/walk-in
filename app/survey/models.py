@@ -20,6 +20,10 @@ class Site:
     focus: str = "any"
     notes: str = ""
     minutes: int = 10
+    # The unit, when the owner knows it: floor area, the kitchen it has (full, light or none) and outdoor space.
+    size_m2: float | None = None
+    kitchen: str | None = None
+    outdoor: bool | None = None
 
 
 @dataclass
@@ -35,7 +39,6 @@ class RunState:
     explored: list[dict] = field(default_factory=list)  # genres the agent tested live, scored like the table
     fans: dict[str, dict] = field(default_factory=dict)  # genre id -> what local fans of that genre also love
     taste: dict = field(default_factory=dict)
-    demographics: dict | None = None
     concepts: list[dict] = field(default_factory=list)
     designs: dict[int, dict] = field(default_factory=dict)
     renders: dict[tuple[int, str], asyncio.Future] = field(default_factory=dict)  # (concept, shot) -> render

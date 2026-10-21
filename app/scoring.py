@@ -210,6 +210,12 @@ def genre_tags(entity: dict) -> list[tuple[str, str]]:
     ]
 
 
+def primary_genre(entity: dict) -> str | None:
+    """Qloo's main category for a place ('Egyptian restaurant'); its tag list is unordered ('Izakaya' may come first)."""
+    name = ((entity.get("properties") or {}).get("primary_genre") or {}).get("name")
+    return name if isinstance(name, str) and is_business_genre(name) else None
+
+
 def is_business_genre(name: str) -> bool:
     lowered = name.strip().lower()
     return lowered not in GENERIC_GENRES and lowered not in TASTE_CUE_GENRES and lowered not in NOT_STOREFRONT_GENRES
@@ -246,8 +252,27 @@ def place_location(entity: dict) -> tuple[float, float] | None:
     return float(lat), float(lon)
 
 
-def audience_growth(entity: dict) -> float | None:
-    return ((entity.get("query") or {}).get("measurements") or {}).get("audience_growth")
+# A place with this many TripAdvisor reviews has years of history (the median place in our samples has about 50).
+ESTABLISHED_REVIEWS = 250
+
+
+def standing(entity: dict) -> dict | None:
+    """Why a place counts as an established favorite: a Michelin Guide listing or a long review history.
+
+    Qloo has no opening dates, so nothing is ever called new; places without this evidence are simply not marked.
+    """
+    external = entity.get("external") or {}
+    michelin = next(iter(external.get("michelin") or []), None)
+    tripadvisor = next(iter(external.get("tripadvisor") or []), None) or {}
+    reviews = tripadvisor.get("rating_count")
+    reviews = int(reviews) if isinstance(reviews, int | float) else None
+    if not michelin and (reviews or 0) < ESTABLISHED_REVIEWS:
+        return None
+    result: dict = {"reviews": reviews}
+    if michelin:
+        stars = michelin.get("stars")
+        result["michelin"] = f"{int(stars)} star{'s' if int(stars) > 1 else ''}" if stars else "listed"
+    return result
 
 
 def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
@@ -264,7 +289,7 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
         "genres": [name for _, name in genre_tags(entity) if is_business_genre(name)][:3],
         "praise": [k["name"] for k in keywords if k.get("name") and not is_complaint(k["name"])][:4],
         "complaints": [k["name"] for k in keywords if k.get("name") and is_complaint(k["name"])][:3],
-        "growth": audience_growth(entity),
+        "standing": standing(entity),
         "lat": location[0] if location else None,
         "lon": location[1] if location else None,
         "image": (props.get("image") or {}).get("url"),
@@ -281,25 +306,34 @@ def summarize_block(places: Iterable[dict]) -> dict:
     complaints: Counter = Counter()
     prices: Counter = Counter()
     ratings: list[float] = []
-    rising: list[tuple[str, float]] = []
-    fading: list[tuple[str, float]] = []
+    classics: list[tuple[tuple, dict]] = []
     for place in places:
         props = place.get("properties") or {}
-        for _, name in genre_tags(place):
-            if is_business_genre(name):
-                genres[name] += 1
+        business = [name for _, name in genre_tags(place) if is_business_genre(name)]
+        for name in business:
+            genres[name] += 1
         if props.get("business_rating"):
             ratings.append(float(props["business_rating"]))
         if props.get("price_level"):
             prices[int(props["price_level"])] += 1
+        place_praise = []
         for keyword in props.get("keywords") or []:
             name = keyword.get("name")
             if not name:
                 continue
-            (complaints if is_complaint(name) else praise)[name] += int(keyword.get("count") or 0)
-        growth = audience_growth(place)
-        if growth:
-            (rising if growth > 0 else fading).append((place.get("name"), round(growth, 2)))
+            complaint = is_complaint(name)
+            (complaints if complaint else praise)[name] += int(keyword.get("count") or 0)
+            if not complaint:
+                place_praise.append(name)
+        evidence = standing(place)
+        if evidence and place.get("name") and business and is_storefront_place(place):
+            order = ("michelin" not in evidence, -(evidence.get("reviews") or 0))
+            classics.append((order, {
+                "id": item_id(place), "name": place["name"], "genre": genre_title(primary_genre(place) or business[0]),
+                **evidence,
+                # The badge already says Michelin; review keywords repeating it are not what people come for.
+                "praise": [word for word in place_praise if "michelin" not in word.lower()][:3],
+            }))
     return {
         "place_count": len(places),
         "top_genres": genres.most_common(12),
@@ -307,9 +341,77 @@ def summarize_block(places: Iterable[dict]) -> dict:
         "price_levels": {str(level): count for level, count in sorted(prices.items())},
         "praise": praise.most_common(12),
         "complaints": complaints.most_common(10),
-        "rising": sorted(rising, key=lambda item: -item[1])[:6],
-        "fading": sorted(fading, key=lambda item: item[1])[:6],
+        "classics": [card for _, card in sorted(classics, key=lambda item: item[0])[:6]],
     }
+
+
+DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+DAY_GROUPS = (("Mon–Thu", DAYS[:4]), ("Fri–Sat", DAYS[4:6]), ("Sun", DAYS[6:]))
+
+
+def _clock(value: str | None) -> float | None:
+    """'T11:30:00' -> 11.5"""
+    match = re.match(r"T?(\d{1,2}):(\d{2})", value or "")
+    return int(match.group(1)) + int(match.group(2)) / 60 if match else None
+
+
+def day_span(intervals: list[dict] | None) -> tuple[float, float] | None:
+    """Opening and closing hour of one day, closing after midnight counted past 24; None when closed or unknown."""
+    spans = []
+    for interval in intervals or []:
+        opens, closes = _clock(interval.get("opens")), _clock(interval.get("closes"))
+        if interval.get("closed") or opens is None or closes is None:
+            continue
+        spans.append((opens, closes + 24 if closes <= opens else closes))
+    return (min(o for o, _ in spans), max(c for _, c in spans)) if spans else None
+
+
+def clock_text(hour: float) -> str:
+    hour = hour % 24
+    if hour == 0:
+        return "midnight"
+    if hour == 12:
+        return "noon"
+    whole, minutes = int(hour), round((hour - int(hour)) * 60)
+    suffix = "am" if whole < 12 else "pm"
+    shown = whole % 12 or 12
+    return f"{shown}{f':{minutes:02d}' if minutes else ''} {suffix}"
+
+
+def typical_hours(places: Iterable[dict], minimum: int = 3) -> dict | None:
+    """The opening hours most places of a type keep, per day group, from Qloo's listed hours.
+
+    Medians are rounded to the half hour; a day group most of the places close on is reported as closed. About 7 % of
+    places are listed as closed every day, including busy chains and cinemas, which means their hours are unknown, so
+    only places listed as open on at least one day count.
+    """
+    weekly = [
+        hours for p in places
+        if isinstance(hours := (p.get("properties") or {}).get("hours"), dict) and any(day_span(hours.get(d)) for d in DAYS)
+    ]
+    if len(weekly) < minimum:
+        return None
+    groups = []
+    for label, days in DAY_GROUPS:
+        spans = [span for hours in weekly for day in days if (span := day_span(hours.get(day)))]
+        closed = sum(1 for hours in weekly for day in days if any(i.get("closed") for i in hours.get(day) or []))
+        if closed > len(spans):
+            groups.append((label, "closed"))
+            continue
+        if not spans:
+            continue
+        opens = round(median(o for o, _ in spans) * 2) / 2
+        closes = round(median(c for _, c in spans) * 2) / 2
+        groups.append((label, "24 hours" if closes - opens >= 24 else f"{clock_text(opens)}–{clock_text(closes)}"))
+    merged: list[list[str]] = []
+    for label, text in groups:
+        if merged and merged[-1][1] == text:
+            merged[-1][0] = f"{merged[-1][0].split('–')[0]}–{label.split('–')[-1]}"
+        else:
+            merged.append([label, text])
+    if len(merged) == 1:
+        merged[0][0] = "Daily"
+    return {"text": " · ".join(f"{label} {text}" for label, text in merged), "sample": len(weekly)}
 
 
 def reference_rank(ranks: list[int | None], missing: int = UNRANKED) -> float | None:
@@ -476,24 +578,6 @@ def design_dna(places: Iterable[dict], per_family: int = 6) -> dict:
     dna["keywords"] = [name for name, _ in keywords.most_common(10)]
     dna["typical_price_level"] = round(median(price_levels)) if price_levels else None
     return dna
-
-
-def average_demographics(rows: list[dict]) -> dict | None:
-    """Average Qloo age/gender skews across several demographic rows."""
-    ages: dict[str, list[float]] = {}
-    genders: dict[str, list[float]] = {}
-    for row in rows:
-        query = row.get("query") or {}
-        for bucket, value in (query.get("age") or {}).items():
-            ages.setdefault(bucket, []).append(float(value))
-        for bucket, value in (query.get("gender") or {}).items():
-            genders.setdefault(bucket, []).append(float(value))
-    if not ages and not genders:
-        return None
-    return {
-        "age": {bucket: round(mean(values), 2) for bucket, values in ages.items()},
-        "gender": {bucket: round(mean(values), 2) for bucket, values in genders.items()},
-    }
 
 
 def entity_card(entity: dict) -> dict:

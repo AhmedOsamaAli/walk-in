@@ -61,6 +61,8 @@ def test_full_survey_in_rules_mode():
             assert expected in names, f"missing {expected} event"
         assert "error" not in names
         assert names[-1] == "done"
+        steps = {data["step"] for event, data in events if event == "status"}
+        assert steps == {"walk", "block", "demand", "taste", "gaps", "concepts"}
 
         catchment = first(events, "catchment")
         assert catchment["minutes"] == 10 and len(catchment["ring"]) > 10
@@ -68,6 +70,10 @@ def test_full_survey_in_rules_mode():
         block = first(events, "block")
         assert block["summary"]["place_count"] == 30
         assert any(key == "long wait" for key, _ in block["summary"]["complaints"])
+        classics = block["summary"]["classics"]
+        assert [c["name"] for c in classics] == [f"Block Place {i}" for i in (0, 5, 10, 15, 20, 25)]
+        assert classics[0]["reviews"] == 1000 and classics[0]["praise"] == ["outdoor seating"]
+        assert "rising" not in block["summary"] and "growth" not in block["places"][0]
 
         rows = first(events, "gaps")["rows"]
         by_genre = {row["genre"]: row for row in rows}
@@ -81,6 +87,7 @@ def test_full_survey_in_rules_mode():
         assert all(not key.startswith("_") for row in rows for key in row)
 
         taste = first(events, "taste")
+        assert "demographics" not in taste and "crowd" not in taste
         distinctive = [b["name"] for b in taste["distinctive_brands"]]
         assert distinctive[:4] == ["Block News", "Local Sports Team", "Riverside Cider Co", "Neighborhood Bikes"]
         assert "Civic Advocacy Org" not in [b["name"] for b in taste["brands"]] + distinctive
@@ -108,6 +115,10 @@ def test_full_survey_in_rules_mode():
         # The soundtrack starts from what local seafood fans listen to, then the area's own favorites.
         assert sheet["music"]["artists"][:3] == ["Sea Shanty Crew", "Local Jazz Trio", "Block Party Band"]
         assert sheet["music"]["direction"] == "What local Seafood fans also listen to"
+        assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
+        assert sheet["hours_basis"] == "Typical hours of the 5 Seafood places locals love that list them"
+        assert "launch" not in sheet
+        assert concepts["concepts"][0]["for_whom"].startswith("Neighbors within a 10-minute walk; the Seafood places")
         assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet  # cached
 
         assert client.post("/api/design", json={"run_id": "nope", "index": 0}).status_code == 404
@@ -221,6 +232,9 @@ def test_agent_investigates_live_and_is_grounded():
         assert sheet["mode"] == "agent" and sheet["model"] == "test-model"
         assert sheet["music"]["artists"] == ["Local Jazz Trio", "Sea Shanty Crew"]  # fan artists are allowed, invented ones not
         assert [p["name"] for p in sheet["partners"]] == ["Block Place 1", "Riverside Cider Co"]
+        # Hours come from the places locals love, not from the model; the model's launch idea is dropped.
+        assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
+        assert "launch" not in sheet
         assert client.post("/api/design", json={"run_id": run_id, "index": 1}).json()["dna"]  # designs a tested genre
 
 
@@ -412,10 +426,47 @@ def test_map_and_lookup_endpoints():
     ({**RUN_PARAMS, "minutes": 7}, 400),
     ({**RUN_PARAMS, "lat": 123}, 422),
     ({"lat": SITE[0]}, 422),
+    ({**RUN_PARAMS, "kitchen": "industrial"}, 422),
+    ({**RUN_PARAMS, "size_m2": 4}, 422),
+    ({**RUN_PARAMS, "outdoor": "maybe"}, 422),
 ])
 def test_run_rejects_bad_input(params, status):
     with make_client() as client:
         assert client.get("/api/run", params=params).status_code == status
+
+
+def test_the_unit_shapes_the_concepts_and_the_design():
+    params = {**RUN_PARAMS, "size_m2": 60, "kitchen": "light", "outdoor": "false"}
+    with make_client() as client:
+        events = sse_events(client.get("/api/run", params=params).text)
+        assert first(events, "run")["site"]["kitchen"] == "light"
+        rows = {row["genre"]: row for row in first(events, "gaps")["rows"]}
+        # Seafood is still the block's biggest gap, shown as such, but this unit cannot host it.
+        assert rows["Seafood"]["gap_score"] == max(row["gap_score"] for row in rows.values())
+        assert rows["Seafood"]["fit"]["fits"] is False
+        assert rows["Seafood"]["fit"]["reason"] == "needs a full kitchen with extraction; the unit has a light-prep kitchen"
+        assert rows["Wine Bar"]["fit"] == {
+            "fits": True, "reason": None, "needs": "light", "capacity": {"mode": "seated", "low": 27, "high": 32},
+            "capacity_text": "about 27–32 seated guests at most",
+        }
+        concepts = first(events, "concepts")["concepts"]
+        assert [c["genre"] for c in concepts] == ["Coffee shop", "Wine Bar"]  # the only solid gaps that fit
+
+        run_id = first(events, "run")["run_id"]
+        sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
+        assert sheet["capacity"] == "about 27–32 seated guests at most" and "Building Code" in sheet["capacity_basis"]
+        assert sheet["unit"] == {"size": "60 m² (646 ft²)", "kitchen": "a light-prep kitchen", "outdoor_space": "none"}
+        assert sheet["interior"]["seating"].endswith("about 27–32 seated guests at most")
+        assert "sidewalk" not in sheet["interior"]["layout"]
+        assert "The room is about 60 m² (646 ft²)" in sheet["shots"][0]["prompt"]
+
+
+def test_a_unit_nothing_fits_gets_an_honest_answer():
+    with make_client() as client:
+        events = sse_events(client.get("/api/run", params={**RUN_PARAMS, "focus": "food_drink", "kitchen": "none"}).text)
+        concepts = first(events, "concepts")
+        assert concepts["concepts"] == [] and concepts["mode"] == "none"
+        assert concepts["note"] == "None of the categories the block is missing fits this unit."
 
 
 def test_heatmap_rejects_non_tag_input():

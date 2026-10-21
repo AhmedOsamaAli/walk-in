@@ -248,17 +248,6 @@ async def local_taste(q: QlooClient, lat: float, lon: float) -> dict:
     }
 
 
-async def crowd_demographics(q: QlooClient, places: list[dict]) -> dict | None:
-    """Age and gender skew of the crowd, read through the area's most popular places."""
-    ranked = sorted(places, key=lambda p: -(p.get("popularity") or 0))
-    ids = [scoring.item_id(p) for p in ranked[:5] if scoring.item_id(p)]
-    if not ids:
-        return None
-    data = await q.insights({"filter.type": "urn:demographics", "signal.interests.entities": ",".join(ids)})
-    results = data.get("results") or {}
-    return scoring.average_demographics(results.get("demographics") or [])
-
-
 async def genre_heatmap(q: QlooClient, lat: float, lon: float, tag: str, radius: int = 3000) -> list[dict]:
     data = await q.insights({
         "filter.type": "urn:heatmap",
