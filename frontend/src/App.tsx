@@ -7,11 +7,11 @@ import { ConceptsSection } from "./components/ConceptsSection";
 import { DesignSheet, type DesignTarget } from "./components/DesignSheet";
 import { GapsSection } from "./components/GapsSection";
 import { LiveStatus } from "./components/LiveStatus";
-import { SiteHeader } from "./components/SiteHeader";
+import { SiteHeader, type TitleField } from "./components/SiteHeader";
 import { SurveyLog } from "./components/SurveyLog";
 import { TasteSection } from "./components/TasteSection";
 import { TopBar } from "./components/TopBar";
-import { coords, FOCUS_LABELS } from "./lib/format";
+import { FOCUS_LABELS, fmtLat, fmtLon } from "./lib/format";
 import { scrollBehavior, withViewTransition } from "./lib/motion";
 import { useSectionSpy, type SectionId } from "./lib/sections";
 import type { MapPoint } from "./map/controller";
@@ -24,7 +24,19 @@ import { useSurvey } from "./state/useSurvey";
 /** The site as the survey view names it, fixed when the survey starts. */
 interface Surveyed {
   label: string;
-  detail: string;
+  fields: TitleField[];
+}
+
+const NOTES_SHOWN = 60;
+
+function briefFields(site: Site, minutes: WalkMinutes, area: number | null, focus: Focus, notes: string): TitleField[] {
+  const shortNotes = notes.length > NOTES_SHOWN ? `${notes.slice(0, NOTES_SHOWN - 1).trimEnd()}…` : notes;
+  return [
+    { label: "Coordinates", lines: [fmtLat(site.lat), fmtLon(site.lon)], mono: true },
+    { label: "Catchment", lines: area == null ? [`${minutes}-min walk`] : [`${minutes}-min walk`, `${area} km²`] },
+    { label: "Business", lines: [FOCUS_LABELS[focus]] },
+    { label: "Constraints", lines: [shortNotes || "None"] },
+  ];
 }
 
 function readySections(survey: SurveyState): SectionId[] {
@@ -61,17 +73,10 @@ export function App() {
   function startSurvey() {
     if (!site || survey.streaming) return;
     const run: RunRequest = { lat: site.lat, lon: site.lon, label: site.label, focus, notes: notes.trim(), minutes };
-    const detail = [
-      coords(site.lat, site.lon),
-      `${minutes}-min walk`,
-      FOCUS_LABELS[focus],
-      run.notes ? "Owner constraints set" : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    const fields = briefFields(site, minutes, briefWalk?.area_km2 ?? null, focus, run.notes);
     withViewTransition(() => {
       flushSync(() => {
-        setSurveyed({ label: site.label, detail });
+        setSurveyed({ label: site.label, fields });
         start(run);
       });
     });
@@ -100,7 +105,7 @@ export function App() {
   return (
     <>
       <TopBar fill={markFill(survey, surveying)} ready={ready} current={current} theme={theme} onToggleTheme={toggleTheme} />
-      <main className="stage">
+      <main className="stage" data-mode={surveying ? "survey" : "brief"}>
         <article className="sheet">
           <Brief
             hidden={surveying}
@@ -118,7 +123,7 @@ export function App() {
           {surveyed ? (
             <>
               <LiveStatus key={survey.run} survey={survey} />
-              <SiteHeader label={surveyed.label} detail={surveyed.detail} onNewSurvey={newSurvey} />
+              <SiteHeader label={surveyed.label} fields={surveyed.fields} onNewSurvey={newSurvey} />
               <SurveyLog log={survey.log} summary={survey.summary} />
               {survey.block ? <BlockSection block={survey.block} /> : null}
               {survey.gaps ? <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} /> : null}

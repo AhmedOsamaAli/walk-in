@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { BlockPayload, Tally } from "../api/types";
-import { price } from "../lib/format";
+import type { BlockPayload, Classic, TopicGroup } from "../api/types";
+import { price, standingText, topicForms } from "../lib/format";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
 
@@ -13,21 +13,62 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function TallyList({ rows, className, empty }: { rows: Tally[] | undefined; className: string; empty: string }) {
-  const shown = (rows ?? []).slice(0, 7);
+interface TopicsProps {
+  title: string;
+  groups: TopicGroup[] | undefined;
+  kind: "menu" | "experience" | "complaints";
+  empty: string;
+  limit: number;
+}
+
+/** Review keywords grouped by meaning: one row per topic, with the other ways reviews word it underneath. */
+function Topics({ title, groups, kind, empty, limit }: TopicsProps) {
+  const shown = (groups ?? []).slice(0, limit);
   return (
-    <ul className={className}>
-      {shown.length ? (
-        shown.map(([key, count]) => (
-          <li key={key}>
-            <span>{key}</span>
-            <small>{count}</small>
+    <div className="topics-col">
+      <h3 className="label mono">{title}</h3>
+      <ul className={`topics ${kind}`}>
+        {shown.length ? (
+          shown.map((group) => {
+            const forms = topicForms(group);
+            const places = `${group.places} ${group.places === 1 ? "place" : "places"}`;
+            return (
+              <li key={group.label} title={`${group.mentions.toLocaleString("en-US")} mentions across ${places}`}>
+                <span className="t-label">{group.label}</span>
+                <small className="t-count">{group.mentions.toLocaleString("en-US")}</small>
+                {forms.length ? <span className="t-forms">{forms.join(" · ")}</span> : null}
+              </li>
+            );
+          })
+        ) : (
+          <li className="muted">{empty}</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function Classics({ classics }: { classics: Classic[] }) {
+  return (
+    <>
+      <h3 className="label mono">Classics of the block</h3>
+      <ul className="classics">
+        {classics.map((classic) => (
+          <li key={classic.id ?? classic.name}>
+            <span className="c-name">{classic.name}</span>
+            <span className={classic.michelin ? "badge mono michelin" : "badge mono"}>{standingText(classic)}</span>
+            <span className="c-meta">
+              <span className="mono">{classic.genre}</span>
+              {classic.known_for.length ? <span> · known for {classic.known_for.join(", ")}</span> : null}
+            </span>
           </li>
-        ))
-      ) : (
-        <li className="muted">{empty}</li>
-      )}
-    </ul>
+        ))}
+      </ul>
+      <p className="caption serif">
+        Established means a Michelin Guide listing or 250+ TripAdvisor reviews. Qloo has no opening dates, so nothing
+        here is called new.
+      </p>
+    </>
   );
 }
 
@@ -39,6 +80,7 @@ function commonestPrice(levels: Record<string, number> | undefined): number | nu
 export function BlockSection({ block }: { block: BlockPayload }) {
   const { summary, places } = block;
   const genres = summary.top_genres ?? [];
+  const classics = summary.classics ?? [];
   const typical = commonestPrice(summary.price_levels);
   return (
     <section id="s-block" className="sec reveal">
@@ -65,16 +107,24 @@ export function BlockSection({ block }: { block: BlockPayload }) {
           <span className="muted">No genre data.</span>
         )}
       </div>
+      {classics.length ? <Classics classics={classics} /> : null}
       <div className="voices">
-        <div className="voice">
-          <h3 className="label mono">What reviews praise</h3>
-          <TallyList rows={summary.praise} className="praise" empty="No review keywords nearby." />
-        </div>
-        <div className="voice">
-          <h3 className="label mono">What reviews complain about</h3>
-          <TallyList rows={summary.complaints} className="complaints" empty="No recurring complaints." />
-        </div>
+        <Topics title="On the menu" groups={summary.menu} kind="menu" empty="No dishes in the reviews nearby." limit={8} />
+        <Topics
+          title="What people come for"
+          groups={summary.experience}
+          kind="experience"
+          empty="No recurring experiences in the reviews."
+          limit={8}
+        />
       </div>
+      <Topics
+        title="What reviews complain about"
+        groups={summary.complaints}
+        kind="complaints"
+        empty="No recurring complaints."
+        limit={6}
+      />
     </section>
   );
 }

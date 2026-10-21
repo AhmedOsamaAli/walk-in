@@ -1,36 +1,32 @@
-@media (max-width: 1100px) {
-  .meter { grid-template-columns: 1fr; gap: 4px; }
-  .gap-detail-inner { padding-left: 0; }
-}
-
+/* One column below 980px: the map leads, short enough on the brief that the question and the search fit on screen. */
 @media (max-width: 980px) {
-  .stage { grid-template-columns: 1fr; }
-  .map-frame { position: relative; top: 0; order: -1; height: 52vh; border-bottom: var(--rule); }
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .map-frame { position: relative; top: 0; order: -1; height: clamp(230px, 34vh, 400px); border-bottom: var(--rule); }
+  .stage[data-mode="survey"] .map-frame { height: clamp(300px, 50vh, 560px); }
   .sheet { border-right: 0; }
   .bar-nav { display: none; }
-  .bar { grid-template-columns: auto 1fr; }
+  .bar { grid-template-columns: auto minmax(0, 1fr); }
   .bar-end { justify-self: end; }
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .stat:nth-child(3) { padding-left: 0; border-left: 0; }
-  .voices, .taste-grid, .gap-detail-inner { grid-template-columns: 1fr; }
-  .design-body { grid-template-columns: 1fr; }
+  .design-body { grid-template-columns: minmax(0, 1fr); }
   .d-side { border-left: 0; border-top: var(--rule); }
   .d-side-inner { position: static; padding-top: 28px; }
 }
 
+/* Phones: the search comes straight after the question; the explanation follows it. */
 @media (max-width: 560px) {
-  .site-btn { grid-template-columns: 28px 1fr 18px; }
-  .site-btn .coords { display: none; }
-  .gap-row { grid-template-columns: 76px 1fr 30px; }
-  .gap-score { font-size: 64px; }
-  .poster { min-height: 520px; border-radius: 36px; }
-  .poster-score { font-size: 104px; }
-  .design { border-radius: 24px; }
+  .brief > .lede { order: 1; margin: 22px 0 0; }
+  .brief > .brief-card { order: 2; }
+  .brief > .index { order: 3; }
+  .design { border-radius: 20px; }
   .d-main { padding: 34px 22px 40px; }
+  .site-row .ghost { padding: 8px 14px; }
+  /* The map credits run almost the full width here; the legend sits above them. */
+  .legend { bottom: 34px; }
 }
 
 @media (max-width: 420px) {
   .bar-meta { display: none; }
+  .mark-word { font-size: 21px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -39,6 +35,6 @@
     animation-iteration-count: 1 !important; transition-duration: .001ms !important;
   }
   html { scroll-behavior: auto; }
-  .headline .line > span { transform: none; }
+  .headline .w > span { transform: none; }
   .radar::before { display: none; }
 }

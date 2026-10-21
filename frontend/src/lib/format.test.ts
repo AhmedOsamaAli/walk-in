@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GapRow } from "../api/types";
-import { agentText, coords, gapWhy, list, price, safeUrl, shortLabel } from "./format";
+import { agentText, coords, gapWhy, list, price, safeUrl, shortLabel, standingText, topicForms } from "./format";
 
 const base: GapRow = {
   genre_id: "urn:tag:genre:place:seafood",
@@ -69,6 +69,19 @@ describe("formatting", () => {
     expect(safeUrl("http://example.com/a.jpg")).toBeNull();
     expect(safeUrl("data:image/svg+xml;base64,AAAA")).toBeNull();
     expect(safeUrl("javascript:alert(1)")).toBeNull();
+  });
+
+  it("badges established places by Michelin first, then review count", () => {
+    expect(standingText({ reviews: 1563, michelin: "1 star" })).toBe("Michelin 1 star");
+    expect(standingText({ reviews: null, michelin: "listed" })).toBe("Michelin listed");
+    expect(standingText({ reviews: 1563 })).toBe("1,563 reviews");
+    expect(standingText(null)).toBe("");
+  });
+
+  it("lists a topic's other wordings, not its label", () => {
+    const waits = { label: "Long waits and lines", mentions: 189, places: 12, keywords: ["long lines", "wait time", "on line", "long wait times"] };
+    expect(topicForms(waits)).toEqual(["long lines", "wait time", "on line"]);
+    expect(topicForms({ label: "croissant", mentions: 9, places: 3, keywords: ["croissant", "croissants"] })).toEqual(["croissants"]);
   });
 
   it("describes the agent's tool calls", () => {

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <style>.frame { stroke: #000; } @media (prefers-color-scheme: dark) { .frame { stroke: #f6f6f3; } }</style>
-  <rect class="frame" x="3" y="3" width="26" height="26" fill="none" stroke-width="3" />
-  <rect x="3" y="17" width="26" height="12" fill="#0000ff" />
+  <style>.frame { stroke: #1d1d1f; } @media (prefers-color-scheme: dark) { .frame { stroke: #ecebe6; } }</style>
+  <rect class="frame" x="3" y="3" width="26" height="26" rx="3" fill="none" stroke-width="2.5" />
+  <rect x="4.25" y="17" width="23.5" height="10.75" fill="#0f68ea" />
 </svg>

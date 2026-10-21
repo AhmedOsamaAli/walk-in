@@ -26,13 +26,23 @@ export interface Walk {
   radius_m: number;
 }
 
+/** Why a place counts as established: a Michelin Guide listing or a long TripAdvisor review history. */
+export interface Standing {
+  reviews: number | null;
+  /** "listed", "1 star", "2 stars"... */
+  michelin?: string;
+}
+
 export interface PlaceCard {
   name: string | null;
   rating?: number | null;
   price_level?: number | null;
   genres?: string[];
-  praise?: string[];
+  /** The dishes and experience themes its reviews mention most, written to read inside a sentence. */
+  known_for?: string[];
+  /** Complaint themes from its reviews, written the same way. */
   complaints?: string[];
+  standing?: Standing | null;
   lat: number | null;
   lon: number | null;
   distance_m?: number;
@@ -42,16 +52,36 @@ export interface FavoritePlace extends PlaceCard {
   within_walk?: boolean;
 }
 
-/** A name and how often it occurs: a genre and its places, or a review keyword and its mentions. */
+/** A name and how often it occurs: a place type and its places. */
 export type Tally = [string, number];
+
+/** Review keywords that mean the same thing, grouped: a dish, an experience theme or a complaint theme. */
+export interface TopicGroup {
+  label: string;
+  mentions: number;
+  /** How many places' reviews mention it. */
+  places: number;
+  /** The keywords as reviews write them, most mentioned first. */
+  keywords: string[];
+}
+
+/** An established favorite inside the walk. */
+export interface Classic extends Standing {
+  id: string | null;
+  name: string;
+  genre: string;
+  known_for: string[];
+}
 
 export interface BlockSummary {
   place_count?: number;
   top_genres?: Tally[];
   avg_rating?: number | null;
   price_levels?: Record<string, number>;
-  praise?: Tally[];
-  complaints?: Tally[];
+  menu?: TopicGroup[];
+  experience?: TopicGroup[];
+  complaints?: TopicGroup[];
+  classics?: Classic[];
 }
 
 export interface BlockPayload {

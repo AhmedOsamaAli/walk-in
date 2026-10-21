@@ -122,7 +122,7 @@ export function SearchBox({ onPick }: SearchBoxProps) {
       <input
         id={`${listId}-input`}
         type="search"
-        placeholder="Search an address or neighborhood"
+        placeholder="Address or neighborhood"
         value={text}
         role="combobox"
         aria-expanded={showList}

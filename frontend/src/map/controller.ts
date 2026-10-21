@@ -29,7 +29,9 @@ const TILES: Record<Theme, { base: string; labels: string }> = {
 };
 const TILE_OPTIONS: L.TileLayerOptions = { subdomains: ["server", "services"], maxNativeZoom: 16, maxZoom: 19, className: "basemap" };
 const ATTRIBUTION =
-  'Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+  'Tiles &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin &middot; &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+/** Leaflet's credit without the flag it prepends by default. */
+const LEAFLET_CREDIT = '<a href="https://leafletjs.com">Leaflet</a>';
 /** Matches the basemap fade in map.css. */
 const BASEMAP_FADE_MS = 600;
 /** How long a theme switch waits for the new tiles before showing them anyway, say on a hidden map. */
@@ -63,6 +65,8 @@ export class BlueprintMap {
   private fading: Basemap | null = null;
   private readonly gridRenderer: L.Canvas;
   private readonly layers: Record<"grid" | "ring" | "block" | "gap" | "site", L.LayerGroup>;
+  /** On narrow screens the frame grows for the survey and shrinks back for the brief; Leaflet must re-measure it. */
+  private readonly resizer: ResizeObserver;
   private readonly idleQueue: (() => void)[] = [];
   private readonly grids = new Map<string, HeatCell[]>();
   private readonly timers = new Set<number>();
@@ -82,6 +86,7 @@ export class BlueprintMap {
     this.readout = readout;
     const map = L.map(element, { zoomControl: false, worldCopyJump: true }).setView([40.735, -73.975], 12);
     this.map = map;
+    map.attributionControl.setPrefix(LEAFLET_CREDIT);
     L.control.zoom({ position: "topright" }).addTo(map);
     L.control.scale({ position: "bottomright", imperial: false, maxWidth: 120 }).addTo(map);
     for (const [name, zIndex] of [["grid", 350], ["labels", 360], ["radar", 380]] as const) {
@@ -125,11 +130,17 @@ export class BlueprintMap {
       this.moving = false;
       for (const draw of this.idleQueue.splice(0)) draw();
     });
+    // Keeps the center where it was, so a resized frame never pushes the site off to one side.
+    this.resizer = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+    this.resizer.observe(element);
     this.showCenter();
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.resizer.disconnect();
     for (const timer of this.timers) window.clearTimeout(timer);
     this.idleQueue.length = 0;
     this.map.off("zoomend", this.resizeRadar);
@@ -174,6 +185,8 @@ export class BlueprintMap {
     this.clearRun();
     this.running = true;
     this.fallbackRadius = minutes * WALK_M_PER_MIN;
+    // The frame may have just changed size for the survey view; frame the walk against its new size.
+    this.map.invalidateSize();
     this.map.flyToBounds(this.walkBounds(), { padding: [70, 70], maxZoom: 16, ...this.flight(1.2) });
     this.startRadar();
   }

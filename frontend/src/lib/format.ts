@@ -1,4 +1,4 @@
-import type { AgentPayload, Focus, GapRow, ReplayPayload } from "../api/types";
+import type { AgentPayload, Focus, GapRow, ReplayPayload, Standing, TopicGroup } from "../api/types";
 
 export const FOCUS_LABELS: Record<Focus, string> = {
   any: "Any business",
@@ -19,6 +19,19 @@ export function price(level: unknown): string {
 
 /** Seconds as the log shows them: "4.2s". */
 export const secondsText = (seconds: number) => `${seconds.toFixed(1)}s`;
+
+/** Why a place is established, as a badge: "Michelin 1 star", "Michelin listed" or "1,563 reviews". */
+export function standingText(standing: Standing | null | undefined): string {
+  if (!standing) return "";
+  if (standing.michelin) return `Michelin ${standing.michelin}`;
+  return standing.reviews ? `${standing.reviews.toLocaleString("en-US")} reviews` : "";
+}
+
+/** The other ways reviews word a topic, beyond its label: "long lines, wait time, on line". */
+export function topicForms(group: TopicGroup, limit = 3): string[] {
+  const label = group.label.toLowerCase();
+  return group.keywords.filter((keyword) => keyword.toLowerCase() !== label).slice(0, limit);
+}
 
 /** Agent-written lists can arrive as a single string or with empty entries. */
 export function list(value: unknown): string[] {

@@ -31,13 +31,15 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
         </span>
         <span>{price(concept.price_level)}</span>
       </div>
-      <div className="poster-score">
-        <CountUp value={concept.gap_score} />
-        <small>gap</small>
+      <div className="poster-head">
+        <div className="poster-score">
+          <CountUp value={concept.gap_score} />
+          <small>gap</small>
+        </div>
+        <h3 className="poster-name" id={`poster-${index}-name`}>
+          {concept.name}
+        </h3>
       </div>
-      <h3 className="poster-name" id={`poster-${index}-name`}>
-        {concept.name}
-      </h3>
       {concept.one_liner ? <p className="poster-line">{concept.one_liner}</p> : null}
       {why.length ? (
         <ol className="poster-why">

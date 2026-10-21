@@ -1,23 +1,23 @@
 import type { FavoritePlace, GapRow, PlaceCard } from "../api/types";
 import { cssVars, cx } from "../lib/css";
-import { gapWhy } from "../lib/format";
+import { gapWhy, standingText } from "../lib/format";
 import { CountUp } from "./CountUp";
 
 const MAX_PIPS = 24;
 
 function Competitor({ place }: { place: PlaceCard }) {
-  const complaints = place.complaints ?? [];
-  const rating = place.rating ? `★ ${place.rating.toFixed(1)}` : "";
-  const praise = (place.praise ?? []).slice(0, 2).join(", ");
-  const said = complaints.length ? <span className="bad">{complaints.join(", ")}</span> : praise;
+  const known = (place.known_for ?? []).slice(0, 2).join(", ");
+  const complaints = (place.complaints ?? []).slice(0, 2).join(", ");
+  const meta = [place.rating ? `★ ${place.rating.toFixed(1)}` : "", standingText(place.standing), known ? `known for ${known}` : ""]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <li>
       <span className="n">{place.name}</span>
-      {rating || said ? (
+      {meta ? <span className="s">{meta}</span> : null}
+      {complaints ? (
         <span className="s">
-          {rating}
-          {rating && said ? " · " : null}
-          {said}
+          <span className="hl">{complaints}</span>
         </span>
       ) : null}
     </li>
@@ -52,7 +52,7 @@ function Pips({ gap }: { gap: GapRow }) {
 }
 
 function Dots({ gap }: { gap: GapRow }) {
-  if (gap.favorites_kind !== "local") return <span className="mono muted">same as the city&apos;s famous spots</span>;
+  if (gap.favorites_kind !== "local") return <span className="dots-note">Same as the city&apos;s famous spots</span>;
   return (
     <>
       {Array.from({ length: gap.favorites_total }, (_, k) => (
@@ -96,9 +96,9 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
       >
         <CountUp className="gap-score" value={gap.gap_score} />
         <span>
-          <span className="gap-name">
-            {gap.genre}
-            <small className="mono muted">
+          <span className="gap-name">{gap.genre}</span>
+          <span className="gap-meta">
+            <small className="mono">
               #{rankHere} here{around}
             </small>
             {gap.evidence === "ok" ? null : (

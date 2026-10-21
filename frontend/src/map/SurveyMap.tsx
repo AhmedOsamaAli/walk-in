@@ -79,10 +79,6 @@ export function SurveyMap({ theme, site, walk, minutes, surveying, run, streamin
   return (
     <aside className="map-frame" aria-label="Map of the site and its surroundings">
       <div ref={canvas} className="map-canvas" />
-      <span className="crop tl" aria-hidden="true" />
-      <span className="crop tr" aria-hidden="true" />
-      <span className="crop bl" aria-hidden="true" />
-      <span className="crop br" aria-hidden="true" />
       <div ref={readout} className="readout mono" aria-hidden="true" />
       {site ? null : <div className="map-hint mono">Click the map to place a site</div>}
       {surveying ? <Legend walkMinutes={walk?.minutes ?? minutes} gapGenre={gap?.genre ?? null} /> : null}

@@ -1,104 +1,112 @@
-/* Blank Space · Electric Blueprint
-   Matte paper, black ink and one electric blue. Blue marks anything measured by Qloo,
-   yellow marks the recommendation, black is the reasoning. Every color is a token: the dark
-   theme swaps the paper for deep navy ink and keeps the same roles. */
+/* Blank Space · Drafting table
+   A site survey drawn on a white drafting table and published like a broadsheet. Blue is the pen: the site, anything
+   Qloo measured and the one primary action. Yellow is the highlighter: the recommendation and what to look at first.
+   Near-black ink carries the reasoning. Every color is a token; the dark theme lays the same drawing on blueprint film
+   and keeps the roles. Text meets WCAG AA on every surface in both themes. */
 
 :root {
   color-scheme: light;
 
-  --paper: #f6f6f3;
+  --paper: #f5f4ef;
   --card: #ffffff;
-  --ink: #000000;
+  --ink: #1d1d1f;
   --on-ink: #ffffff;
-  --ash: #85857f;
-  --fog: #bcc1c7;
-  --smoke: #dcdcd6;
-  --bone: #ecece7;
-  --blue: #0000ff;
-  --blue-fill: #0000ff;
+  --ash: #696964;
+  --fog: #b6b8bd;
+  --smoke: #e0dfd7;
+  --edge: #c4c3bb;
+  --bone: #edece5;
+  --blue: #0b59d0;
+  --blue-fill: #0f68ea;
+  --blue-wash: #e8effc;
   --on-blue: #ffffff;
-  --yellow: #fffc52;
-  --on-yellow: #000000;
-  --on-yellow-2: #4a4a46;
-  --on-yellow-3: #6d6d68;
-  --marker: #fffc52;
-  --red: #d40000;
-  --text-2: #2c2c29;
-  --text-3: #4a4a46;
-  --text-4: #555555;
-  --text-5: #6d6d68;
-  --grid-line: rgba(0, 0, 0, .035);
-  --shimmer: #fafaf7;
-  --backdrop: rgba(0, 0, 40, .32);
-  --shadow: 15px 20px 30px rgba(0, 0, 0, .18);
-  --img-filter: grayscale(1) contrast(1.1);
+  --yellow: #ffcb00;
+  --on-yellow: #1d1d1f;
+  --on-yellow-2: #3a3832;
+  --on-yellow-3: #57544b;
+  --marker: rgba(255, 203, 0, .55);
+  --red: #c4291c;
+  --text-2: #2f2f2c;
+  --text-3: #474743;
+  --text-4: #575752;
+  --text-5: #63635d;
+  --grid-line: rgba(29, 29, 31, .035);
+  --shimmer: #faf9f6;
+  --backdrop: rgba(18, 20, 28, .38);
+  --shadow-s: 0 1px 2px rgba(20, 20, 30, .05), 0 4px 14px rgba(20, 20, 30, .05);
+  --shadow: 0 1px 2px rgba(20, 20, 30, .06), 0 16px 40px rgba(20, 20, 30, .1);
+  --img-filter: grayscale(1) contrast(1.05);
   --img-blend: multiply;
 
   --map-bg: #eceeeb;
-  --map-ink: #000000;
+  --map-ink: #1d1d1f;
   --map-paper: #ffffff;
   --map-halo: #ffffff;
-  --map-accent: #0000ff;
-  --map-grid-fill: #0000ff;
-  --map-grid: rgba(0, 0, 255, .06);
-  --map-veil: rgba(255, 255, 255, .85);
-  --tile-filter: grayscale(1) contrast(1.08) brightness(1.02);
-  --walk-fill: .045;
+  --map-accent: #0f68ea;
+  --map-grid-fill: #0f68ea;
+  --map-grid: rgba(15, 104, 234, .05);
+  --map-veil: rgba(255, 255, 255, .88);
+  --tile-filter: grayscale(1) contrast(1.06) brightness(1.02);
+  --walk-fill: .06;
 
-  --f-display: "Big Shoulders Display Variable", "Big Shoulders Display", "Anton", Impact, "Arial Narrow", sans-serif;
-  --f-serif: "Fraunces Variable", "Fraunces", Georgia, "Times New Roman", serif;
+  --f-serif: "Newsreader Variable", "Newsreader", "Iowan Old Style", Georgia, "Times New Roman", serif;
   --f-sans: "Geist Variable", "Geist", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "Geist Mono Variable", "Geist Mono", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
+  --r-l: 24px;
+  --r-m: 16px;
   --ease: cubic-bezier(.16, 1, .3, 1);
   --ease-io: cubic-bezier(.65, 0, .35, 1);
-  --bar-h: 52px;
+  --bar-h: 56px;
   --live-h: 0px;
   --pad: clamp(20px, 3.2vw, 48px);
   --rule: 1px solid var(--ink);
+  --hair: 1px solid var(--smoke);
 }
 
-/* Deep navy ink instead of paper. Text meets WCAG AA on every surface (ash 6.6:1, blue 7:1, white on the blue
-   fill 6.7:1); yellow stays for the recommendation and highlights, always with navy text on it. */
+/* Blueprint film: deep blue-black paper, chalk ink, a lighter pen. */
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --paper: #0b0e1c;
-  --card: #121733;
-  --ink: #ecebe4;
-  --on-ink: #0b0e1c;
-  --ash: #9196b3;
-  --fog: #3c4470;
-  --smoke: #262d52;
-  --bone: #1a2142;
-  --blue: #8a92ff;
-  --blue-fill: #2b3aff;
+  --paper: #0d111c;
+  --card: #141a29;
+  --ink: #ecebe6;
+  --on-ink: #0d111c;
+  --ash: #99a0b5;
+  --fog: #3e465e;
+  --smoke: #252d42;
+  --edge: #3a4460;
+  --bone: #1a2133;
+  --blue: #8ab4ff;
+  --blue-fill: #2f6fe0;
+  --blue-wash: #16223d;
   --on-blue: #ffffff;
-  --yellow: #fffc52;
-  --on-yellow: #0b0e1c;
-  --on-yellow-2: #2f3350;
-  --on-yellow-3: #474c6b;
-  --marker: rgba(255, 252, 82, .28);
+  --yellow: #ffcb00;
+  --on-yellow: #14161c;
+  --on-yellow-2: #34332c;
+  --on-yellow-3: #4d4b42;
+  --marker: rgba(255, 203, 0, .3);
   --red: #ff8a80;
-  --text-2: #d0d1dc;
-  --text-3: #b4b7c9;
-  --text-4: #a8acc0;
-  --text-5: #9da1b8;
-  --grid-line: rgba(236, 235, 228, .035);
-  --shimmer: #252d58;
-  --backdrop: rgba(2, 3, 12, .62);
-  --shadow: 15px 20px 34px rgba(0, 0, 0, .5);
+  --text-2: #d3d5de;
+  --text-3: #b8bccb;
+  --text-4: #aab0c1;
+  --text-5: #a0a6b9;
+  --grid-line: rgba(236, 235, 230, .03);
+  --shimmer: #222b42;
+  --backdrop: rgba(2, 4, 10, .62);
+  --shadow-s: 0 1px 2px rgba(0, 0, 0, .35), 0 4px 14px rgba(0, 0, 0, .25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 18px 44px rgba(0, 0, 0, .5);
   --img-filter: grayscale(1) contrast(1.05) brightness(.92);
   --img-blend: normal;
 
-  --map-bg: #2a2d3c;
-  --map-ink: #ecebe4;
-  --map-paper: #0b0e1c;
-  --map-halo: #ecebe4;
-  --map-accent: #7a84ff;
-  --map-grid-fill: #3341ff;
-  --map-grid: rgba(122, 132, 255, .08);
-  --map-veil: rgba(11, 14, 28, .82);
-  --tile-filter: grayscale(1) brightness(.9) sepia(.35) hue-rotate(185deg) saturate(1.6);
-  --walk-fill: .09;
+  --map-bg: #1d2230;
+  --map-ink: #ecebe6;
+  --map-paper: #0d111c;
+  --map-halo: #ecebe6;
+  --map-accent: #6ea2ff;
+  --map-grid-fill: #2f6fe0;
+  --map-grid: rgba(110, 162, 255, .07);
+  --map-veil: rgba(13, 17, 28, .86);
+  --tile-filter: grayscale(1) brightness(.92) sepia(.3) hue-rotate(185deg) saturate(1.5);
+  --walk-fill: .1;
 }

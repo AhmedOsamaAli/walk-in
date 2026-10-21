@@ -19,11 +19,16 @@ function useElapsed(startedAt: number, running: boolean): number {
 
 const seconds = (value: number) => (value < 10 ? value.toFixed(1) : Math.round(value).toString());
 
-function summaryText(summary: DonePayload | null): string {
-  if (!summary) return "Survey complete";
+/** The finished survey in one line; the Qloo call count is the part a narrow screen drops. */
+function Summary({ summary }: { summary: DonePayload | null }) {
+  if (!summary) return <>Survey complete</>;
   const calls = `${summary.qloo_calls} Qloo ${summary.qloo_calls === 1 ? "call" : "calls"}`;
   const cached = summary.cache_hits ? ` · ${summary.cache_hits} from cache` : "";
-  return `Survey complete · ${seconds(summary.seconds)} s · ${calls}${cached}`;
+  return (
+    <>
+      Survey complete · {seconds(summary.seconds)} s<span className="live-extra"> · {calls}{cached}</span>
+    </>
+  );
 }
 
 /** Pinned under the top bar while a survey runs; it collapses into a one-line summary that can be dismissed. */
@@ -34,11 +39,13 @@ export function LiveStatus({ survey }: { survey: SurveyState }) {
   if (dismissed || survey.status === "idle") return null;
 
   const progress = surveyProgress(survey);
-  const headline = running
-    ? (currentStep(survey)?.label ?? "Starting the survey")
-    : survey.status === "complete"
-      ? summaryText(survey.summary)
-      : `Survey stopped · ${survey.error ?? "unknown error"}`;
+  const headline = running ? (
+    (currentStep(survey)?.label ?? "Starting the survey")
+  ) : survey.status === "complete" ? (
+    <Summary summary={survey.summary} />
+  ) : (
+    `Survey stopped · ${survey.error ?? "unknown error"}`
+  );
   const mark = survey.status === "complete" ? "✓" : survey.status === "failed" ? "✕" : null;
 
   return (

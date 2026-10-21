@@ -13,5 +13,5 @@
   var theme = saved === "light" || saved === "dark" ? saved : prefersDark ? "dark" : "light";
   document.documentElement.dataset.theme = theme;
   var meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute("content", theme === "dark" ? "#0b0e1c" : "#f6f6f3");
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0d111c" : "#f5f4ef");
 })();

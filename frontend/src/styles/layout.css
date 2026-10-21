@@ -7,37 +7,40 @@
   background: var(--paper);
   border-bottom: var(--rule);
 }
-.mark { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; }
-.mark-square { position: relative; width: 18px; height: 18px; border: 2px solid var(--ink); overflow: hidden; }
+.mark { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; }
+.mark-square { position: relative; flex: none; width: 18px; height: 18px; border: 1.5px solid var(--ink); border-radius: 3px; overflow: hidden; }
 .mark-square i {
   position: absolute; inset: 0; background: var(--blue-fill);
   transform: scaleY(var(--p, .42)); transform-origin: bottom;
   transition: transform .8s var(--ease);
 }
-.mark-word { font: 900 25px/1 var(--f-display); text-transform: uppercase; letter-spacing: .01em; }
-.bar-nav { display: flex; justify-content: center; gap: 22px; }
+.mark-word { font: 560 23px/1 var(--f-serif); letter-spacing: -.02em; white-space: nowrap; }
+.bar-nav { display: flex; justify-content: center; gap: 24px; }
 .bar-nav a { position: relative; text-decoration: none; color: var(--fog); pointer-events: none; transition: color .4s; }
 .bar-nav a.ready { color: var(--ink); pointer-events: auto; }
 .bar-nav a.ready:hover { color: var(--blue); }
 .bar-nav a::after {
-  content: ""; position: absolute; left: 0; right: 0; bottom: -7px; height: 2px;
-  background: var(--blue); transform: scaleX(0); transform-origin: left; transition: transform .5s var(--ease);
+  content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 2px;
+  background: var(--blue-fill); transform: scaleX(0); transform-origin: left; transition: transform .5s var(--ease);
 }
 .bar-nav a.current::after { transform: scaleX(1); }
 .bar-end { display: flex; align-items: center; gap: 18px; }
+.bar-meta { white-space: nowrap; }
 .bar-meta a { color: var(--blue); text-decoration: none; }
+.bar-meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .theme-toggle {
-  flex: none; display: grid; place-items: center; width: 34px; height: 34px;
-  border: 1.5px solid var(--ink); border-radius: 50%;
+  flex: none; display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1px solid var(--ink); border-radius: 50%;
   transition: background .35s var(--ease), color .35s, transform .6s var(--ease);
 }
 .theme-toggle:hover { background: var(--ink); color: var(--on-ink); }
 .theme-toggle:active { transform: rotate(-35deg) scale(.94); }
-.theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: square; }
+.theme-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
-/* ---------- Stage ---------- */
-.stage { display: grid; grid-template-columns: minmax(460px, 46%) 1fr; min-height: calc(100vh - var(--bar-h)); }
+/* ---------- Stage: the sheet on the left, the map pinned on the right ---------- */
+.stage { display: grid; grid-template-columns: minmax(460px, 46%) minmax(0, 1fr); min-height: calc(100vh - var(--bar-h)); }
 .sheet {
+  container: sheet / inline-size;
   position: relative;
   min-width: 0;
   border-right: var(--rule);
@@ -52,15 +55,15 @@
 .sec.reveal { animation: secIn .9s var(--ease) both; }
 @keyframes secIn { from { opacity: 0; transform: translateY(28px); } }
 
-/* ---------- Section heads ---------- */
-.sec-head { display: grid; grid-template-columns: 52px 1fr; column-gap: 8px; margin-bottom: 28px; }
-.sec-no { padding-top: 9px; color: var(--blue); }
-.sec-title { font: 900 clamp(46px, 4.8vw, 82px)/.86 var(--f-display); text-transform: uppercase; }
-.sec-note { grid-column: 2; max-width: 44ch; margin-top: 14px; font-size: 18px; line-height: 1.36; color: var(--text-2); }
+/* ---------- Section heads: number in the margin, a broadsheet headline, a serif standfirst ---------- */
+.sec-head { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 8px; margin-bottom: 30px; }
+.sec-no { padding-top: 13px; color: var(--blue); }
+.sec-title { font: 400 clamp(34px, 3.3vw, 52px)/1.02 var(--f-serif); letter-spacing: -.024em; text-wrap: balance; }
+.sec-note { grid-column: 2; max-width: 46ch; margin-top: 12px; font-size: 18px; line-height: 1.4; color: var(--text-2); }
 
 .sheet-foot {
   display: grid; gap: 8px; padding: 30px var(--pad) 44px;
-  color: var(--ash); font-size: 12px; text-transform: none; letter-spacing: .01em; line-height: 1.6;
+  color: var(--ash); font-size: 11px; text-transform: none; letter-spacing: .01em; line-height: 1.6;
 }
 
 /* ---------- View transitions ---------- */

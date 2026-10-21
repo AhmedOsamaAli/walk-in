@@ -24,7 +24,7 @@ export function SurveyLog({ log, summary }: SurveyLogProps) {
             <div className="log-clip">
               <div className="log-row">
                 <span className="t">{secondsText(line.at)}</span>
-                <span className="msg">{line.text}</span>
+                <span className="msg">{line.kind === "warn" ? <span className="hl">{line.text}</span> : line.text}</span>
                 <span className="state">{line.status}</span>
               </div>
             </div>

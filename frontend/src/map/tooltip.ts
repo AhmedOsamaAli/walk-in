@@ -1,5 +1,5 @@
 import type { PlaceCard } from "../api/types";
-import { price } from "../lib/format";
+import { price, standingText } from "../lib/format";
 
 function span(className: string, text = ""): HTMLSpanElement {
   const element = document.createElement("span");
@@ -19,18 +19,18 @@ export function placeTip(place: PlaceCard): HTMLElement {
     place.rating ? `★ ${place.rating.toFixed(1)}` : "",
     place.price_level ? price(place.price_level) : "",
     place.distance_m != null ? `${place.distance_m} m` : "",
+    standingText(place.standing),
   ]
     .filter(Boolean)
     .join(" · ");
   if (meta) root.append(span("m", meta));
+  const known = (place.known_for ?? []).slice(0, 3).join(", ");
+  if (known) root.append(span("s", `Known for ${known}`));
   const complaint = place.complaints?.[0];
-  const praise = (place.praise ?? []).slice(0, 2).join(", ");
   if (complaint) {
     const said = span("s");
-    said.append(span("bad", complaint));
+    said.append(span("hl", complaint));
     root.append(said);
-  } else if (praise) {
-    root.append(span("s", praise));
   }
   return root;
 }

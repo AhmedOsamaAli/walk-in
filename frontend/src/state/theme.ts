@@ -6,7 +6,7 @@ export type Theme = "light" | "dark";
 
 /** Shared with public/theme.js, which applies the theme before the first paint. */
 const STORAGE_KEY = "blank-space-theme";
-const THEME_COLORS: Record<Theme, string> = { light: "#f6f6f3", dark: "#0b0e1c" };
+const THEME_COLORS: Record<Theme, string> = { light: "#f5f4ef", dark: "#0d111c" };
 
 function savedTheme(): Theme | null {
   try {

@@ -1,6 +1,6 @@
 /* Self-hosted variable fonts and Leaflet's base styles, bundled by Vite; the app's styles override them. */
-@import "@fontsource-variable/big-shoulders-display";
-@import "@fontsource-variable/fraunces/opsz-italic.css";
+@import "@fontsource-variable/newsreader/opsz.css";
+@import "@fontsource-variable/newsreader/opsz-italic.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 @import "leaflet/dist/leaflet.css";

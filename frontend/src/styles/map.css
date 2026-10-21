@@ -1,4 +1,4 @@
-/* ---------- Map ---------- */
+/* ---------- Map: the drawing on the table ---------- */
 .map-frame { position: sticky; top: var(--bar-h); height: calc(100vh - var(--bar-h)); overflow: hidden; background: var(--map-bg); }
 .map-canvas { position: absolute; inset: 0; background: var(--map-bg); cursor: crosshair; }
 .map-frame::after {
@@ -14,30 +14,40 @@
 .leaflet-layer.basemap { transition: opacity .6s var(--ease); }
 .leaflet-pane.grid-pane { opacity: 0; transition: opacity .9s var(--ease); }
 .leaflet-pane.grid-pane.in { opacity: 1; }
-.crop { position: absolute; z-index: 402; width: 22px; height: 22px; pointer-events: none; }
-.crop.tl { top: 14px; left: 14px; border-top: 2px solid var(--ink); border-left: 2px solid var(--ink); }
-.crop.tr { top: 14px; right: 14px; border-top: 2px solid var(--ink); border-right: 2px solid var(--ink); }
-.crop.bl { bottom: 14px; left: 14px; border-bottom: 2px solid var(--ink); border-left: 2px solid var(--ink); }
-.crop.br { bottom: 14px; right: 14px; border-bottom: 2px solid var(--ink); border-right: 2px solid var(--ink); }
+
+/* Every corner holds one thing: the readout top left, zoom top right, the legend bottom left, scale and credits
+   bottom right. */
 .readout {
-  position: absolute; z-index: 500; top: 28px; left: 28px;
-  padding: 7px 10px; background: var(--card); border: var(--rule);
+  position: absolute; z-index: 500; top: 16px; left: 16px;
+  padding: 7px 11px; background: var(--card); border: var(--rule); border-radius: 999px;
   font-variant-numeric: tabular-nums; pointer-events: none;
 }
 .map-hint {
-  position: absolute; z-index: 500; left: 50%; bottom: 40px;
+  position: absolute; z-index: 500; left: 50%; bottom: 52px;
   padding: 11px 18px; background: var(--ink); color: var(--on-ink); border-radius: 999px;
+  white-space: nowrap; box-shadow: var(--shadow-s);
   transform: translateX(-50%); pointer-events: none;
   animation: bob 2.6s var(--ease-io) infinite;
 }
 @keyframes bob { 50% { transform: translate(-50%, -6px); } }
+
 .legend {
-  position: absolute; z-index: 500; left: 28px; bottom: 28px;
-  display: grid; gap: 7px; padding: 12px 14px; background: var(--card); border: var(--rule);
-  font-size: 10.5px; animation: fadeUp .6s var(--ease) both;
+  position: absolute; z-index: 500; left: 16px; bottom: 16px;
+  max-width: calc(100% - 32px);
+  background: var(--card); border: var(--rule); border-radius: var(--r-m);
+  animation: fadeUp .6s var(--ease) both;
 }
-.legend span { display: flex; align-items: center; gap: 9px; }
-.legend b { font-weight: 500; }
+.legend summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 9px 14px; cursor: pointer; list-style: none;
+}
+.legend summary::-webkit-details-marker { display: none; }
+.legend summary::after { content: "+"; font-size: 14px; line-height: 1; transition: transform .4s var(--ease); }
+.legend[open] summary::after { transform: rotate(45deg); }
+.legend[open] summary { padding-bottom: 4px; }
+.legend-body { display: grid; gap: 7px; padding: 6px 14px 12px; font-size: 10.5px; }
+.legend-body span { display: flex; align-items: center; gap: 9px; }
+.legend-body b { font-weight: 500; }
 .legend i { flex: none; display: inline-block; width: 12px; height: 12px; }
 .lg-site { background: var(--blue-fill); }
 .lg-ring { border: 1.5px dashed var(--map-accent); border-radius: 50%; }
@@ -48,17 +58,21 @@
 .lg-grid { background: color-mix(in srgb, var(--map-grid-fill) 35%, transparent); }
 
 /* ---------- Leaflet controls ---------- */
-.leaflet-control-zoom.leaflet-bar { margin: 28px 28px 0 0; border: var(--rule); border-radius: 0; box-shadow: none; }
+.leaflet-control-zoom.leaflet-bar { margin: 16px 16px 0 0; overflow: hidden; border: var(--rule); border-radius: 999px; box-shadow: none; }
 .leaflet-control-zoom.leaflet-bar a {
-  width: 34px; height: 34px; line-height: 32px; border-radius: 0; border-bottom: 1px solid var(--smoke);
-  color: var(--ink); font: 400 18px/32px var(--f-mono); background: var(--card);
+  width: 36px; height: 36px; line-height: 34px; border-radius: 0; border-bottom: var(--hair);
+  color: var(--ink); font: 400 18px/34px var(--f-sans); background: var(--card);
 }
 .leaflet-control-zoom.leaflet-bar a:last-child { border-bottom: 0; }
 .leaflet-control-zoom.leaflet-bar a:hover { background: var(--yellow); color: var(--on-yellow); }
 .leaflet-control-zoom.leaflet-bar a.leaflet-disabled { background: var(--bone); color: var(--fog); }
-.leaflet-container .leaflet-control-attribution.leaflet-control { font: 10px/1.4 var(--f-mono); background: var(--map-veil); color: var(--text-4); }
-.leaflet-container .leaflet-control-attribution a { color: var(--blue); }
-.leaflet-control-scale.leaflet-control { margin: 0 28px 28px 0; }
+.leaflet-container .leaflet-control-attribution.leaflet-control {
+  margin: 0; padding: 3px 8px; border-top-left-radius: 8px;
+  font: 10px/1.4 var(--f-sans); background: var(--map-veil); color: var(--text-4);
+}
+.leaflet-container .leaflet-control-attribution a { color: var(--blue); text-decoration: none; }
+.leaflet-container .leaflet-control-attribution a:hover { text-decoration: underline; }
+.leaflet-control-scale.leaflet-control { margin: 0 16px 8px 0; }
 .leaflet-control-scale-line {
   border: 1.5px solid var(--ink); border-top: 0; background: var(--map-veil); color: var(--ink);
   font: 500 10px var(--f-mono); text-shadow: none;
@@ -76,8 +90,8 @@
   animation: pinDrop .8s var(--ease) both;
 }
 .site-pin .tagl {
-  position: absolute; left: 16px; top: -34px; padding: 4px 8px; white-space: nowrap;
-  background: var(--blue-fill); color: var(--on-blue);
+  position: absolute; left: 16px; top: -34px; padding: 4px 9px; white-space: nowrap;
+  background: var(--blue-fill); color: var(--on-blue); border-radius: 999px;
   font: 500 10.5px var(--f-mono); letter-spacing: .06em; text-transform: uppercase;
   animation: fadeUp .6s var(--ease) .3s both;
 }
@@ -105,8 +119,8 @@
 @keyframes walkIn { from { opacity: 0; transform: scale(.55); } }
 
 .leaflet-tooltip.tip {
-  max-width: 260px; padding: 8px 10px; white-space: normal;
-  background: var(--card); color: var(--ink); border: var(--rule); border-radius: 0; box-shadow: none;
+  max-width: 260px; padding: 9px 11px; white-space: normal;
+  background: var(--card); color: var(--ink); border: var(--rule); border-radius: 12px; box-shadow: var(--shadow-s);
   font: 12.5px/1.4 var(--f-sans);
 }
 .leaflet-tooltip.tip::before { display: none; }
