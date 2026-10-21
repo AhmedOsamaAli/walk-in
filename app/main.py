@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import engine, scoring
+from . import engine, schemas, scoring
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
@@ -63,6 +63,17 @@ CONTENT_SECURITY_POLICY = "; ".join([
     "form-action 'self'",
     "frame-ancestors 'none'",
 ])
+# FastAPI's interactive API docs load Swagger UI and ReDoc from jsDelivr, with one inline bootstrap script.
+DOCS_POLICY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https:",
+    "connect-src 'self'",
+    "worker-src blob:",
+    "frame-ancestors 'none'",
+])
 
 
 @dataclass
@@ -106,7 +117,7 @@ class RenderRequest(BaseModel):
 router = APIRouter(prefix="/api")
 
 
-@router.get("/health")
+@router.get("/health", response_model=schemas.Health)
 async def health(request: Request) -> dict:
     services: Services = request.app.state.services
     llm = services.llm
@@ -122,7 +133,7 @@ async def health(request: Request) -> dict:
     }
 
 
-@router.get("/presets")
+@router.get("/presets", response_model=list[schemas.Preset])
 async def presets() -> list[dict]:
     return PRESETS
 
@@ -203,7 +214,7 @@ async def run(
     )
 
 
-@router.post("/design")
+@router.post("/design", response_model=schemas.DesignSheet)
 async def design(request: Request, body: DesignRequest) -> dict:
     run_state = request.app.state.runs.get(body.run_id)
     if not run_state or not (0 <= body.index < len(run_state.concepts)):
@@ -220,7 +231,7 @@ async def design(request: Request, body: DesignRequest) -> dict:
     return result
 
 
-@router.post("/render")
+@router.post("/render", response_model=schemas.Render, response_model_exclude_unset=True)
 async def render(request: Request, body: RenderRequest) -> dict:
     """One AI render of a design sheet's shot, made once per run and cached across runs."""
     run_state = request.app.state.runs.get(body.run_id)
@@ -263,7 +274,7 @@ async def render(request: Request, body: RenderRequest) -> dict:
     return {"image": image, "model": model}
 
 
-@router.get("/catchment")
+@router.get("/catchment", response_model=schemas.Catchment)
 async def catchment(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -278,7 +289,7 @@ async def catchment(
     return walk.public()
 
 
-@router.get("/heatmap")
+@router.get("/heatmap", response_model=schemas.Heatmap)
 async def heatmap(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
@@ -293,7 +304,7 @@ async def heatmap(
         raise HTTPException(502, str(exc)) from exc
 
 
-@router.get("/places")
+@router.get("/places", response_model=list[schemas.PlaceHit])
 async def places(
     request: Request,
     q: str = Query(..., min_length=2, max_length=80),
@@ -318,7 +329,7 @@ async def places(
     return sorted(cards, key=lambda c: c["distance_m"])
 
 
-@router.get("/geocode")
+@router.get("/geocode", response_model=list[schemas.GeocodeHit])
 async def geocode(request: Request, q: str = Query(..., min_length=3, max_length=160)) -> list[dict]:
     try:
         return await request.app.state.services.geocoder.search(q)
@@ -361,12 +372,21 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
         finally:
             await services.aclose()
 
-    app = FastAPI(title="Blank Space", lifespan=lifespan)
+    app = FastAPI(
+        title="Blank Space",
+        version="1.0.0",
+        description=(
+            "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "
+            "business. GET /api/run streams a survey as server-sent events; the other endpoints are JSON."
+        ),
+        lifespan=lifespan,
+    )
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
-        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        docs = request.url.path in ("/docs", "/redoc")
+        response.headers.setdefault("Content-Security-Policy", DOCS_POLICY if docs else CONTENT_SECURITY_POLICY)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         return response
