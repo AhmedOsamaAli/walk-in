@@ -52,6 +52,7 @@ class RunState:
     demographics: dict | None = None
     concepts: list[dict] = field(default_factory=list)
     designs: dict[int, dict] = field(default_factory=dict)
+    renders: dict[tuple[int, str], asyncio.Future] = field(default_factory=dict)  # (concept, shot) -> render
     created_at: float = field(default_factory=time.time)
 
 
@@ -723,7 +724,9 @@ love, local artists, nearby places and local brands.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), hours, music {direction, artists (list, only from local_artists)},
 partners (list of {name, why}; name only from nearby_places or partner_brands), launch (an opening-night idea; never
-mention dates or years), image_prompt (a photorealistic interior description with no people, text or logos)."""
+mention dates or years), image_prompt (a photorealistic wide view of the whole interior: layout, materials, lighting
+and seating; no people, text or logos), facade_prompt (the shopfront seen from a typical street of this neighborhood,
+with a sign that reads exactly the concept name; no people)."""
 
 
 async def design_concept(
@@ -792,42 +795,103 @@ async def design_concept(
     design["dna"] = dna
     design["mode"] = mode
     design["model"] = model
-    design["image"] = await interior_image(images, design.get("image_prompt") or interior_prompt(run, concept, dna), answers)
+    design["shots"] = design_shots(run, concept, design, dna)
+    design["renders"] = {"enabled": images.enabled, "model": images.model}
     return design
 
 
-async def interior_image(images: ImageGen, prompt: str, answers: AnswerCache | None) -> str | None:
-    if not images.enabled:
-        return None
-    key = fingerprint("image", images.provider, prompt)
-    saved = answers.get("image", key) if answers else None
-    if saved:
-        return saved.get("image")
-    try:
-        image = await images.generate(prompt)
-    except Exception:
-        log.warning("Interior image generation failed", exc_info=True)
-        return None
-    if image and answers:
-        answers.put("image", key, {"image": image})
-    return image
+INTERIOR_STYLE = (
+    "Photorealistic architectural photograph, wide-angle at eye level, the whole room visible from the entrance, "
+    "real materials, balanced daylight and warm interior light, styled for opening day. No people, no text, no logos."
+)
+FACADE_STYLE = (
+    "Photorealistic street photograph, straight-on view of the ground-floor shopfront in late-afternoon light, part of "
+    "the building above visible, a believable street of this neighborhood. No people, no logos, no other readable text."
+)
 
 
-def interior_prompt(run: RunState, concept: dict, dna: dict) -> str:
-    """Image prompt assembled from the favorites' design DNA, used when no LLM wrote one."""
-    title = scoring.genre_title(concept["genre"]).lower()
-    details = [
-        ", ".join(dna.get("ambience", [])[:3]).lower(),
-        ", ".join(dna.get("decor", [])[:3]).lower(),
-        ", ".join(dna.get("setting", [])[:2]).lower(),
-        ", ".join(a.lower() for a in dna.get("amenities", [])[:3]),
+def design_shots(run: RunState, concept: dict, design: dict, dna: dict) -> list[dict]:
+    """Prompts for the two renders. The server keeps them, so a client can only render the shots it was given."""
+    sign = sign_text(str(design.get("name") or concept["name"]))
+    interior = design.get("image_prompt")
+    facade = design.get("facade_prompt")
+    interior = f"{interior.strip()} {INTERIOR_STYLE}" if isinstance(interior, str) and interior.strip() else interior_prompt(run, concept, dna, design)
+    if isinstance(facade, str) and facade.strip():
+        facade = facade.strip()
+        if sign.lower() not in facade.lower():
+            facade += f' The sign above the entrance reads "{sign}".'
+        facade = f"{facade} {FACADE_STYLE}"
+    else:
+        facade = facade_prompt(run, concept, dna, design, sign)
+    return [
+        {"kind": "interior", "label": "Interior", "aspect": "16:9", "prompt": interior[:3500]},
+        {"kind": "exterior", "label": "From the street", "aspect": "16:9", "prompt": facade[:3500]},
     ]
-    mood = "; ".join(part for part in details if part)
+
+
+def sign_text(name: str) -> str:
+    """What the sign says: rule-made names end with the neighborhood ("Seafood, Williamsburg"), which a sign would not."""
+    return name.split(",")[0].strip()[:40] or "Opening soon"
+
+
+PLACE_NOUNS = {
+    "restaurant", "bakery", "cafe", "café", "shop", "store", "bar", "house", "deli", "diner", "pizzeria", "bistro",
+    "grill", "kitchen", "lounge", "pub", "venue", "brewery", "club", "studio", "gallery", "market", "salon", "spa",
+    "gym", "boutique", "parlor", "parlour", "taproom", "hall", "room", "eatery", "bookstore", "theater", "theatre",
+}
+
+
+def place_noun(genre: str) -> str:
+    """'Seafood' -> 'seafood restaurant', 'Wine Bar' -> 'wine bar', 'Fashion accessories' -> 'fashion accessories shop'."""
+    title = scoring.genre_title(genre).lower()
+    if title.split()[-1] in PLACE_NOUNS:
+        return title
+    kind = scoring.genre_kind(genre)
+    return f"{title} restaurant" if kind == "food" else f"{title} shop" if kind == "retail" else title
+
+
+def interior_prompt(run: RunState, concept: dict, dna: dict, design: dict | None = None) -> str:
+    """Render prompt assembled from the design sheet and the favorites' design DNA, used when no LLM wrote one."""
+    noun = place_noun(concept["genre"])
+    interior = (design or {}).get("interior") if isinstance((design or {}).get("interior"), dict) else {}
+    raw_materials = interior.get("materials") or dna.get("decor", [])[:3]
+    materials = [raw_materials] if isinstance(raw_materials, str) else [str(m) for m in raw_materials]
+    details = [
+        f"Mood: {interior.get('mood') or ', '.join(dna.get('ambience', [])[:3]).lower()}",
+        f"materials and style: {', '.join(materials).lower()}" if materials else "",
+        f"layout: {interior['layout']}" if interior.get("layout") else "",
+        f"seating: {interior['seating']}" if interior.get("seating") else "",
+        f"lighting: {interior['lighting']}" if interior.get("lighting") else "",
+    ]
+    described = ". ".join(part for part in details if part and not part.endswith(": "))
+    return f"Interior of a small street-level {noun} in {run.site.label}. {described}. {INTERIOR_STYLE}"
+
+
+def facade_prompt(run: RunState, concept: dict, dna: dict, design: dict, sign: str) -> str:
+    noun = place_noun(concept["genre"])
+    style = ", ".join(dna.get("decor", [])[:2]).lower()
+    mood = ", ".join(dna.get("ambience", [])[:2]).lower() or "welcoming"
     return (
-        f"Photorealistic interior of a small street-level {title} in {short_label(run.site.label)}, seen from the doorway. "
-        f"{mood}. Natural light, real materials, styled for opening day. Architectural photography, 35mm, "
-        "no people, no text, no logos, no signage."
+        f"Street-level view of a newly opened {noun} on a typical street of {run.site.label}. A sign above the entrance "
+        f'reads "{sign}" in clear, well-designed lettering. {"Shopfront style: " + style + ". " if style else ""}'
+        f"Large windows show a {mood} interior. {FACADE_STYLE}"
     )
+
+
+def render_key(images: ImageGen, shot: dict) -> str:
+    return fingerprint("image", images.provider, images.model, shot["aspect"], shot["prompt"])
+
+
+def saved_render(images: ImageGen, shot: dict, answers: AnswerCache | None) -> str | None:
+    saved = answers.get("image", render_key(images, shot)) if answers else None
+    return saved.get("image") if saved else None
+
+
+async def render(images: ImageGen, shot: dict, answers: AnswerCache | None) -> str | None:
+    image = await images.generate(shot["prompt"], shot["aspect"])
+    if image and answers:
+        answers.put("image", render_key(images, shot), {"image": image})
+    return image
 
 
 PARTNER_KINDS = {
@@ -893,7 +957,9 @@ def rule_design(
             "materials": decor,
             "lighting": "Warm, layered lighting" if "romantic" in ambience or "cozy" in ambience else "Bright, natural light",
             "layout": layout,
-            "seating": ", ".join(a for a in dna.get("amenities", []) if "seating" in a.lower()) or "Mixed bar and table seating",
+            "seating": ", ".join(
+                a for a in dna.get("amenities", []) if "seating" in a.lower() and "outdoor" not in a.lower()
+            ) or "Mixed bar and table seating",
         },
         "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),

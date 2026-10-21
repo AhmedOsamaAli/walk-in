@@ -11,18 +11,20 @@ from app.answers import AnswerCache
 from app.images import ImageGen
 from app.llm import LLM
 from app.main import Services, create_app
-from app.ratelimit import RateLimiter
-from tests.fakes import SEAFOOD_LOCAL_FAVORITES, SITE, FakeQloo, FakeWalker, StubGeocoder
+from app.ratelimit import DailyBudget, RateLimiter
+from tests.fakes import SEAFOOD_LOCAL_FAVORITES, SITE, FakeImages, FakeQloo, FakeWalker, StubGeocoder
 
 RUN_PARAMS = {"lat": SITE[0], "lon": SITE[1], "label": "Test Corner, Testville", "focus": "any", "minutes": 10}
 
 
-def make_client(llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None) -> TestClient:
+def make_client(
+    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None,
+) -> TestClient:
     services = Services(
         qloo=qloo or FakeQloo(),
         walker=FakeWalker(),
         llm=llm or LLM("", None, "test-model"),
-        images=ImageGen(),
+        images=images or ImageGen(),
         geocoder=StubGeocoder(),
         answers=answers or AnswerCache(None),
     )
@@ -98,7 +100,8 @@ def test_full_survey_in_rules_mode():
         sheet = design.json()
         assert sheet["mode"] == "rules"
         assert sheet["interior"]["materials"] and sheet["offer"]
-        assert sheet["image"] is None
+        assert sheet["renders"] == {"enabled": False, "model": None}
+        assert [shot["kind"] for shot in sheet["shots"]] == ["interior", "exterior"]
         partner_names = [p["name"] for p in sheet["partners"]]
         assert partner_names[-1] == "Riverside Cider Co"  # a maker, not the media brand or team that over-index more
         assert not {"Block News", "Local Sports Team"} & set(partner_names)
@@ -316,6 +319,62 @@ def test_agent_live_tests_are_budgeted(monkeypatch):
         assert [c["genre"] for c in first(events, "concepts")["concepts"]] == ["Ramen"]
 
 
+def render(client: TestClient, run_id: str, shot: str, index: int = 0):
+    return client.post("/api/render", json={"run_id": run_id, "index": index, "shot": shot})
+
+
+def test_design_sheets_render_the_interior_and_the_street_view(tmp_path):
+    images = FakeImages()
+    with make_client(images=images, answers=AnswerCache(tmp_path)) as client:
+        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        assert render(client, run_id, "interior").status_code == 404  # only shots of an opened sheet can be rendered
+
+        sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
+        assert sheet["renders"] == {"enabled": True, "model": "fake-image-model"}
+        interior, exterior = sheet["shots"]
+        assert interior["prompt"].startswith("Interior of a small street-level seafood restaurant in Test Corner, Testville.")
+        assert "Industrial chic" in interior["prompt"] or "industrial chic" in interior["prompt"]
+        assert 'sign above the entrance reads "Seafood"' in exterior["prompt"]  # not "Seafood, Test Corner"
+        assert all("No people" in shot["prompt"] for shot in sheet["shots"])
+
+        for shot in ("interior", "exterior"):
+            assert render(client, run_id, shot).json() == {"image": FakeImages.TINY_PNG, "model": "fake-image-model"}
+        assert [aspect for _, aspect in images.calls] == ["16:9", "16:9"]
+        assert render(client, run_id, "interior").status_code == 200 and len(images.calls) == 2  # once per run
+
+        rerun = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        client.post("/api/design", json={"run_id": rerun, "index": 0})
+        assert render(client, rerun, "exterior").json()["image"] == FakeImages.TINY_PNG
+        assert len(images.calls) == 2  # and reused across runs while the prompt is unchanged
+
+        assert render(client, run_id, "kitchen").status_code == 422
+
+
+def test_renders_are_capped_per_day_and_a_failed_render_can_be_retried():
+    images = FakeImages()
+    with make_client(images=images) as client:
+        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        client.post("/api/design", json={"run_id": run_id, "index": 0})
+        free_tier = httpx.Response(429, text="Quota exceeded for metric: generate_content_free_tier_requests, limit: 0",
+                                   request=httpx.Request("POST", "https://images.test"))
+        images.error = httpx.HTTPStatusError("429", request=free_tier.request, response=free_tier)
+        failed = render(client, run_id, "interior")
+        assert failed.status_code == 502 and "turn on billing" in failed.json()["detail"]
+        images.error, images.fail = None, True
+        assert render(client, run_id, "interior").json()["detail"] == "The image model could not render this right now."
+        images.fail = False
+        assert render(client, run_id, "interior").json()["image"] == FakeImages.TINY_PNG
+        client.app.state.render_budget = DailyBudget(0)
+        assert render(client, run_id, "exterior").status_code == 429
+
+
+def test_renders_are_skipped_without_an_image_model():
+    with make_client() as client:
+        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        client.post("/api/design", json={"run_id": run_id, "index": 0})
+        assert render(client, run_id, "interior").json() == {"image": None, "model": None}
+
+
 def test_qloo_failure_is_reported_and_the_stream_still_ends():
     with make_client(qloo=FakeQloo(fail=True)) as client:
         events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
@@ -327,7 +386,8 @@ def test_qloo_failure_is_reported_and_the_stream_still_ends():
 def test_map_and_lookup_endpoints():
     with make_client() as client:
         health = client.get("/api/health").json()
-        assert health == {"ok": True, "qloo": True, "llm": False, "model": None, "models": [], "resting": {}, "image": False}
+        assert health == {"ok": True, "qloo": True, "llm": False, "model": None, "models": [], "resting": {},
+                          "image": False, "image_model": None}
         assert len(client.get("/api/presets").json()) >= 5
         walk = client.get("/api/catchment", params={"lat": SITE[0], "lon": SITE[1], "minutes": 15}).json()
         assert walk["minutes"] == 15 and walk["radius_m"] > 1100

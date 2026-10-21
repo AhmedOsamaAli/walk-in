@@ -22,7 +22,9 @@ services:
       - key: LLM_TIMEOUT
         value: "45"
       - key: IMAGE_PROVIDER
-        value: cloudflare
+        value: gemini
+      - key: IMAGE_DAILY_LIMIT
+        value: "60"
       - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
       - key: CLOUDFLARE_API_TOKEN

@@ -9,6 +9,10 @@ const list = (value) =>
   (Array.isArray(value) ? value : value ? [value] : [])
     .filter((item) => item !== null && item !== undefined && String(item).trim() !== "")
     .map(String);
+const shotsOf = (design) =>
+  (Array.isArray(design?.shots) ? design.shots : []).filter(
+    (shot) => shot && typeof shot.kind === "string" && typeof shot.label === "string",
+  );
 const price = (level) => "$".repeat(Math.max(1, Math.min(4, Number(level) || 2)));
 const letter = (i) => String.fromCharCode(65 + i);
 const fmtLat = (lat) => `${lat >= 0 ? "N" : "S"} ${Math.abs(lat).toFixed(4)}`;
@@ -39,6 +43,7 @@ const state = {
   concepts: [],
   openGap: null,
   designs: new Map(),
+  renders: new Map(),
   grids: new Map(),
 };
 
@@ -461,6 +466,7 @@ function resetResults() {
   state.gaps = [];
   state.concepts = [];
   state.designs.clear();
+  state.renders.clear();
   $("#log").innerHTML = "";
   $("#log-meta").textContent = "";
   for (const id of ["s-log", "s-block", "s-gaps", "s-concepts", "s-taste"]) $(`#${id}`).hidden = true;
@@ -1119,7 +1125,10 @@ async function openDesign(index) {
       design = await api("/api/design", { method: "POST", body: JSON.stringify({ run_id: state.runId, index }) });
       state.designs.set(key, design);
     }
-    if (token === designToken && dialog.open) $("#design-body").innerHTML = designHtml(concept, design, index);
+    if (token === designToken && dialog.open) {
+      $("#design-body").innerHTML = designHtml(concept, design, index);
+      loadRenders(design, index, token);
+    }
   } catch (error) {
     if (token === designToken && dialog.open) {
       $("#design-body").innerHTML = `
@@ -1163,7 +1172,6 @@ function designHtml(concept, design, index) {
   const music = design.music || {};
   const artists = list(music.artists);
   const partners = (design.partners || []).filter((partner) => partner && partner.name);
-  const image = safeUrl(design.image);
   const name = design.name || concept.name;
   const inspired = list(concept.inspired_by);
   const sound = artists.length || music.direction
@@ -1185,9 +1193,60 @@ function designHtml(concept, design, index) {
       ${concept.risk ? `<h3 class="d-h">Risk</h3><p class="d-p">${esc(concept.risk)}</p>` : ""}
     </div>
     <aside class="d-side"><div class="d-side-inner">
-      ${image ? `<figure class="d-image"><img src="${esc(image)}" alt="Generated interior concept for ${esc(name)}" /></figure>` : plateHtml(design.dna || {})}
+      ${design.renders?.enabled ? rendersHtml(design, name) : ""}
+      ${plateHtml(design.dna || {})}
       <p class="d-source mono">Design DNA read from the locals' favorite ${esc(concept.genre)} places${inspired.length ? `: ${esc(inspired.join(", "))}` : ""}.</p>
     </div></aside>`;
+}
+
+function rendersHtml(design, name) {
+  const frames = shotsOf(design)
+    .map(
+      (shot) => `
+      <figure class="render loading" data-shot="${esc(shot.kind)}">
+        <div class="render-frame">
+          <img alt="${esc(shot.label)}: AI render of ${esc(name)}" />
+          <span class="render-wait mono">Rendering ${esc(shot.label.toLowerCase())}</span>
+        </div>
+        <figcaption class="mono"><span>${esc(shot.label)}</span><span class="render-credit">AI render</span></figcaption>
+      </figure>`,
+    )
+    .join("");
+  return `<div class="renders">${frames}</div>`;
+}
+
+// Renders are slow (10–60 s), so they load after the sheet's text, one request per shot, shared across reopenings.
+function loadRenders(design, index, token) {
+  if (!design.renders?.enabled) return;
+  for (const shot of shotsOf(design)) {
+    const key = `${state.runId}:${index}:${shot.kind}`;
+    let pending = state.renders.get(key);
+    if (!pending) {
+      pending = api("/api/render", { method: "POST", body: JSON.stringify({ run_id: state.runId, index, shot: shot.kind }) });
+      state.renders.set(key, pending);
+      pending.catch(() => state.renders.delete(key));
+    }
+    pending.then(
+      (result) => showRender(shot.kind, token, result),
+      (error) => showRender(shot.kind, token, { error: error.message }),
+    );
+  }
+}
+
+function showRender(kind, token, { image, model, error }) {
+  if (token !== designToken || !dialog.open) return;
+  const figure = $(`.render[data-shot="${kind}"]`, $("#design-body"));
+  if (!figure) return;
+  const url = safeUrl(image);
+  if (!url) {
+    figure.classList.replace("loading", "failed");
+    $(".render-wait", figure).textContent = error || "No render this time";
+    return;
+  }
+  const img = $("img", figure);
+  img.addEventListener("load", () => figure.classList.replace("loading", "ready"), { once: true });
+  img.src = url;
+  if (model) $(".render-credit", figure).textContent = `AI render · ${model}`;
 }
 
 function plateHtml(dna) {

@@ -19,11 +19,14 @@ def build_llm(settings: Settings) -> LLM:
 
 
 def build_images(settings: Settings) -> ImageGen:
+    provider = settings.image_provider.strip().lower()
+    # Gemini renders with the same key as the agent unless a separate image key is set.
+    api_key = settings.image_api_key or (settings.llm_api_key if provider == "gemini" else "")
     return ImageGen(
-        provider=settings.image_provider,
+        provider=provider,
         cf_account_id=settings.cloudflare_account_id,
         cf_api_token=settings.cloudflare_api_token,
-        api_key=settings.image_api_key,
+        api_key=api_key,
         base_url=settings.image_base_url,
         model=settings.image_model,
     )

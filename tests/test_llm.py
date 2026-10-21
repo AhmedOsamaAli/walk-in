@@ -216,6 +216,56 @@ def test_parse_json_only_returns_objects():
     assert parse_json(None) == {}
 
 
+def gemini_reply(mime: str = "image/png") -> dict:
+    return {"candidates": [{"content": {"parts": [{"text": "Here it is."}, {"inlineData": {"mimeType": mime, "data": "QUJD"}}]}}]}
+
+
+def test_gemini_renders_wide_images_with_the_agent_key():
+    from app.config import Settings
+    from app.providers import build_images
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers.get("x-goog-api-key"), json.loads(request.content)))
+        return httpx.Response(200, json=gemini_reply())
+
+    images = ImageGen("gemini", api_key="gemini-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert images.enabled and images.model == "gemini-3.1-flash-image"
+    assert asyncio.run(images.generate("a cafe", "16:9")) == "data:image/png;base64,QUJD"
+    url, key, body = seen[0]
+    assert url.endswith("/v1beta/models/gemini-3.1-flash-image:generateContent") and key == "gemini-key"
+    assert body["generationConfig"] == {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": "16:9"}}
+
+    shared = build_images(Settings(image_provider="gemini", llm_api_key="agent-key", image_api_key=""))
+    assert shared.enabled and shared._api_key == "agent-key"
+    assert not build_images(Settings(image_provider="openai", llm_api_key="agent-key", image_api_key="")).enabled
+
+
+def test_gemini_drops_the_aspect_ratio_for_models_that_reject_it():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "imageConfig" in body["generationConfig"]:
+            return httpx.Response(400, json={"error": {"message": 'Invalid JSON payload received. Unknown name "imageConfig"'}})
+        return httpx.Response(200, json=gemini_reply("image/jpeg"))
+
+    images = ImageGen("gemini", api_key="k", model="gemini-2.5-flash-image",
+                      http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert asyncio.run(images.generate("a cafe")) == "data:image/jpeg;base64,QUJD"
+    assert len(bodies) == 2
+
+
+def test_openai_image_sizes_follow_the_model():
+    from app.images import openai_size
+
+    assert openai_size("gpt-image-1", "16:9") == "1536x1024"
+    assert openai_size("gpt-image-1", "9:16") == "1024x1536"
+    assert openai_size("dall-e-3", "16:9") == "1024x1024"
+
+
 def test_cloudflare_images_return_a_data_url():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer token"

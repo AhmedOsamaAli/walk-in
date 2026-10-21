@@ -1,8 +1,9 @@
-"""Per-client sliding-window rate limits for the public demo."""
+"""Rate limits for the public demo: per-client sliding windows and a server-wide daily budget."""
 from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 
 from fastapi import Request
 
@@ -20,6 +21,24 @@ class RateLimiter:
         if len(hits) >= self.limit:
             return False
         hits.append(now)
+        return True
+
+
+class DailyBudget:
+    """At most `limit` paid operations per UTC day across all clients."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self._day = ""
+        self.used = 0
+
+    def allow(self) -> bool:
+        today = datetime.now(timezone.utc).date().isoformat()
+        if today != self._day:
+            self._day, self.used = today, 0
+        if self.used >= self.limit:
+            return False
+        self.used += 1
         return True
 
 

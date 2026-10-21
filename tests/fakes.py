@@ -239,3 +239,31 @@ class StubGeocoder:
 
     async def aclose(self) -> None:
         pass
+
+
+class FakeImages:
+    """Stands in for an image model; records every prompt it is asked to render."""
+
+    provider = "fake"
+    TINY_PNG = "data:image/png;base64,iVBORw0KGgo="
+
+    def __init__(self, enabled: bool = True, fail: bool = False) -> None:
+        self.enabled = enabled
+        self.fail = fail
+        self.error: Exception | None = None
+        self.calls: list[tuple[str, str]] = []
+
+    @property
+    def model(self) -> str | None:
+        return "fake-image-model" if self.enabled else None
+
+    async def generate(self, prompt: str, aspect: str = "16:9") -> str | None:
+        self.calls.append((prompt, aspect))
+        if self.error:
+            raise self.error
+        if self.fail:
+            raise RuntimeError("the image model is down")
+        return self.TINY_PNG
+
+    async def aclose(self) -> None:
+        pass

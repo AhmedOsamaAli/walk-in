@@ -6,7 +6,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, Literal
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -19,17 +19,18 @@ from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
 from .geocode import Geocoder
-from .images import ImageGen
+from .images import ImageGen, explain_failure
 from .llm import LLM
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
-from .ratelimit import RateLimiter, client_ip
+from .ratelimit import DailyBudget, RateLimiter, client_ip
 
 log = logging.getLogger("blankspace")
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
 RUNS_PER_HOUR = 20
 DESIGNS_PER_HOUR = 40
+RENDERS_PER_HOUR = 24
 MAP_REQUESTS_PER_HOUR = 200
 
 PRESETS = [
@@ -91,6 +92,12 @@ class DesignRequest(BaseModel):
     index: int
 
 
+class RenderRequest(BaseModel):
+    run_id: str
+    index: int
+    shot: Literal["interior", "exterior"]
+
+
 router = APIRouter(prefix="/api")
 
 
@@ -106,6 +113,7 @@ async def health(request: Request) -> dict:
         "models": llm.models if llm.enabled else [],
         "resting": llm.resting() if llm.enabled else {},
         "image": services.images.enabled,
+        "image_model": services.images.model,
     }
 
 
@@ -196,6 +204,39 @@ async def design(request: Request, body: DesignRequest) -> dict:
     return result
 
 
+@router.post("/render")
+async def render(request: Request, body: RenderRequest) -> dict:
+    """One AI render of a design sheet's shot, made once per run and cached across runs."""
+    run_state = request.app.state.runs.get(body.run_id)
+    design = run_state.designs.get(body.index) if run_state else None
+    shot = next((s for s in (design or {}).get("shots", []) if s["kind"] == body.shot), None)
+    if not shot:
+        raise HTTPException(404, "Open the design sheet first.")
+    services: Services = request.app.state.services
+    if not services.images.enabled:
+        return {"image": None, "model": None}
+    key = (body.index, body.shot)
+    task = run_state.renders.get(key)
+    if task is None:
+        saved = agent.saved_render(services.images, shot, services.answers)
+        if saved:
+            return {"image": saved, "model": services.images.model}
+        if not request.app.state.render_limiter.allow(client_ip(request)):
+            raise HTTPException(429, "Too many renders from this address. Try again later.")
+        if not request.app.state.render_budget.allow():
+            raise HTTPException(429, "Today's render budget is used up. Try again tomorrow.")
+        task = asyncio.ensure_future(agent.render(services.images, shot, services.answers))
+        run_state.renders[key] = task
+    try:
+        image = await asyncio.shield(task)
+    except Exception as exc:
+        if run_state.renders.get(key) is task:
+            run_state.renders.pop(key)  # a failed render can be retried
+        log.warning("Render failed", exc_info=True)
+        raise HTTPException(502, explain_failure(exc)) from exc
+    return {"image": image, "model": services.images.model}
+
+
 @router.get("/catchment")
 async def catchment(
     request: Request,
@@ -251,6 +292,8 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
         app.state.runs = agent.RunStore()
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
         app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
+        app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)
+        app.state.render_budget = DailyBudget(settings.image_daily_limit)
         app.state.map_limiter = RateLimiter(MAP_REQUESTS_PER_HOUR, 3600)
         try:
             yield
