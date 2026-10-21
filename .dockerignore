@@ -12,3 +12,5 @@ tests
 scripts
 *.md
 !README.md
+frontend/node_modules
+frontend/dist

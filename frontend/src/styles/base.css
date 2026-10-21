@@ -1,0 +1,51 @@
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--bar-h) + var(--live-h) + 12px);
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 15px/1.5 var(--f-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+img { max-width: 100%; display: block; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: inherit; }
+input, textarea { font: inherit; color: inherit; }
+a { color: inherit; }
+ol, ul { margin: 0; padding: 0; list-style: none; }
+h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
+::selection { background: var(--yellow); color: var(--on-yellow); }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+[hidden] { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+.mono { font-family: var(--f-mono); font-size: 11.5px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase; }
+.serif { font-family: var(--f-serif); font-style: italic; font-weight: 300; font-variation-settings: "opsz" 48; }
+.display { font-family: var(--f-display); font-weight: 900; text-transform: uppercase; }
+.muted { color: var(--ash); }
+.ink-blue { color: var(--blue); }
+.label { display: block; margin: 30px 0 12px; }
+.label .muted { margin-left: 6px; text-transform: none; letter-spacing: .01em; }
+
+.tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  padding: 7px 14px; background: var(--card);
+  border: 1px solid var(--ink); border-radius: 999px;
+  font-size: 13.5px; font-weight: 500;
+}
+.tag small { font: 500 11px var(--f-mono); color: var(--ash); }
+.tag.blue { color: var(--blue); border-color: var(--blue); }
+
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } }
+@keyframes rise { to { transform: none; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }

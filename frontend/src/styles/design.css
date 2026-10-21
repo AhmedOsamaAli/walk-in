@@ -1,0 +1,94 @@
+/* ---------- Design sheet ---------- */
+.design {
+  width: min(1220px, 95vw); height: min(90vh, 980px); max-width: none; max-height: none;
+  padding: 0; overflow: hidden;
+  background: var(--paper); color: var(--ink);
+  border: 1.5px solid var(--ink); border-radius: 40px;
+}
+.design[open] { animation: sheetIn .8s var(--ease) both; }
+.design::backdrop { background: var(--backdrop); backdrop-filter: blur(4px); animation: fade .5s both; }
+@keyframes sheetIn { from { opacity: 0; transform: translateY(56px) scale(.985); } }
+.design-close {
+  position: absolute; top: 20px; right: 22px; z-index: 5;
+  padding: 10px 16px; background: var(--card); border: 1.5px solid var(--ink); border-radius: 999px;
+  transition: background .35s var(--ease), color .35s;
+}
+.design-close:hover { background: var(--ink); color: var(--on-ink); }
+.design-body { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); height: 100%; overflow-y: auto; }
+.d-main { padding: 46px 46px 56px; }
+.d-side { background: var(--card); border-left: var(--rule); }
+.d-side-inner { position: sticky; top: 0; display: grid; align-content: start; gap: 14px; padding: 76px 28px 28px; }
+.d-eyebrow { margin-bottom: 16px; color: var(--blue); }
+.d-title { margin-bottom: 16px; font: 300 italic clamp(46px, 5.2vw, 80px)/.98 var(--f-serif); font-variation-settings: "opsz" 144; }
+.d-tagline { max-width: 42ch; margin-bottom: 18px; font-size: 19px; line-height: 1.38; }
+.d-statement { max-width: 46ch; font-size: 18px; line-height: 1.4; color: var(--text-2); }
+.d-h { margin: 34px 0 12px; font: 900 36px/.9 var(--f-display); text-transform: uppercase; }
+.d-p { max-width: 54ch; font-size: 15.5px; line-height: 1.55; }
+.d-sound { margin-top: 12px; }
+.spec { border-top: var(--rule); }
+.spec div { display: grid; grid-template-columns: 140px 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--smoke); }
+.spec dt { padding-top: 3px; font: 500 11px var(--f-mono); letter-spacing: .05em; text-transform: uppercase; }
+.offer { counter-reset: of; border-top: var(--rule); }
+.offer li { display: grid; grid-template-columns: 36px 1fr; padding: 10px 0; border-bottom: 1px solid var(--smoke); font-size: 16px; }
+.offer li::before { content: counter(of, decimal-leading-zero); counter-increment: of; padding-top: 4px; font: 500 11px var(--f-mono); color: var(--blue); }
+.partners li { padding: 10px 0; border-bottom: 1px solid var(--smoke); }
+.partners b { font-weight: 600; }
+.partners span { display: block; font-size: 13.5px; color: var(--text-4); }
+
+/* ---------- Renders ---------- */
+.renders { display: grid; gap: 14px; }
+.render { display: grid; gap: 8px; }
+.render-frame {
+  position: relative; overflow: hidden; aspect-ratio: 16 / 9;
+  background: var(--bone); border: 1.5px solid var(--ink); border-radius: 24px;
+}
+.render-frame img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: 0; transform: scale(1.04); transition: opacity 1s var(--ease), transform 1.6s var(--ease);
+}
+.render.ready img { opacity: 1; transform: none; }
+.render.loading .render-frame {
+  background: linear-gradient(110deg, var(--bone) 0 40%, var(--shimmer) 50%, var(--bone) 60% 100%);
+  background-size: 300% 100%; animation: shimmer 1.6s linear infinite;
+}
+.render-wait {
+  position: absolute; left: 16px; bottom: 14px; max-width: calc(100% - 32px); padding: 6px 10px;
+  background: var(--card); border: 1px solid var(--ink); border-radius: 14px; font-size: 10.5px; line-height: 1.4;
+}
+.render.loading .render-wait::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
+.render.ready .render-wait { display: none; }
+.render.failed .render-wait { color: var(--ash); }
+.render figcaption { display: flex; justify-content: space-between; gap: 10px; font-size: 10.5px; color: var(--ash); }
+.render figcaption span:first-child { color: var(--ink); }
+
+/* ---------- The plate: the favorites' design DNA ---------- */
+.plate { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.plate > div {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 18px;
+  min-height: 132px; padding: 16px 18px; border: 1.5px solid var(--ink); border-radius: 24px;
+  animation: fadeUp .8s var(--ease) both;
+}
+.plate > div:nth-child(2) { animation-delay: .08s; }
+.plate > div:nth-child(3) { animation-delay: .16s; }
+.plate > div:nth-child(4) { animation-delay: .24s; }
+.plate > div:nth-child(5) { animation-delay: .32s; }
+.plate .pl-a { grid-column: span 2; min-height: 190px; background: var(--blue-fill); border-color: var(--blue-fill); color: var(--on-blue); }
+.plate .pl-b { background: var(--yellow); border-color: var(--on-yellow); color: var(--on-yellow); }
+.plate .pl-c { background: var(--card); }
+.plate .pl-d { background: var(--ink); color: var(--on-ink); }
+.plate .pl-e { grid-column: span 2; background: var(--bone); }
+.plate .big { font: 900 40px/.9 var(--f-display); text-transform: uppercase; }
+.plate .ser { font: 300 italic 23px/1.08 var(--f-serif); font-variation-settings: "opsz" 72; }
+.d-source { color: var(--ash); line-height: 1.6; text-transform: none; letter-spacing: .01em; }
+
+/* ---------- Drafting placeholders ---------- */
+.sk {
+  border-radius: 12px;
+  background: linear-gradient(90deg, var(--bone) 0 40%, var(--shimmer) 50%, var(--bone) 60% 100%);
+  background-size: 300% 100%; animation: shimmer 1.4s linear infinite;
+}
+.sk-line { height: 20px; width: 72%; }
+.sk-line + .sk-line { width: 54%; margin-top: 10px; }
+.sk-block { height: 240px; margin-top: 34px; }
+.sk-card { height: 132px; border-radius: 24px; }
+.sk-card.tall { height: 190px; }
