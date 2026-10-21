@@ -43,7 +43,8 @@ async def analyze_site(
             step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_block(q, catchment)),
             step("demand", "Ranking what locals engage with against six same-size areas around",
                  engine.demand_genres(q, catchment)),
-            step("taste", "Finding brands and artists this area over-indexes on", engine.local_taste(q, site.lat, site.lon)),
+            step("taste", "Finding the brands, artists, films, shows and podcasts this area over-indexes on",
+                 engine.local_taste(q, site.lat, site.lon)),
         )
         run.block, run.genres, run.cues, run.taste = block, genres, cues, taste
         run.summary = scoring.summarize_block(block)

@@ -113,8 +113,13 @@ def test_full_survey_in_rules_mode():
         assert partner_names[-1] == "Riverside Cider Co"  # a maker, not the media brand or team that over-index more
         assert not {"Block News", "Local Sports Team"} & set(partner_names)
         # The soundtrack starts from what local seafood fans listen to, then the area's own favorites.
-        assert sheet["music"]["artists"][:3] == ["Sea Shanty Crew", "Local Jazz Trio", "Block Party Band"]
-        assert sheet["music"]["direction"] == "What local Seafood fans also listen to"
+        # The soundtrack is the neighborhood's signature artists; the one seafood fans share comes first.
+        assert sheet["music"]["artists"] == ["Local Jazz Trio", "Block Party Band"]
+        assert sheet["music"]["direction"] == "Artists people within 1.5 km over-index on"
+        experience = sheet["experience"]
+        assert [(a["name"], a.get("since")) for a in experience["soundtrack"]] == [("Block Party Band", 2019), ("Local Jazz Trio", 1985)]
+        assert "screen" not in experience and "talks" not in experience  # a seafood restaurant has no screen nights
+        assert "licenses" in experience["licensing"]
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
         assert sheet["hours_basis"] == "Typical hours of the 5 Seafood places locals love that list them"
         assert "launch" not in sheet
@@ -214,10 +219,14 @@ def test_agent_investigates_live_and_is_grounded():
         assert any("Art museum as a taste cue" in text for text in findings)
         assert any(text.startswith("Seafood is already in the gap table") for text in findings)
         assert (
-            "Local fans of Seafood also love Riverside Cider Co, Tide Magazine; artists Sea Shanty Crew, Local Jazz Trio. "
-            "Shared with the area's signature taste: Riverside Cider Co, Local Jazz Trio."
+            "People who love Seafood also love Riverside Cider Co, Tide Magazine; artists Sea Shanty Crew, Local Jazz Trio. "
+            "Shared with this area's signature taste: Riverside Cider Co, Local Jazz Trio."
         ) in findings
-        assert "Local fans of Brunch also love Global Coffee; artists Global Pop Star." in findings
+        # Brunch fans rank exactly like the area at large: Qloo ignored the category, so nothing is claimed.
+        assert (
+            "Qloo ranks people who love Brunch like everyone near the site, so their taste says nothing specific about "
+            "the category here."
+        ) in findings
 
         concepts = first(events, "concepts")
         assert concepts["mode"] == "agent" and concepts["model"] == "test-model"
@@ -230,7 +239,7 @@ def test_agent_investigates_live_and_is_grounded():
         run_id = first(events, "run")["run_id"]
         sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
         assert sheet["mode"] == "agent" and sheet["model"] == "test-model"
-        assert sheet["music"]["artists"] == ["Local Jazz Trio", "Sea Shanty Crew"]  # fan artists are allowed, invented ones not
+        assert sheet["music"]["artists"] == ["Local Jazz Trio"]  # signature artists only: not invented, not global fans'
         assert [p["name"] for p in sheet["partners"]] == ["Block Place 1", "Riverside Cider Co"]
         # Hours come from the places locals love, not from the model; the model's launch idea is dropped.
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
@@ -310,7 +319,7 @@ def test_repeated_checks_reuse_the_first_result_without_new_log_lines():
     with make_client(llm=scripted_llm([first_turn, second_turn, submit], requests)) as client:
         events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
         assert [d["tool"] for e, d in events if e == "agent"] == ["fan_taste", "inspect_gap"]
-        assert sum(1 for e, d in events if e == "finding" and d["text"].startswith("Local fans of Seafood")) == 1
+        assert sum(1 for e, d in events if e == "finding" and d["text"].startswith("People who love Seafood")) == 1
         last_turn = [m["content"] for m in requests[-1]["messages"] if m["role"] == "tool"]
         assert "You already ran this check" in last_turn[1]
 

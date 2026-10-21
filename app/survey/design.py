@@ -11,6 +11,7 @@ from ..answers import AnswerCache, fingerprint
 from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
+from . import experience
 from .concepts import ground_names
 from .evidence import gap_for, storefront_favorites
 from .experience import fans_of
@@ -38,20 +39,19 @@ async def design_concept(
     concept = run.concepts[index]
     row = gap_for(run, concept["genre"])
     dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
-    fans: dict = {"brands": [], "artists": []}
+    fans: dict = {"brands": [], "artists": [], "specific": False}
     if row and q is not None:
         try:
             fans = await fans_of(q, run, row["genre_id"])
         except QlooError:
             log.warning("Fan taste lookup failed; designing from the area's taste only", exc_info=True)
-    fan_artists = [a["name"] for a in fans["artists"]]
-    area_artists = [a["name"] for a in run.taste.get("distinctive_artists", [])]
-    # Artists loved by people near the site who love this category come first; the area's signature artists fill in.
-    # The area's merely popular artists are left out: they are popular everywhere and say nothing about this place.
-    local_artists = list(dict.fromkeys(fan_artists + area_artists))
+    # The soundtrack and partners come from what this neighborhood over-indexes on. Fans of the category are mostly
+    # its audience at large, so they only decide the order: signature names they share come first.
+    shared = {card["name"] for card in fans["brands"] + fans["artists"]} if fans.get("specific") else set()
+    signature_artists = run.taste.get("distinctive_artists", [])
+    local_artists = [a["name"] for a in sorted(signature_artists, key=lambda a: a["name"] not in shared)]
     nearby = [p.get("name") for p in run.block if p.get("name")]
-    area_brands = run.taste.get("distinctive_brands", [])
-    brand_cards = list({b["name"]: b for b in area_brands + fans["brands"]}.values())
+    brand_cards = sorted(run.taste.get("distinctive_brands", []), key=lambda b: b["name"] not in shared)
     fitting_brands = [b["name"] for b in scoring.partner_brands(brand_cards, concept["genre"])]
     site = run.site
     unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
@@ -68,7 +68,7 @@ async def design_concept(
             "local_artists": local_artists[:15],
             "nearby_places": nearby[:40],
             "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
-            "local_fans_of_this_category_also_love": {"brands": [b["name"] for b in fans["brands"]], "artists": fan_artists},
+            "signature_names_this_category_s_fans_share": sorted(shared & ({*local_artists} | {b["name"] for b in brand_cards})),
             "partner_brands": fitting_brands[:8],
             "taste_cues": run.cues,
         }
@@ -90,7 +90,7 @@ async def design_concept(
             log.warning("Design brief LLM call failed; using evidence rules", exc_info=True)
             design = {}
     if not design:
-        design = rule_design(run, concept, dna, local_artists, fitting_brands, fan_led=bool(fan_artists), capacity=capacity)
+        design = rule_design(run, concept, dna, local_artists, fitting_brands, capacity=capacity)
         mode, model = "rules", None
     music = design.get("music") if isinstance(design.get("music"), dict) else {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
@@ -108,6 +108,7 @@ async def design_concept(
     design["unit"] = unit
     design["capacity"] = capacity
     design["capacity_basis"] = CAPACITY_BASIS if capacity else None
+    design["experience"] = experience.plan(run, concept["genre"])
     design["mode"] = mode
     design["model"] = model
     design["shots"] = design_shots(run, concept, design, dna)
@@ -251,7 +252,7 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
     for place in run.block:
         names = [name for _, name in scoring.genre_tags(place)]
         business = [name for name in names if scoring.is_business_genre(name)]
-        if not place.get("name") or genre in names or not business:
+        if not place.get("name") or genre in names or not business or not scoring.is_storefront_place(place):
             continue
         kind = scoring.genre_kind(business[0])
         order = wanted.index(kind) if kind in wanted else len(wanted)
@@ -274,13 +275,11 @@ def opening_hours(row: dict | None) -> tuple[str | None, str | None]:
 
 
 def rule_design(
-    run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str], fan_led: bool = False,
-    capacity: str | None = None,
+    run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str], capacity: str | None = None,
 ) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
     minutes = run.site.minutes
-    title = scoring.genre_title(concept["genre"])
     layout = LAYOUTS.get(scoring.genre_kind(concept["genre"]), LAYOUTS["food"])
     # Only space the owner says the unit has: favorites with patios say nothing about this unit.
     if run.site.outdoor:
@@ -308,7 +307,7 @@ def rule_design(
         "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),
         "music": {
-            "direction": f"What local {title} fans also listen to" if fan_led else "Built from artists that over-index locally",
+            "direction": "Artists people within 1.5 km over-index on",
             "artists": artists[:5],
         },
         "partners": partners,

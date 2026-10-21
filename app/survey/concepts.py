@@ -168,10 +168,10 @@ Demand is compared with six same-size areas around the site, not the whole city;
 this dense would typically hold. Only claim that locals travel for something when the evidence says so; when it says
 their favorites are just the city's famous places, there is no travel evidence. Distances are medians, not averages.
 Work like an analyst, in as few turns as possible. Tools called in the same turn run in parallel, so batch them:
-1. First turn: test_category for up to 3 hunches the gap table does not cover, drawn from the brands, artists and
-   taste cues this area over-indexes on (sports teams suggest a sports bar; design brands suggest a concept store);
-   in the same turn, inspect_gap and fan_taste for the 2 or 3 strongest gaps. Fan taste that overlaps the area's
-   own signature brands and artists is evidence of fit, and its names are material for programming and partners.
+1. First turn: test_category for up to 3 hunches the gap table does not cover, drawn from the brands, artists, films,
+   shows and taste cues this area over-indexes on (sports teams suggest a sports bar; design brands suggest a concept
+   store); in the same turn, inspect_gap and fan_taste for the 2 or 3 strongest gaps. Fan taste is the category's
+   audience at large, not only locals: only its overlap with the area's signature taste is evidence of fit.
 2. Second turn, only if needed: inspect_gap or fan_taste for a tested category you now want to build on.
 3. Then call submit_concepts with exactly 3 concepts, each on a different genre from the gap table or your tests.
    Prefer evidence "ok". A weak test result is a finding: say so in risk, or move on.
@@ -214,8 +214,9 @@ CONCEPT_TOOLS = [
         "type": "function",
         "function": {
             "name": "fan_taste",
-            "description": "Live Qloo cross-domain check: brands and artists that people near the site who love a category also "
-                           "love, and which of them belong to the area's own signature taste.",
+            "description": "Live Qloo cross-domain check: brands and artists that people who love a category also love "
+                           "(its audience at large, biased to this area), which of them belong to this area's signature "
+                           "taste, and whether Qloo ignores the category as a signal here.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -364,18 +365,28 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
             fans = await fans_of(q, run, genre["id"])
         except QlooError as exc:
             return await refuse(f"Qloo fan taste for '{query}' failed: {exc}")
+        if not fans.get("specific"):
+            await record("finding", {"text": (
+                f"Qloo ranks people who love {genre['name']} like everyone near the site, so their taste says nothing "
+                "specific about the category here."
+            )})
+            return {"category": genre["name"], "specific": False,
+                    "note": "Qloo ignores this category as a signal here; this is no evidence for or against it."}
         brands = [b["name"] for b in fans["brands"]]
         artists = [a["name"] for a in fans["artists"]]
         signature = {e["name"] for e in run.taste.get("distinctive_brands", []) + run.taste.get("distinctive_artists", [])}
         shared = [name for name in brands + artists if name in signature]
-        text = f"Local fans of {genre['name']} also love {', '.join(brands[:4]) or 'no brands Qloo knows'}"
+        text = f"People who love {genre['name']} also love {', '.join(brands[:4]) or 'no brands Qloo knows'}"
         text += f"; artists {', '.join(artists[:3])}" if artists else ""
         text = text.rstrip(".") + "."
         if shared:
-            text += f" Shared with the area's signature taste: {', '.join(shared)}".rstrip(".") + "."
+            text += f" Shared with this area's signature taste: {', '.join(shared)}".rstrip(".") + "."
         await record("finding", {"text": text})
-        return {"category": genre["name"], "local_fans_also_love": {"brands": brands, "artists": artists},
-                "shared_with_area_signature": shared}
+        return {"category": genre["name"], "specific": True,
+                "people_who_love_it_also_love": {"brands": brands, "artists": artists},
+                "shared_with_area_signature": shared,
+                "note": "These are the category's audience at large, not only locals; overlap with the area's "
+                        "signature taste is the evidence of fit."}
 
     async def on_call(name: str, args: dict, thought: str | None) -> None:
         if name == "submit_concepts":

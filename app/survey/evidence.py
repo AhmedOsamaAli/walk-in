@@ -42,6 +42,11 @@ def evidence_brief(run: RunState) -> dict:
         "taste_cues": run.cues,
         "brands_this_area_over_indexes_on": [b["name"] for b in run.taste.get("distinctive_brands", [])],
         "artists_this_area_over_indexes_on": [a["name"] for a in run.taste.get("distinctive_artists", [])],
+        "films_and_shows_this_area_over_indexes_on": [
+            f"{c['name']} ({c['year']})" if c.get("year") else c["name"]
+            for c in run.taste.get("distinctive_movies", [])[:5] + run.taste.get("distinctive_tv", [])[:5]
+        ],
+        "podcasts_this_area_over_indexes_on": [p["name"] for p in run.taste.get("distinctive_podcasts", [])[:5]],
     }
     unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
     if unit:

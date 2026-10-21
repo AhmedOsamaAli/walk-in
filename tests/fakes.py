@@ -59,6 +59,16 @@ BRAND_TYPES = {
 REFERENCE_BRANDS = ["Global Coffee", "Global Sneakers"] + [f"Elsewhere Brand {i}" for i in range(10)]
 LOCAL_ARTISTS = ["Global Pop Star", "Block Party Band", "Local Jazz Trio"]
 REFERENCE_ARTISTS = ["Global Pop Star"] + [f"Elsewhere Artist {i}" for i in range(10)]
+ARTIST_START = {"Global Pop Star": 2008, "Block Party Band": 2019, "Local Jazz Trio": 1985}
+# Films, shows and podcasts: the first of each is popular everywhere, the rest are this neighborhood's own.
+LOCAL_MEDIA = {
+    "urn:entity:movie": [("Global Blockbuster", 2019), ("Harbor Lights", 1998), ("Dock Days", 2022)],
+    "urn:entity:tv_show": [("Global Sitcom", 2010), ("Pier Pressure", 2021), ("Night Market", 2003)],
+    "urn:entity:podcast": [("Global Talk", None), ("Block Radio", None)],
+}
+REFERENCE_MEDIA = {
+    kind: [items[0]] + [(f"Elsewhere {kind.split(':')[-1]} {i}", 2015) for i in range(10)] for kind, items in LOCAL_MEDIA.items()
+}
 
 
 def offset(distance: float, bearing: float) -> tuple[float, float]:
@@ -107,9 +117,11 @@ def place(name: str, genre: str, lat: float, lon: float, index: int = 0, genre_t
     }
 
 
-def entity(name: str, kind: str, index: int, brand_type: str = "Corporate Brand") -> dict:
+def entity(name: str, kind: str, index: int, brand_type: str = "Corporate Brand", props: dict | None = None) -> dict:
     tags = [{"type": "urn:tag:brand_type:qloo", "name": brand_type}] if kind == "brand" else []
-    return {"entity_id": f"{kind}-{slug(name)}", "name": name, "popularity": 0.8, "tags": tags, "properties": {}}
+    if kind == "artist" and name in ARTIST_START:
+        props = {"start_year": ARTIST_START[name], **(props or {})}
+    return {"entity_id": f"{kind}-{slug(name)}", "name": name, "popularity": 0.8, "tags": tags, "properties": props or {}}
 
 
 class FakeQloo:
@@ -168,6 +180,14 @@ class FakeQloo:
         if kind == "urn:entity:artist":
             names = LOCAL_ARTISTS if at_site(params.get("signal.location", "")) else REFERENCE_ARTISTS
             return {"results": {"entities": [entity(n, "artist", i) for i, n in enumerate(names)]}}
+        if kind in LOCAL_MEDIA:
+            items = LOCAL_MEDIA[kind] if at_site(params.get("signal.location", "")) else REFERENCE_MEDIA[kind]
+            short = kind.split(":")[-1]
+            return {"results": {"entities": [
+                entity(n, short, i, props={"release_year": year, "image": {"url": f"https://img.test/{slug(n)}.jpg"}}
+                       if year else {"release_date": "2024-05-01"})
+                for i, (n, year) in enumerate(items)
+            ]}}
         if kind == "urn:heatmap":
             cells = []
             for i in range(30):

@@ -16,6 +16,13 @@ MIN_AROUND_M = 900  # smallest "surrounding area" used to predict supply
 GAP_GENRES = 8
 REF_BEARINGS = (0, 60, 120, 180, 240, 300)
 TASTE_REF_BEARINGS = (30, 150, 270)
+TASTE_DOMAINS = {
+    "brands": "urn:entity:brand",
+    "artists": "urn:entity:artist",
+    "movies": "urn:entity:movie",
+    "tv": "urn:entity:tv_show",
+    "podcasts": "urn:entity:podcast",
+}
 
 
 def around_radius(catchment: Catchment) -> int:
@@ -198,7 +205,10 @@ async def probe_genre(q: QlooClient, catchment: Catchment, genre: dict, table: l
 
 
 async def fan_taste(q: QlooClient, lat: float, lon: float, tag_id: str, take: int = 15) -> dict:
-    """Brands and artists that people near the site who engage with a genre also love (Qloo cross-domain affinity)."""
+    """Brands and artists that people who love a genre also love (Qloo cross-domain affinity, biased to the site).
+
+    Mostly the category's audience at large rather than locals: seafood lovers rank much the same in Brooklyn and Cairo.
+    """
     signal = {
         "signal.interests.tags": tag_id,
         "signal.location": point_wkt(lat, lon),
@@ -230,22 +240,26 @@ async def _ranked(q: QlooClient, entity_type: str, lat: float, lon: float, radiu
 
 
 async def local_taste(q: QlooClient, lat: float, lon: float) -> dict:
-    """Brands and artists for the neighborhood, and those it over-indexes on versus same-size areas around."""
+    """What the neighborhood loves and over-indexes on versus same-size areas around, across taste domains.
+
+    Brands and artists keep their popular lists too (they show when Qloo ranks the categories' fans like everyone
+    else); for films, shows and podcasts only the distinctive ones are kept: popular ones are popular everywhere.
+    """
     refs = reference_points(lat, lon, TASTE_M, TASTE_REF_BEARINGS)
-    brands, artists, *reference_lists = await asyncio.gather(
-        _ranked(q, "urn:entity:brand", lat, lon, TASTE_M),
-        _ranked(q, "urn:entity:artist", lat, lon, TASTE_M),
-        *(_ranked(q, "urn:entity:brand", r_lat, r_lon, TASTE_M) for r_lat, r_lon in refs),
-        *(_ranked(q, "urn:entity:artist", r_lat, r_lon, TASTE_M) for r_lat, r_lon in refs),
-    )
-    brand_refs, artist_refs = reference_lists[: len(refs)], reference_lists[len(refs):]
-    commercial = [e for e in brands if scoring.is_commercial_brand(e)]
-    return {
-        "brands": [scoring.entity_card(e) for e in commercial if scoring.is_safe_name(e.get("name"))][:12],
-        "distinctive_brands": [scoring.entity_card(e) for e in scoring.distinctive_by_rank(commercial, brand_refs)],
-        "artists": [scoring.entity_card(e) for e in artists if scoring.is_safe_name(e.get("name"))][:12],
-        "distinctive_artists": [scoring.entity_card(e) for e in scoring.distinctive_by_rank(artists, artist_refs)],
-    }
+    kinds = list(TASTE_DOMAINS.values())
+    lists = await asyncio.gather(*(
+        _ranked(q, kind, r_lat, r_lon, TASTE_M) for kind in kinds for r_lat, r_lon in [(lat, lon), *refs]
+    ))
+    per_kind = len(refs) + 1
+    taste: dict[str, list[dict]] = {}
+    for index, domain in enumerate(TASTE_DOMAINS):
+        local, *references = lists[index * per_kind:(index + 1) * per_kind]
+        if domain == "brands":
+            local = [e for e in local if scoring.is_commercial_brand(e)]
+        if domain in ("brands", "artists"):
+            taste[domain] = [scoring.entity_card(e) for e in local if scoring.is_safe_name(e.get("name"))][:12]
+        taste[f"distinctive_{domain}"] = [scoring.entity_card(e) for e in scoring.distinctive_by_rank(local, references)]
+    return taste
 
 
 async def genre_heatmap(q: QlooClient, lat: float, lon: float, tag: str, radius: int = 3000) -> list[dict]:

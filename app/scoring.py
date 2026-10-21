@@ -591,7 +591,22 @@ def entity_card(entity: dict) -> dict:
     kind = brand_kind(entity)
     if kind:
         card["kind"] = kind
+    # Films and shows have release years and artists start years; podcast dates are the latest episode, so none.
+    for key, field in (("year", "release_year"), ("since", "start_year")):
+        if isinstance(props.get(field), int):
+            card[key] = props[field]
     return card
+
+
+def era(year: int | None, this_year: int, new_within: int = 10) -> str | None:
+    """'classic' when it started or came out 20+ years ago, 'new' within `new_within` years; in between is neither."""
+    if not year:
+        return None
+    if this_year - year >= 20:
+        return "classic"
+    if this_year - year <= new_within:
+        return "new"
+    return None
 
 
 def brand_kind(entity: dict) -> str | None:
