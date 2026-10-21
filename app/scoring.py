@@ -45,6 +45,9 @@ GENERIC_OFFERINGS = {
     "dining drinking", "social community", "nightlife", "entertainment", "ok to order just drinks",
     "sports recreation", "culture arts", "nature outdoors", "tours", "celebrations", "people watching",
     "coffee culture", "date night", "brunching", "hanging out", "group outings", "meeting friends", "family friendly",
+    # What every venue and bar does; a signature must be something specific.
+    "live events", "events", "concerts", "live performances", "cocktails", "happy hour", "happy hour drinks",
+    "happy hour food",
 }
 
 COMPLAINT_PATTERN = re.compile(
@@ -281,20 +284,28 @@ def standing(entity: dict) -> dict | None:
     return result
 
 
+def review_keywords(entity: dict) -> list[dict]:
+    """A place's review keywords without the ones that repeat its name or address ('zamalek', 'katz')."""
+    props = entity.get("properties") or {}
+    own = f"{entity.get('name') or ''} {props.get('address') or ''}".lower()
+    return [k for k in props.get("keywords") or [] if k.get("name") and k["name"].lower() not in own]
+
+
 def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
     """Compact, UI-friendly view of a place entity."""
     props = entity.get("properties") or {}
-    keywords = props.get("keywords") or []
+    keywords = review_keywords(entity)
     location = place_location(entity)
+    rating = props.get("business_rating")
     card = {
         "id": item_id(entity),
         "name": entity.get("name"),
         "address": props.get("address"),
-        "rating": props.get("business_rating"),
+        "rating": round(float(rating), 1) if rating else None,
         "price_level": props.get("price_level"),
         "genres": [name for _, name in genre_tags(entity) if is_business_genre(name)][:3],
-        "praise": [k["name"] for k in keywords if k.get("name") and not is_complaint(k["name"])][:4],
-        "complaints": [k["name"] for k in keywords if k.get("name") and is_complaint(k["name"])][:3],
+        "praise": [k["name"] for k in keywords if not is_complaint(k["name"])][:4],
+        "complaints": [k["name"] for k in keywords if is_complaint(k["name"])][:3],
         "standing": standing(entity),
         "lat": location[0] if location else None,
         "lon": location[1] if location else None,
@@ -323,10 +334,8 @@ def summarize_block(places: Iterable[dict]) -> dict:
         if props.get("price_level"):
             prices[int(props["price_level"])] += 1
         place_praise = []
-        for keyword in props.get("keywords") or []:
-            name = keyword.get("name")
-            if not name:
-                continue
+        for keyword in review_keywords(place):
+            name = keyword["name"]
             complaint = is_complaint(name)
             (complaints if complaint else praise)[name] += int(keyword.get("count") or 0)
             if not complaint:
@@ -588,8 +597,8 @@ def design_dna(places: Iterable[dict], per_family: int = 6) -> dict:
     price_levels: list[int] = []
     for place in places:
         props = place.get("properties") or {}
-        for keyword in props.get("keywords") or []:
-            if keyword.get("name") and not is_complaint(keyword["name"]):
+        for keyword in review_keywords(place):
+            if not is_complaint(keyword["name"]):
                 keywords[keyword["name"]] += int(keyword.get("count") or 0)
         if props.get("price_level"):
             price_levels.append(int(props["price_level"]))

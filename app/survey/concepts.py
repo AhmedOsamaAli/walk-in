@@ -64,9 +64,28 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
             concept["price_level"] = max(1, min(4, int(concept.get("price_level") or 2)))
         except (TypeError, ValueError):
             concept["price_level"] = 2
+        concept["signature"] = signature_of(concept.get("signature"), row)
         concept["evidence"] = gap_evidence(row, run.site.minutes)
         cleaned.append(concept)
     return cleaned[:3]
+
+
+# Signature items are what people come for; the room, the seats and the mood belong to the design sheet.
+NOT_A_SIGNATURE = re.compile(
+    r"\b(seating|seats|outdoor|patio|terrace|veranda|ambiance|ambience|atmosphere|decor|interior|setting|vibe|"
+    r"music selection|comfortable|inviting)\b",
+    re.IGNORECASE,
+)
+
+
+def signature_of(items: object, row: dict) -> list[str]:
+    """The agent's signature items, short and specific; the favorites' own signatures when none survive."""
+    candidates = items if isinstance(items, list) else []
+    kept = [
+        item.strip().rstrip(".") for item in candidates
+        if isinstance(item, str) and item.strip() and len(item.split()) <= 8 and not NOT_A_SIGNATURE.search(item)
+    ]
+    return kept[:4] or scoring.signature_items(row["genre"], scoring.design_dna(storefront_favorites(row)[0]))
 
 
 # Category words that are names of real places somewhere ("Diner", "Bakery") but are free for anyone to use.
@@ -111,7 +130,7 @@ def one_liner(row: dict) -> str:
         return f"{title} for a neighborhood that loves it more than the areas around it do."
     if row.get("relative_supply", 1) <= 0.8:
         return f"{title} where the block has fewer than its density predicts."
-    return f"A sharper {title.lower()} for a crowd that already loves the category."
+    return f"A sharper {title} for neighbors who already love the category."
 
 
 def concept_rows(run: RunState) -> list[dict]:
@@ -282,7 +301,8 @@ CONCEPT_TOOLS = [
                                              "description": "2-3 lines, each citing numbers exactly as they appear in the evidence"},
                                 "beat_competitors": {"type": "string"},
                                 "signature": {"type": "array", "items": {"type": "string"},
-                                              "description": "3-4 specific things people would come for, not amenities"},
+                                              "description": "3-4 short items (2-6 words each): dishes, drinks or experiences "
+                                                             "people would come for; never the room, seating or mood"},
                                 "inspired_by": {"type": "array", "items": {"type": "string"}},
                                 "risk": {"type": "string", "description": "The biggest risk the evidence shows"},
                             },

@@ -186,8 +186,8 @@ def test_agent_investigates_live_and_is_grounded():
     ]
     submit = [tool_call("c9", "submit_concepts", {"concepts": [
         {"name": "Tide & Table", "genre": "Seafood", "one_liner": "Raw bar for the block",
-         "why_here": ["Seafood ranks #1 here"], "signature": ["Oysters"], "price_level": 3,
-         "inspired_by": ["Harbor Oyster Bar", "Invented Place"]},
+         "why_here": ["Seafood ranks #1 here"], "signature": ["Oysters", "An inviting atmosphere with outdoor seating", "Crudo flight"],
+         "price_level": 3, "inspired_by": ["Harbor Oyster Bar", "Invented Place"]},
         {"name": "Ghost Concept", "genre": "Not A Genre", "one_liner": "x", "why_here": [], "signature": []},
         {"name": "Second Seafood", "genre": "seafood", "one_liner": "x", "why_here": [], "signature": []},
         {"name": "Slurp", "genre": "Ramen", "one_liner": "Ramen nobody nearby serves", "why_here": [], "signature": []},
@@ -232,6 +232,9 @@ def test_agent_investigates_live_and_is_grounded():
         assert concepts["mode"] == "agent" and concepts["model"] == "test-model"
         assert [c["genre"] for c in concepts["concepts"]] == ["Seafood", "Ramen", "Wine Bar"]  # one per genre, real genres only
         assert concepts["concepts"][0]["inspired_by"] == ["Harbor Oyster Bar"]
+        # Signatures are what people come for: the mood and the seats are dropped; none left means the favorites' own.
+        assert concepts["concepts"][0]["signature"] == ["Oysters", "Crudo flight"]
+        assert concepts["concepts"][1]["signature"] == ["House ramen special"]
         assert concepts["concepts"][2]["name"] == "Wine Bar, Test Corner"  # "Corner Cellar" is an existing wine bar
         assert concepts["concepts"][1]["evidence"][0] == "Locals rank Ramen #9 here, versus a median outside the top 50 in same-size areas around."
         assert first(events, "baseline")["concepts"][0]["name"] == "Generic Cafe"

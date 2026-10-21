@@ -77,6 +77,7 @@ async def main() -> None:
     parser.add_argument("--minutes", type=int, default=10)
     parser.add_argument("--focus", default="any")
     parser.add_argument("--fresh", action="store_true", help="ignore saved agent answers and ask the model again")
+    parser.add_argument("--pause", type=float, default=0, help="seconds between sites, to stay under free-tier rate limits")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -87,9 +88,13 @@ async def main() -> None:
     answers = AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache and not args.fresh)
     store = RunStore()
     try:
+        first = True
         for preset in PRESETS:
             if args.sites and preset["id"] not in args.sites:
                 continue
+            if not first and args.pause:
+                await asyncio.sleep(args.pause)
+            first = False
             events: list[tuple[str, dict]] = []
 
             async def emit(event: str, data: dict, events: list = events) -> None:

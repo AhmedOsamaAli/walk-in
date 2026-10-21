@@ -151,10 +151,7 @@ def tag_names(entity: dict, family: str) -> set[str]:
 
 
 def keywords(entity: dict) -> list[str]:
-    """Review keywords, without the ones that just repeat the place's name or neighborhood ('zamalek')."""
-    props = entity.get("properties") or {}
-    own = f"{entity.get('name') or ''} {props.get('address') or ''}".lower()
-    return [k["name"] for k in props.get("keywords") or [] if k.get("name") and k["name"].lower() not in own]
+    return [k["name"] for k in scoring.review_keywords(entity)]
 
 
 def compare(place: dict, row: dict) -> dict:

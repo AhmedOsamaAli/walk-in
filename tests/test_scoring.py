@@ -35,6 +35,13 @@ def test_complaint_detection():
     assert not scoring.is_complaint("airlines lounge")
 
 
+def test_review_keywords_that_repeat_the_name_or_address_are_dropped():
+    cafe = place("Zamalek Corner Cafe", keywords=[("zamalek", 9), ("koshari", 4), ("corner", 2), ("rude waiters", 1)])
+    cafe["properties"]["address"] = "26th of July St, Zamalek, Cairo"
+    assert [k["name"] for k in scoring.review_keywords(cafe)] == ["koshari", "rude waiters"]
+    assert scoring.place_card(cafe)["praise"] == ["koshari"]
+
+
 def test_menu_items_with_complaint_words_are_not_complaints():
     assert not scoring.is_complaint("dirty martinis")
     assert not scoring.is_complaint("dirty chai")
@@ -66,8 +73,9 @@ def test_nonprofit_brands_are_not_partners():
 def test_signature_items_follow_the_kind_of_business():
     dna = {"menu": ["Ramen"], "offerings": ["Cocktails", "Live music"], "amenities": ["Massage"], "activities": ["Karaoke"]}
     assert scoring.signature_items("Japanese", dna)[0] == "Ramen"
-    assert scoring.signature_items("Lounge", dna) == ["Cocktails", "Live music", "Karaoke"]
-    assert scoring.signature_items("Spa", dna)[0] == "Cocktails"
+    # Bars lead with offerings and activities; "Cocktails" says nothing about a bar, so specific items come first.
+    assert scoring.signature_items("Lounge", dna) == ["Live music", "Karaoke", "Ramen"]
+    assert scoring.signature_items("Spa", dna)[0] == "Live music"
     generic_first = {"offerings": ["Alcohol", "Beer", "Craft cider", "Trivia night"]}
     assert scoring.signature_items("Brewery", generic_first) == ["Craft cider", "Trivia night", "Alcohol"]
     assert scoring.genre_title("Fine dining restaurant") == "Fine Dining"
@@ -96,7 +104,7 @@ def test_venues_lead_with_what_people_go_there_to_do():
         "activities": ["Dining drinking", "Social community", "Nightlife", "Game day viewing", "Live entertainment"],
     }
     assert scoring.signature_items("Sports Bar", dna, limit=6) == [
-        "Game day viewing", "Live entertainment", "Cocktails", "Buffalo chicken wings", "Sliders",
+        "Game day viewing", "Live entertainment", "Buffalo chicken wings", "Sliders",
     ]
 
 
