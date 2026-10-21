@@ -7,18 +7,21 @@ export interface TitleField {
 }
 
 interface SiteHeaderProps {
+  /** "Site under survey": the first word is set bold. */
+  eyebrow: string;
   label: string;
   fields: readonly TitleField[];
   onNewSurvey: () => void;
 }
 
 /** The site under survey, with the survey's parameters set out like a drawing's title block. */
-export function SiteHeader({ label, fields, onNewSurvey }: SiteHeaderProps) {
+export function SiteHeader({ eyebrow, label, fields, onNewSurvey }: SiteHeaderProps) {
+  const [first = "", ...rest] = eyebrow.split(" ");
   return (
-    <section className="sec site-head" aria-label="Site under survey">
+    <section className="sec site-head" aria-label={eyebrow}>
       <div className="site-row">
         <p className="eyebrow mono">
-          <b>Site</b> under survey
+          <b>{first}</b> {rest.join(" ")}
         </p>
         <button className="ghost mono" type="button" onClick={onNewSurvey}>
           New survey

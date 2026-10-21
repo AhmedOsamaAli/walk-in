@@ -4,17 +4,24 @@ import type {
   ConceptsPayload,
   DonePayload,
   GapRow,
+  ImprovePayload,
+  Intent,
+  PlaceCard,
   StatusPayload,
   StepState,
   SurveyEvent,
   TastePayload,
+  Verdict,
   Walk,
 } from "../api/types";
-import { agentText, replayText, secondsText } from "../lib/format";
+import { agentText, replayText, secondsText, VERDICT_STAMPS } from "../lib/format";
 
-/** The fixed pipeline. Only these steps move the progress bar: the agent's "agent-N" steps vary in number. */
-export const PIPELINE_STEPS = ["walk", "block", "demand", "taste", "gaps", "concepts"] as const;
-const PIPELINE: ReadonlySet<string> = new Set(PIPELINE_STEPS);
+/** Each intent's fixed pipeline. Only these steps move the progress bar: the agent's "agent-N" steps vary in number. */
+export const PIPELINE_STEPS: Record<Intent, readonly string[]> = {
+  explore: ["walk", "block", "demand", "taste", "gaps", "concepts"],
+  open: ["walk", "block", "demand", "taste", "gaps", "verdict", "concepts"],
+  improve: ["place", "walk", "block", "demand", "taste", "gaps", "improve"],
+};
 
 /** Steps of features removed from the product as inaccurate, which older servers still report. */
 const RETIRED_STEPS: ReadonlySet<string> = new Set(["crowd"]);
@@ -43,6 +50,7 @@ export type SurveyStatus = "idle" | "running" | "complete" | "failed";
 export interface SurveyState {
   /** Counts runs, so views can tell a new run from an update of the same one. */
   run: number;
+  intent: Intent;
   status: SurveyStatus;
   /** The event stream is open; it can outlast "complete" while late events arrive. */
   streaming: boolean;
@@ -51,11 +59,15 @@ export interface SurveyState {
   runId: string | null;
   log: LogLine[];
   steps: Step[];
+  /** The owner's place, when improving it. */
+  place: PlaceCard | null;
   catchment: Walk | null;
   block: BlockPayload | null;
   cues: string[] | null;
   gaps: GapRow[] | null;
   openGap: number | null;
+  verdict: Verdict | null;
+  improve: ImprovePayload | null;
   concepts: ConceptsPayload | null;
   baseline: BaselineConcept[];
   taste: TastePayload | null;
@@ -69,17 +81,21 @@ export interface SurveyState {
 
 export const initialSurvey: SurveyState = {
   run: 0,
+  intent: "explore",
   status: "idle",
   streaming: false,
   startedAt: 0,
   runId: null,
   log: [],
   steps: [],
+  place: null,
   catchment: null,
   block: null,
   cues: null,
   gaps: null,
   openGap: null,
+  verdict: null,
+  improve: null,
   concepts: null,
   baseline: [],
   taste: null,
@@ -90,7 +106,7 @@ export const initialSurvey: SurveyState = {
 };
 
 export type SurveyAction =
-  | { type: "start"; startedAt: number }
+  | { type: "start"; startedAt: number; intent?: Intent }
   | { type: "event"; event: SurveyEvent; at: number }
   | { type: "failed"; message: string; at: number }
   | { type: "closed"; at: number }
@@ -150,6 +166,11 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
     }
     case "status":
       return onStatus(state, event.data, at);
+    case "place": {
+      const { place } = event.data;
+      const genre = place.genres?.[0];
+      return note({ ...state, place }, at, "finding", `Found ${place.name ?? "your place"} on Qloo${genre ? ` · ${genre}` : ""}`);
+    }
     case "catchment":
       return { ...state, catchment: event.data };
     case "agent":
@@ -174,6 +195,13 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
     }
     case "taste":
       return { ...state, taste: event.data };
+    case "verdict":
+      return note({ ...state, verdict: event.data }, at, "finding", `Verdict · ${VERDICT_STAMPS[event.data.level]} · ${event.data.headline}`);
+    case "improve": {
+      const data = event.data;
+      const text = "note" in data ? data.note : `${data.moves.length} ${data.moves.length === 1 ? "move" : "moves"} from the places locals love`;
+      return note({ ...state, improve: data }, at, "finding", text);
+    }
     case "concepts":
       return { ...state, concepts: event.data };
     case "baseline":
@@ -198,7 +226,14 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
 export function surveyReducer(state: SurveyState, action: SurveyAction): SurveyState {
   switch (action.type) {
     case "start":
-      return { ...initialSurvey, run: state.run + 1, status: "running", streaming: true, startedAt: action.startedAt };
+      return {
+        ...initialSurvey,
+        run: state.run + 1,
+        intent: action.intent ?? "explore",
+        status: "running",
+        streaming: true,
+        startedAt: action.startedAt,
+      };
     case "event":
       return onEvent(state, action.event, action.at);
     case "failed":
@@ -214,11 +249,12 @@ export function surveyReducer(state: SurveyState, action: SurveyAction): SurveyS
   }
 }
 
-/** Share of the fixed pipeline that is done, from 0 to 1. */
+/** Share of the intent's fixed pipeline that is done, from 0 to 1. */
 export function surveyProgress(state: SurveyState): number {
   if (state.status === "complete") return 1;
-  const done = state.steps.filter((item) => item.state === "done" && PIPELINE.has(item.step)).length;
-  return done / PIPELINE_STEPS.length;
+  const pipeline = PIPELINE_STEPS[state.intent];
+  const done = state.steps.filter((item) => item.state === "done" && pipeline.includes(item.step)).length;
+  return done / pipeline.length;
 }
 
 /** The step to show as current: the latest one still running, else the latest one. */

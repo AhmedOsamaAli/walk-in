@@ -1,18 +1,19 @@
 import { cssVars, cx } from "../lib/css";
-import { SECTIONS, type SectionId } from "../lib/sections";
+import type { Section, SectionId } from "../lib/sections";
 import type { Theme } from "../state/theme";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface TopBarProps {
   /** How full the mark's square is, from 0 to 1: the survey's progress. */
   fill: number;
+  sections: readonly Section[];
   ready: readonly SectionId[];
   current: SectionId | null;
   theme: Theme;
   onToggleTheme: () => void;
 }
 
-export function TopBar({ fill, ready, current, theme, onToggleTheme }: TopBarProps) {
+export function TopBar({ fill, sections, ready, current, theme, onToggleTheme }: TopBarProps) {
   return (
     <header className="bar">
       <a className="mark" href="/" aria-label="Blank Space, start over">
@@ -22,7 +23,7 @@ export function TopBar({ fill, ready, current, theme, onToggleTheme }: TopBarPro
         <span className="mark-word">Blank Space</span>
       </a>
       <nav className="bar-nav mono" aria-label="Survey sections">
-        {SECTIONS.map(({ id, label }) => {
+        {sections.map(({ id, no, label }) => {
           const available = ready.includes(id);
           return (
             <a
@@ -33,7 +34,7 @@ export function TopBar({ fill, ready, current, theme, onToggleTheme }: TopBarPro
               aria-current={current === id ? "location" : undefined}
               tabIndex={available ? undefined : -1}
             >
-              {label}
+              {no} {label}
             </a>
           );
         })}

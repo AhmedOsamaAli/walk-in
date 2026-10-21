@@ -195,4 +195,71 @@ describe("surveyReducer", () => {
     const state = surveyReducer(play(started, [done, 1]), { type: "reset" });
     expect(state).toEqual({ ...initialSurvey, run: 1 });
   });
+
+  it("keeps the verdict on the owner's idea and logs its stamp", () => {
+    const opening = surveyReducer(initialSurvey, { type: "start", startedAt: 0, intent: "open" });
+    const verdict = {
+      query: "bakery",
+      found: true,
+      genre: "Bakery",
+      level: "weak" as const,
+      headline: "Bakery is a weak gap here (#9 of 9): locals rank it only #21 among place types.",
+      position: 9,
+      of: 9,
+      evidence: ["2 bakeries inside the 10-minute walk."],
+    };
+    const state = play(opening, [{ event: "verdict", data: verdict }, 4]);
+    expect(state.intent).toBe("open");
+    expect(state.verdict).toEqual(verdict);
+    expect(state.latest).toBe(`Verdict · Weak · ${verdict.headline}`);
+  });
+
+  it("keeps the owner's place and the moves when improving it", () => {
+    const improving = surveyReducer(initialSurvey, { type: "start", startedAt: 0, intent: "improve" });
+    const place = { id: "p1", name: "Suerte", genres: ["Mexican"], lat: 30.26, lon: -97.72 };
+    const improve = {
+      place,
+      genre: "Mexican",
+      moves: [{ title: "Own the high end", why: "Few of the Mexican places locals love are priced like Suerte." }],
+      experience: null,
+      comparison: {
+        peers: 10,
+        peers_label: "places locals love",
+        comparable: false,
+        peer_names: ["Tamale House"],
+        rating: { place: 4.6, peers: 4.3 },
+        price: { place: 3, peers: 1 },
+        hours: { place: null, peers: null },
+        offer: {},
+        known_for: ["suadero tacos"],
+        complaints: [],
+        peers_known_for: ["margaritas"],
+      },
+    };
+    const state = play(
+      improving,
+      [{ event: "place", data: { place, site: { lat: 30.26, lon: -97.72, label: "Suerte" } } }, 0.5],
+      [{ event: "improve", data: improve }, 6],
+    );
+    expect(state.place?.name).toBe("Suerte");
+    expect(state.improve).toEqual(improve);
+    expect(state.log.map((line) => line.text)).toEqual(["Found Suerte on Qloo · Mexican", "1 move from the places locals love"]);
+  });
+
+  it("logs the server's note when a place cannot be compared", () => {
+    const note = "Qloo has no category for this place, so there is nothing to compare.";
+    const state = play(started, [{ event: "improve", data: { note } }, 3]);
+    expect(state.improve).toEqual({ note });
+    expect(state.latest).toBe(note);
+  });
+
+  it("measures progress on the intent's own pipeline", () => {
+    const steps = (state: SurveyState, names: string[]) =>
+      play(state, ...names.map((name, k): [SurveyEvent, number] => [status(name, "done"), k]));
+    const improving = surveyReducer(initialSurvey, { type: "start", startedAt: 0, intent: "improve" });
+    expect(surveyProgress(steps(improving, ["place", "walk", "block", "demand", "taste", "gaps"]))).toBeCloseTo(6 / 7);
+    const opening = surveyReducer(initialSurvey, { type: "start", startedAt: 0, intent: "open" });
+    expect(surveyProgress(steps(opening, ["walk", "block", "demand", "taste", "gaps", "verdict"]))).toBeCloseTo(6 / 7);
+    expect(surveyProgress(steps(started, ["walk", "block", "demand", "taste", "gaps", "agent-0"]))).toBeCloseTo(5 / 6);
+  });
 });

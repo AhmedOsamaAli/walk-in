@@ -3,6 +3,9 @@
 export type Focus = "any" | "food_drink" | "retail" | "leisure";
 export type WalkMinutes = 5 | 10 | 15;
 export type LatLon = [number, number];
+/** What the owner wants: the block's best businesses, a verdict on their own idea, or how to improve their place. */
+export type Intent = "explore" | "open" | "improve";
+export type Kitchen = "full" | "light" | "none";
 
 export interface Preset {
   id: string;
@@ -16,6 +19,18 @@ export interface GeocodeResult {
   label: string | null;
   lat: number;
   lon: number;
+}
+
+/** A place on Qloo near the pin, found by name (GET /api/places), for "improve my place". */
+export interface PlaceHit {
+  id: string;
+  name: string;
+  address?: string | null;
+  genres?: string[];
+  rating?: number | null;
+  lat: number;
+  lon: number;
+  distance_m?: number | null;
 }
 
 export interface Walk {
@@ -34,7 +49,10 @@ export interface Standing {
 }
 
 export interface PlaceCard {
+  id?: string | null;
   name: string | null;
+  address?: string | null;
+  image?: string | null;
   rating?: number | null;
   price_level?: number | null;
   genres?: string[];
@@ -109,6 +127,8 @@ export interface PriceEvidence {
 export interface UnitFit {
   fits: boolean;
   reason: string | null;
+  /** The kitchen the category needs. */
+  needs?: Kitchen;
   capacity_text?: string | null;
 }
 
@@ -149,8 +169,13 @@ export interface HeatCell {
 }
 
 export interface TasteEntity {
+  id?: string | null;
   name: string | null;
   image?: string | null;
+  /** Release year of a film or show. */
+  year?: number | null;
+  /** The year an artist started. */
+  since?: number | null;
 }
 
 export interface TastePayload {
@@ -158,6 +183,87 @@ export interface TastePayload {
   distinctive_brands?: TasteEntity[];
   artists?: TasteEntity[];
   distinctive_artists?: TasteEntity[];
+  distinctive_movies?: TasteEntity[];
+  distinctive_tv?: TasteEntity[];
+  distinctive_podcasts?: TasteEntity[];
+}
+
+/** One item of an experience plan: an artist to play, a film or show to screen, a podcast to host. */
+export interface ExperienceCard extends TasteEntity {
+  /** "classic" for an established artist or an older title, "new" for a recent one. */
+  era?: "classic" | "new";
+}
+
+/** What to play, screen and host, from what people within 1.5 km over-index on. */
+export interface ExperiencePlan {
+  soundtrack?: ExperienceCard[];
+  screen?: ExperienceCard[];
+  talks?: ExperienceCard[];
+  basis?: string;
+  licensing?: string | null;
+}
+
+export type VerdictLevel = "strong" | "possible" | "weak" | "thin" | "misfit" | "unknown";
+
+/** How the business the owner wants to open ranks among the site's gaps. */
+export interface Verdict {
+  query: string;
+  found: boolean;
+  genre?: string;
+  level: VerdictLevel;
+  headline: string;
+  position?: number;
+  of?: number;
+  gap_score?: number;
+  evidence: string[];
+  row?: GapRow;
+}
+
+/** What the place and the places locals love in its category have; `missing` counts the places that offer it. */
+export interface OfferDiff {
+  missing: { name: string; places: number }[];
+  shared: string[];
+  own: string[];
+}
+
+export interface Comparison {
+  peers: number;
+  /** "places locals love" or "places locals love at a similar price". */
+  peers_label: string;
+  /** False when few peers are priced like the place, so their offer and hours are a weak guide. */
+  comparable: boolean;
+  peer_names: string[];
+  rating: { place: number | null; peers: number | null };
+  price: { place: number | null; peers: number | null };
+  hours: { place: Record<string, string> | null; peers: Record<string, string> | null };
+  offer: Record<string, OfferDiff>;
+  known_for: string[];
+  /** The complaint themes in the place's own reviews. */
+  complaints: TopicGroup[];
+  peers_known_for: string[];
+  standing?: Standing | null;
+}
+
+export interface Move {
+  title: string;
+  why: string;
+}
+
+/** The owner's place against the places locals love in its category. */
+export interface Improvement {
+  place: PlaceCard;
+  genre: string;
+  comparison: Comparison;
+  moves: Move[];
+  experience: ExperiencePlan | null;
+  row?: GapRow;
+}
+
+export type ImprovePayload = Improvement | { note: string };
+
+export interface PlacePayload {
+  place: PlaceCard;
+  site: { lat: number; lon: number; label: string };
 }
 
 /** Lists written by the agent are cleaned by the server but not guaranteed to be lists, hence `unknown`. */
@@ -227,6 +333,7 @@ export interface DonePayload {
 export type SurveyEvent =
   | { event: "run"; data: RunPayload }
   | { event: "status"; data: StatusPayload }
+  | { event: "place"; data: PlacePayload }
   | { event: "catchment"; data: Walk }
   | { event: "agent"; data: AgentPayload }
   | { event: "replay"; data: ReplayPayload }
@@ -236,6 +343,8 @@ export type SurveyEvent =
   | { event: "demand"; data: DemandPayload }
   | { event: "gaps"; data: { rows?: GapRow[] } }
   | { event: "taste"; data: TastePayload }
+  | { event: "verdict"; data: Verdict }
+  | { event: "improve"; data: ImprovePayload }
   | { event: "concepts"; data: ConceptsPayload }
   | { event: "baseline"; data: { concepts?: BaselineConcept[] } }
   | { event: "notice"; data: { message: string } }
@@ -249,6 +358,14 @@ export interface RunRequest {
   focus: Focus;
   notes: string;
   minutes: WalkMinutes;
+  intent: Intent;
+  /** The business to open (intent "open"). */
+  business?: string;
+  /** The owner's place on Qloo (intent "improve"). */
+  placeId?: string;
+  sizeM2?: number;
+  kitchen?: Kitchen;
+  outdoor?: boolean;
 }
 
 export interface Interior {
@@ -274,6 +391,11 @@ export interface Design {
   price_basis?: string;
   hours?: string | null;
   hours_basis?: string | null;
+  /** "about 27–32 seated guests at most", when the owner gave the unit's size. */
+  capacity?: string | null;
+  capacity_basis?: string | null;
+  unit?: { size: string; kitchen: string; outdoor_space: string } | null;
+  experience?: ExperiencePlan | null;
   music?: { direction?: string; artists?: unknown } | null;
   partners?: Partner[] | null;
   dna?: Record<string, unknown> | null;

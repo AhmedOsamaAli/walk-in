@@ -1,4 +1,14 @@
-import type { Design, GeocodeResult, HeatCell, Preset, RenderResult, RunRequest, Walk, WalkMinutes } from "./types";
+import type {
+  Design,
+  GeocodeResult,
+  HeatCell,
+  PlaceHit,
+  Preset,
+  RenderResult,
+  RunRequest,
+  Walk,
+  WalkMinutes,
+} from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -46,6 +56,8 @@ function post(body: unknown): RequestInit {
 export const api = {
   presets: () => request<Preset[]>("/api/presets"),
   geocode: (text: string) => request<GeocodeResult[]>(`/api/geocode?${query({ q: text })}`),
+  places: (text: string, lat: number, lon: number, signal?: AbortSignal) =>
+    request<PlaceHit[]>(`/api/places?${query({ q: text, lat: lat.toFixed(6), lon: lon.toFixed(6) })}`, { signal }),
   catchment: (lat: number, lon: number, minutes: WalkMinutes, signal?: AbortSignal) =>
     request<Walk>(`/api/catchment?${query({ lat, lon, minutes })}`, { signal }),
   heatmap: (lat: number, lon: number, tag: string) =>
@@ -55,17 +67,30 @@ export const api = {
     request<RenderResult>("/api/render", post({ run_id: runId, index, shot })),
 };
 
-/** Opens a survey's event stream; read it with `readEvents`. */
-export async function openRun(run: RunRequest, signal: AbortSignal): Promise<ReadableStream<Uint8Array<ArrayBuffer>>> {
-  const params = query({
+/** The survey's query: what the owner wants, and the unit when they described it. */
+export function runParams(run: RunRequest): string {
+  const params: Record<string, string | number> = {
     lat: run.lat.toFixed(6),
     lon: run.lon.toFixed(6),
     label: run.label,
     focus: run.focus,
     notes: run.notes,
     minutes: run.minutes,
-  });
-  const response = await fetch(`/api/run?${params}`, { signal, headers: { Accept: "text/event-stream" } });
+    intent: run.intent,
+  };
+  if (run.intent === "open" && run.business) params.business = run.business;
+  if (run.intent === "improve" && run.placeId) params.place_id = run.placeId;
+  if (run.intent !== "improve") {
+    if (run.sizeM2 !== undefined) params.size_m2 = Math.round(run.sizeM2 * 10) / 10;
+    if (run.kitchen) params.kitchen = run.kitchen;
+    if (run.outdoor !== undefined) params.outdoor = String(run.outdoor);
+  }
+  return query(params);
+}
+
+/** Opens a survey's event stream; read it with `readEvents`. */
+export async function openRun(run: RunRequest, signal: AbortSignal): Promise<ReadableStream<Uint8Array<ArrayBuffer>>> {
+  const response = await fetch(`/api/run?${runParams(run)}`, { signal, headers: { Accept: "text/event-stream" } });
   if (!response.ok) throw new ApiError(await errorText(response), response.status);
   if (!response.body) throw new Error("The server sent no survey stream.");
   return response.body;

@@ -3,6 +3,7 @@ import { messageOf } from "../api/client";
 import type { Concept, Design } from "../api/types";
 import { letter, list, priceLabel } from "../lib/format";
 import { loadDesign, shotsOf } from "../state/designs";
+import { ExperiencePlanView } from "./ExperiencePlan";
 import { Plate } from "./Plate";
 import { RenderFrame } from "./RenderFrame";
 
@@ -10,6 +11,17 @@ interface SheetProps {
   runId: string;
   index: number;
   concept: Concept;
+}
+
+/** "60 m² (646 ft²), a light-prep kitchen, no outdoor space": only what the owner said. */
+function unitText(unit: Design["unit"]): string | null {
+  if (!unit) return null;
+  const parts = [
+    unit.size !== "unknown" ? unit.size : null,
+    unit.kitchen !== "unknown" ? unit.kitchen : null,
+    unit.outdoor_space === "yes" ? "outdoor space" : unit.outdoor_space === "none" ? "no outdoor space" : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
 }
 
 function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
@@ -47,6 +59,8 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
     ["Seating", interior.seating, null],
     ["Price", priced || (priceBasis ? "Not listed" : null), priceBasis],
     ["Hours", design.hours, design.hours_basis],
+    ["Unit", unitText(design.unit), null],
+    ["Capacity", design.capacity, design.capacity_basis],
   ];
   const spec = rows.filter((row): row is [string, string, string | null | undefined] => Boolean(row[1]));
   const offer = list(design.offer);
@@ -92,7 +106,13 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
             </ol>
           </>
         ) : null}
-        {artists.length || direction ? (
+        {design.experience ? (
+          <>
+            <h3 className="d-h">Experience</h3>
+            {direction ? <p className="d-p">{direction}</p> : null}
+            <ExperiencePlanView plan={design.experience} />
+          </>
+        ) : artists.length || direction ? (
           <>
             <h3 className="d-h">Sound</h3>
             {direction ? <p className="d-p">{direction}</p> : null}

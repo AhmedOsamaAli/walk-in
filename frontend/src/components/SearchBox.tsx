@@ -12,10 +12,11 @@ interface Results {
 
 interface SearchBoxProps {
   onPick: (site: Site) => void;
+  placeholder?: string | undefined;
 }
 
 /** Address search: results appear as you type; Enter picks the highlighted result, or the first one. */
-export function SearchBox({ onPick }: SearchBoxProps) {
+export function SearchBox({ onPick, placeholder = "Address or neighborhood" }: SearchBoxProps) {
   const listId = useId();
   const form = useRef<HTMLFormElement>(null);
   const timer = useRef(0);
@@ -122,7 +123,7 @@ export function SearchBox({ onPick }: SearchBoxProps) {
       <input
         id={`${listId}-input`}
         type="search"
-        placeholder="Address or neighborhood"
+        placeholder={placeholder}
         value={text}
         role="combobox"
         aria-expanded={showList}

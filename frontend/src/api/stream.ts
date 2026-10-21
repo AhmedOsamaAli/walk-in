@@ -56,6 +56,7 @@ export async function* readEvents(stream: ReadableStream<Uint8Array<ArrayBuffer>
 const SURVEY_EVENTS: ReadonlySet<string> = new Set<SurveyEvent["event"]>([
   "run",
   "status",
+  "place",
   "catchment",
   "agent",
   "replay",
@@ -65,6 +66,8 @@ const SURVEY_EVENTS: ReadonlySet<string> = new Set<SurveyEvent["event"]>([
   "demand",
   "gaps",
   "taste",
+  "verdict",
+  "improve",
   "concepts",
   "baseline",
   "notice",

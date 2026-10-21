@@ -22,7 +22,7 @@ export function useSurvey(): Survey {
     controller.current = abort;
     const startedAt = performance.now();
     const at = () => (performance.now() - startedAt) / 1000;
-    dispatch({ type: "start", startedAt });
+    dispatch({ type: "start", startedAt, intent: run.intent });
     void (async () => {
       try {
         const stream = await openRun(run, abort.signal);

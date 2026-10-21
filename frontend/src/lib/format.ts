@@ -1,4 +1,14 @@
-import type { AgentPayload, Focus, GapRow, ReplayPayload, Standing, TopicGroup } from "../api/types";
+import type {
+  AgentPayload,
+  Focus,
+  GapRow,
+  Intent,
+  Kitchen,
+  ReplayPayload,
+  Standing,
+  TopicGroup,
+  VerdictLevel,
+} from "../api/types";
 
 export const FOCUS_LABELS: Record<Focus, string> = {
   any: "Any business",
@@ -6,6 +16,57 @@ export const FOCUS_LABELS: Record<Focus, string> = {
   retail: "Retail",
   leisure: "Leisure",
 };
+
+/** The three things an owner can ask, with what each survey does and its one action. */
+export const INTENTS: Record<Intent, { label: string; does: string; action: string }> = {
+  explore: {
+    label: "Find what fits",
+    does: "Ranks what the block is missing and designs the three businesses with the strongest evidence.",
+    action: "Survey this site",
+  },
+  open: {
+    label: "Open a business",
+    does: "Judges the business you have in mind against everything the block is missing, then designs it to win here.",
+    action: "Judge this idea",
+  },
+  improve: {
+    label: "Improve my place",
+    does: "Compares the place you run with the ones locals love in its category and lists what to change.",
+    action: "Compare my place",
+  },
+};
+
+export const KITCHEN_LABELS: Record<Kitchen, string> = {
+  full: "Full kitchen with extraction",
+  light: "Light prep, no hood",
+  none: "No kitchen",
+};
+
+/** The verdict on the owner's idea, as its stamp reads. */
+export const VERDICT_STAMPS: Record<VerdictLevel, string> = {
+  strong: "Strong fit",
+  possible: "Possible",
+  weak: "Weak",
+  thin: "Thin data",
+  misfit: "Doesn't fit",
+  unknown: "Not on Qloo",
+};
+
+export const SQ_FT_M2 = 0.092903;
+
+/** The unit's floor area in m², from what the owner typed in m² or ft²; null when empty or outside 10–2000 m². */
+export function floorArea(text: string, unit: "m2" | "ft2"): number | null {
+  const value = Number(text.replace(",", "."));
+  if (!text.trim() || !Number.isFinite(value) || value <= 0) return null;
+  const m2 = unit === "ft2" ? value * SQ_FT_M2 : value;
+  return m2 >= 10 && m2 <= 2000 ? Math.round(m2 * 10) / 10 : null;
+}
+
+/** "650 m" or "1.2 km". */
+export function distanceText(meters: number | null | undefined): string {
+  if (meters == null) return "";
+  return meters < 950 ? `${Math.round(meters / 10) * 10} m` : `${(meters / 1000).toFixed(1)} km`;
+}
 
 export const fmtLat = (lat: number) => `${lat >= 0 ? "N" : "S"} ${Math.abs(lat).toFixed(4)}`;
 export const fmtLon = (lon: number) => `${lon >= 0 ? "E" : "W"} ${Math.abs(lon).toFixed(4)}`;

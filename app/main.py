@@ -178,7 +178,8 @@ async def run(
 
     async def produce() -> None:
         tasks = [pipeline.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit, services.answers)]
-        if services.llm.enabled:
+        # The no-data baseline answers "what should open here?", so it only stands next to concepts.
+        if services.llm.enabled and site.intent != "improve":
             async def baseline() -> None:
                 try:
                     await emit("baseline", {"concepts": await concepts.baseline_concepts(services.llm, site, services.answers)})

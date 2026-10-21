@@ -33,16 +33,17 @@ function Baseline({ items }: { items: BaselineConcept[] }) {
 }
 
 interface ConceptsSectionProps {
+  no: string;
   data: ConceptsPayload;
   baseline: BaselineConcept[];
   onOpen: (index: number, opener: HTMLElement | null) => void;
 }
 
-export function ConceptsSection({ data, baseline, onOpen }: ConceptsSectionProps) {
+export function ConceptsSection({ no, data, baseline, onOpen }: ConceptsSectionProps) {
   const concepts = data.concepts ?? [];
   return (
     <section id="s-concepts" className="sec reveal">
-      <SectionHead no="04" title="What it should become" note={conceptsNote(data)} />
+      <SectionHead no={no} title="What it should become" note={conceptsNote(data)} />
       {data.caution && concepts.length ? <p className="concepts-caution">{data.caution}</p> : null}
       {concepts.length ? (
         <div className="posters">
