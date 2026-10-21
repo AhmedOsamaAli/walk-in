@@ -58,7 +58,7 @@ class Settings:
     # Most renders the server makes per day (UTC), to cap spending on a public demo; cached renders are free.
     image_daily_limit: int = field(default_factory=lambda: int(_env_float("IMAGE_DAILY_LIMIT") or 60))
     cloudflare_image_model: str = field(
-        default_factory=lambda: _env("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell")
+        default_factory=lambda: _env("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-2-klein-4b")
     )
     # Optional: a registered AI Horde key (aihorde.net/register) earns priority; without one, renders queue anonymously.
     ai_horde_api_key: str = field(default_factory=lambda: _env("AI_HORDE_API_KEY"))

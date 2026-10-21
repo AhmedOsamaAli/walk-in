@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 import httpx
@@ -326,12 +327,22 @@ async def geocode(request: Request, q: str = Query(..., min_length=3, max_length
 
 
 class RevalidatingStaticFiles(StaticFiles):
-    """Static files that browsers must revalidate, so a redeploy is picked up immediately."""
+    """Static files that browsers must revalidate, so a redeploy is picked up immediately.
+
+    Vite's hashed bundles under assets/ never change, so those are cached for a year.
+    """
 
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        immutable = path.startswith("assets/") and response.status_code == 200
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable" if immutable else "no-cache"
         return response
+
+
+def web_root() -> Path:
+    """The React build (npm run build in frontend/) when it exists, otherwise the original static page."""
+    built = ROOT / "frontend" / "dist"
+    return built if (built / "index.html").exists() else ROOT / "web"
 
 
 def create_app(services_factory: Callable[[], Services] = default_services) -> FastAPI:
@@ -361,7 +372,7 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
         return response
 
     app.include_router(router)
-    app.mount("/", RevalidatingStaticFiles(directory=ROOT / "web", html=True), name="web")
+    app.mount("/", RevalidatingStaticFiles(directory=web_root(), html=True), name="web")
     return app
 
 

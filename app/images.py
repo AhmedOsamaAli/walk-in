@@ -2,7 +2,8 @@
 
 Providers, tried in the order IMAGE_PROVIDER lists them (e.g. "cloudflare,horde"):
 - cloudflare: Workers AI, free daily allowance of 10,000 neurons (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN).
-  FLUX.1 [schnell] makes square images (~130 a day free); FLUX.2 [klein] 4B takes a size (~100 a day free).
+  FLUX.2 [klein] 4B (the default) takes a size and spells signs right (~100 a day free, ~30 s each); FLUX.1 [schnell]
+  is faster but square, with garbled lettering (~130 a day free).
 - horde: AI Horde, a free, open-source network of volunteer GPUs (github.com/Haidra-Org/AI-Horde). No key needed;
   renders wait in a public queue, typically one to three minutes.
 - gemini: Google's image models (gemini-3.1-flash-image, gemini-3-pro-image) with a Gemini API key. They render
@@ -20,7 +21,7 @@ import httpx
 
 log = logging.getLogger("blankspace")
 
-FLUX_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+FLUX_MODEL = "@cf/black-forest-labs/flux-2-klein-4b"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image"
 HORDE_BASE_URL = "https://aihorde.net/api/v2"

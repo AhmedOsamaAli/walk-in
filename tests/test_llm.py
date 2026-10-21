@@ -345,7 +345,7 @@ def test_the_chain_falls_back_to_the_next_provider():
     cloudflare = ImageGen("cloudflare", "account", "token", http_client=httpx.AsyncClient(transport=httpx.MockTransport(broken)))
     horde = ImageGen("horde", http_client=httpx.AsyncClient(transport=horde_transport([], [{"done": True}])), poll_s=0)
     chain = ImageChain([ImageGen("gemini"), cloudflare, horde])  # gemini has no key, so it is skipped
-    assert chain.enabled and chain.provider == "cloudflare,horde" and chain.model == "flux-1-schnell"
+    assert chain.enabled and chain.provider == "cloudflare,horde" and chain.model == "flux-2-klein-4b"
     image, model = asyncio.run(chain.render("a cafe"))
     assert image.startswith("data:image/webp") and model.endswith("on AI Horde")
 
@@ -390,7 +390,8 @@ def test_cloudflare_images_return_a_data_url():
         assert "flux-1-schnell" in str(request.url)
         return httpx.Response(200, json={"success": True, "result": {"image": "QUJD"}})
 
-    images = ImageGen("cloudflare", "account", "token", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    images = ImageGen("cloudflare", "account", "token", model="@cf/black-forest-labs/flux-1-schnell",
+                      http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     assert images.enabled
     assert asyncio.run(images.generate("a cafe interior")) == "data:image/jpeg;base64,QUJD"
     assert not ImageGen("cloudflare", "", "").enabled
