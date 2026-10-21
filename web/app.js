@@ -1200,13 +1200,15 @@ function designHtml(concept, design, index) {
 }
 
 function rendersHtml(design, name) {
+  const volunteer = /AI Horde/.test(design.renders?.model || "");
+  const wait = volunteer ? "on free volunteer GPUs · 1–5 min" : "";
   const frames = shotsOf(design)
     .map(
       (shot) => `
       <figure class="render loading" data-shot="${esc(shot.kind)}">
         <div class="render-frame">
           <img alt="${esc(shot.label)}: AI render of ${esc(name)}" />
-          <span class="render-wait mono">Rendering ${esc(shot.label.toLowerCase())}</span>
+          <span class="render-wait mono">Rendering ${esc(shot.label.toLowerCase())}${wait ? ` ${esc(wait)}` : ""}</span>
         </div>
         <figcaption class="mono"><span>${esc(shot.label)}</span><span class="render-credit">AI render</span></figcaption>
       </figure>`,
@@ -1215,16 +1217,23 @@ function rendersHtml(design, name) {
   return `<div class="renders">${frames}</div>`;
 }
 
-// Renders are slow (10–60 s), so they load after the sheet's text, one request per shot, shared across reopenings.
+// While the free volunteer queue is busy the server answers "queued" and keeps the job's place, so asking again resumes it.
+async function requestRender(index, kind, attempt = 0) {
+  const result = await api("/api/render", { method: "POST", body: JSON.stringify({ run_id: state.runId, index, shot: kind }) });
+  return result.queued && attempt < 3 ? requestRender(index, kind, attempt + 1) : result;
+}
+
+// Renders are slow (seconds to minutes), so they load after the sheet's text, one request per shot, shared across reopenings.
 function loadRenders(design, index, token) {
   if (!design.renders?.enabled) return;
   for (const shot of shotsOf(design)) {
     const key = `${state.runId}:${index}:${shot.kind}`;
     let pending = state.renders.get(key);
     if (!pending) {
-      pending = api("/api/render", { method: "POST", body: JSON.stringify({ run_id: state.runId, index, shot: shot.kind }) });
+      pending = requestRender(index, shot.kind);
       state.renders.set(key, pending);
-      pending.catch(() => state.renders.delete(key));
+      // Anything but an image can be tried again by reopening the sheet.
+      pending.then((result) => !safeUrl(result?.image) && state.renders.delete(key), () => state.renders.delete(key));
     }
     pending.then(
       (result) => showRender(shot.kind, token, result),
@@ -1233,18 +1242,28 @@ function loadRenders(design, index, token) {
   }
 }
 
-function showRender(kind, token, { image, model, error }) {
+function showRender(kind, token, { image, model, error, detail }) {
   if (token !== designToken || !dialog.open) return;
   const figure = $(`.render[data-shot="${kind}"]`, $("#design-body"));
   if (!figure) return;
   const url = safeUrl(image);
   if (!url) {
     figure.classList.replace("loading", "failed");
-    $(".render-wait", figure).textContent = error || "No render this time";
+    $(".render-wait", figure).textContent = error || (detail ? `${detail} Reopen the sheet in a few minutes.` : "No render this time");
     return;
   }
   const img = $("img", figure);
-  img.addEventListener("load", () => figure.classList.replace("loading", "ready"), { once: true });
+  img.addEventListener(
+    "load",
+    () => {
+      // Some free models only make square images: the frame takes the image's shape instead of cropping it.
+      if (img.naturalWidth && img.naturalHeight) {
+        $(".render-frame", figure).style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+      }
+      figure.classList.replace("loading", "ready");
+    },
+    { once: true },
+  );
   img.src = url;
   if (model) $(".render-credit", figure).textContent = `AI render · ${model}`;
 }

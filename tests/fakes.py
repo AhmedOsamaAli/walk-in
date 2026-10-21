@@ -265,5 +265,8 @@ class FakeImages:
             raise RuntimeError("the image model is down")
         return self.TINY_PNG
 
+    async def render(self, prompt: str, aspect: str = "16:9") -> tuple[str | None, str | None]:
+        return await self.generate(prompt, aspect), self.model
+
     async def aclose(self) -> None:
         pass

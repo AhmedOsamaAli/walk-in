@@ -238,7 +238,7 @@ def test_gemini_renders_wide_images_with_the_agent_key():
     assert body["generationConfig"] == {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": "16:9"}}
 
     shared = build_images(Settings(image_provider="gemini", llm_api_key="agent-key", image_api_key=""))
-    assert shared.enabled and shared._api_key == "agent-key"
+    assert shared.enabled and shared.providers[0]._api_key == "agent-key"
     assert not build_images(Settings(image_provider="openai", llm_api_key="agent-key", image_api_key="")).enabled
 
 
@@ -264,6 +264,124 @@ def test_openai_image_sizes_follow_the_model():
     assert openai_size("gpt-image-1", "16:9") == "1536x1024"
     assert openai_size("gpt-image-1", "9:16") == "1024x1536"
     assert openai_size("dall-e-3", "16:9") == "1024x1024"
+
+
+def horde_transport(seen: list, states: list[dict], generations: list[dict] | None = None) -> httpx.MockTransport:
+    """A fake AI Horde: accepts a job, reports the given check states in turn, then serves the result."""
+    checks = states  # shared, so a test can change what the Horde reports between calls
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, dict(request.headers), request.content))
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/generate/async"):
+            return httpx.Response(202, json={"id": "job-1", "kudos": 6})
+        if path.endswith("/generate/check/job-1"):
+            return httpx.Response(200, json=checks.pop(0) if len(checks) > 1 else checks[0])
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"cancelled": True})
+        if path.endswith("/generate/status/job-1"):
+            return httpx.Response(200, json={"generations": generations or [{"img": "https://r2.test/image.webp"}]})
+        if request.url.host == "r2.test":
+            return httpx.Response(200, content=b"RIFF....WEBP", headers={"content-type": "image/webp"})
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def test_ai_horde_renders_without_a_key():
+    seen: list = []
+    transport = horde_transport(seen, [{"done": False, "queue_position": 3}, {"done": True}])
+    images = ImageGen("horde", http_client=httpx.AsyncClient(transport=transport), poll_s=0)
+    assert images.enabled and images.model == "Flux.1-Schnell fp8 (Compact) on AI Horde"
+    image = asyncio.run(images.generate("a live music lounge", "16:9"))
+    assert image.startswith("data:image/webp;base64,")
+    method, path, headers, content = seen[0]
+    body = json.loads(content)
+    assert (method, path) == ("POST", "/api/v2/generate/async")
+    assert headers["apikey"] == "0000000000" and headers["client-agent"].startswith("blank-space:")
+    assert body["models"] == ["Flux.1-Schnell fp8 (Compact)"] and body["censor_nsfw"] is True
+    assert (body["params"]["width"], body["params"]["height"]) == (1024, 576)
+
+
+def test_ai_horde_keeps_its_place_in_a_long_queue_and_resumes_it():
+    seen: list = []
+    states = [{"done": False, "queue_position": 300}]
+    transport = horde_transport(seen, states)
+    images = ImageGen("horde", http_client=httpx.AsyncClient(transport=transport), poll_s=0, wait_s=0)
+    with pytest.raises(TimeoutError):
+        asyncio.run(images.generate("a cafe"))
+    states[0] = {"done": True}
+    assert asyncio.run(images.generate("a cafe")).startswith("data:image/webp")
+    requests = [(m, p) for m, p, _, _ in seen]
+    assert requests.count(("POST", "/api/v2/generate/async")) == 1  # the retry resumed the queued job
+    assert ("DELETE", "/api/v2/generate/status/job-1") not in requests
+
+
+def test_ai_horde_leaves_the_queue_when_the_server_stops_waiting():
+    seen: list = []
+    images = ImageGen("horde", http_client=httpx.AsyncClient(transport=horde_transport(seen, [{"done": False}])),
+                      poll_s=0.01, wait_s=60)
+
+    async def stop_early():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(images.generate("a cafe"), 0.2)
+
+    asyncio.run(stop_early())
+    assert ("DELETE", "/api/v2/generate/status/job-1") in [(m, p) for m, p, _, _ in seen]
+
+
+def test_ai_horde_censored_results_count_as_no_image():
+    transport = horde_transport([], [{"done": True}], generations=[{"img": "https://r2.test/x.webp", "censored": True}])
+    images = ImageGen("horde", http_client=httpx.AsyncClient(transport=transport), poll_s=0)
+    assert asyncio.run(images.generate("a cafe")) is None
+
+
+def test_the_chain_falls_back_to_the_next_provider():
+    from app.images import ImageChain
+
+    def broken(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"errors": [{"code": 4006, "message": "daily free allocation used"}]})
+
+    cloudflare = ImageGen("cloudflare", "account", "token", http_client=httpx.AsyncClient(transport=httpx.MockTransport(broken)))
+    horde = ImageGen("horde", http_client=httpx.AsyncClient(transport=horde_transport([], [{"done": True}])), poll_s=0)
+    chain = ImageChain([ImageGen("gemini"), cloudflare, horde])  # gemini has no key, so it is skipped
+    assert chain.enabled and chain.provider == "cloudflare,horde" and chain.model == "flux-1-schnell"
+    image, model = asyncio.run(chain.render("a cafe"))
+    assert image.startswith("data:image/webp") and model.endswith("on AI Horde")
+
+    only_broken = ImageChain([ImageGen("cloudflare", "a", "t", http_client=httpx.AsyncClient(transport=httpx.MockTransport(broken)))])
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(only_broken.render("a cafe"))
+    assert asyncio.run(ImageChain([ImageGen("gemini")]).render("a cafe")) == (None, None)
+
+
+def test_cloudflare_flux2_sends_the_size_as_a_form():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((str(request.url), request.headers["content-type"], request.content))
+        return httpx.Response(200, json={"success": True, "result": {"image": "iVBORw0KGgoAAAANSUhEUg"}})
+
+    images = ImageGen("cloudflare", "account", "token", model="@cf/black-forest-labs/flux-2-klein-4b",
+                      http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert images.model == "flux-2-klein-4b"
+    assert asyncio.run(images.generate("a cafe", "16:9")) == "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg"
+    url, content_type, content = seen[0]
+    assert url.endswith("/accounts/account/ai/run/@cf/black-forest-labs/flux-2-klein-4b")
+    assert content_type.startswith("multipart/form-data")
+    assert b'name="width"\r\n\r\n1280' in content and b'name="height"\r\n\r\n720' in content
+
+
+def test_image_providers_are_chained_from_settings():
+    from app.config import Settings
+    from app.images import sized
+    from app.providers import build_images
+
+    chain = build_images(Settings(image_provider="cloudflare, horde,cloudflare", cloudflare_account_id="", cloudflare_api_token=""))
+    assert [p.provider for p in chain.providers] == ["cloudflare", "horde"]
+    assert chain.enabled and chain.provider == "horde"  # Cloudflare waits for its keys
+    assert sized("16:9", 1024, 64) == (1024, 576) and sized("9:16", 1280, 16) == (720, 1280)
+    assert sized("bad", 1024, 64) == (1024, 1024)
 
 
 def test_cloudflare_images_return_a_data_url():

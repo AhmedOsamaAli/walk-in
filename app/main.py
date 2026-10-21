@@ -10,7 +10,7 @@ from typing import Callable, Literal
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,7 +19,7 @@ from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
 from .geocode import Geocoder
-from .images import ImageGen, explain_failure
+from .images import Images, explain_failure
 from .llm import LLM
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
@@ -67,7 +67,7 @@ class Services:
     qloo: QlooClient
     walker: CatchmentService
     llm: LLM
-    images: ImageGen
+    images: Images
     geocoder: Geocoder
     answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
 
@@ -220,21 +220,31 @@ async def render(request: Request, body: RenderRequest) -> dict:
     if task is None:
         saved = agent.saved_render(services.images, shot, services.answers)
         if saved:
-            return {"image": saved, "model": services.images.model}
-        if not request.app.state.render_limiter.allow(client_ip(request)):
-            raise HTTPException(429, "Too many renders from this address. Try again later.")
-        if not request.app.state.render_budget.allow():
-            raise HTTPException(429, "Today's render budget is used up. Try again tomorrow.")
+            return {"image": saved[0], "model": saved[1]}
+        # Resuming a render that is still queued is not a new render, so it does not count against the limits.
+        if key not in run_state.queued:
+            if not request.app.state.render_limiter.allow(client_ip(request)):
+                raise HTTPException(429, "Too many renders from this address. Try again later.")
+            if not request.app.state.render_budget.allow():
+                raise HTTPException(429, "Today's render budget is used up. Try again tomorrow.")
         task = asyncio.ensure_future(agent.render(services.images, shot, services.answers))
         run_state.renders[key] = task
     try:
-        image = await asyncio.shield(task)
+        image, model = await asyncio.shield(task)
     except Exception as exc:
         if run_state.renders.get(key) is task:
             run_state.renders.pop(key)  # a failed render can be retried
+            if isinstance(exc, TimeoutError):
+                run_state.queued.add(key)
+            else:
+                run_state.queued.discard(key)
+        if isinstance(exc, TimeoutError):
+            # Still queued on free volunteer GPUs: not an error; the client asks again and resumes the job.
+            return JSONResponse({"image": None, "model": None, "queued": True, "detail": explain_failure(exc)}, 202)
         log.warning("Render failed", exc_info=True)
         raise HTTPException(502, explain_failure(exc)) from exc
-    return {"image": image, "model": services.images.model}
+    run_state.queued.discard(key)
+    return {"image": image, "model": model}
 
 
 @router.get("/catchment")

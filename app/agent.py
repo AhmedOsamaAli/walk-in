@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 from . import engine, scoring
 from .answers import AnswerCache, fingerprint
 from .catchment import Catchment, CatchmentService
-from .images import ImageGen
+from .images import Images
 from .llm import LLM, LLMUnavailable
 from .qloo import QlooClient, QlooError
 
@@ -53,6 +53,7 @@ class RunState:
     concepts: list[dict] = field(default_factory=list)
     designs: dict[int, dict] = field(default_factory=dict)
     renders: dict[tuple[int, str], asyncio.Future] = field(default_factory=dict)  # (concept, shot) -> render
+    queued: set[tuple[int, str]] = field(default_factory=set)  # shots whose render is still waiting in a free queue
     created_at: float = field(default_factory=time.time)
 
 
@@ -730,7 +731,7 @@ with a sign that reads exactly the concept name; no people)."""
 
 
 async def design_concept(
-    llm: LLM, images: ImageGen, run: RunState, index: int, q: QlooClient | None = None,
+    llm: LLM, images: Images, run: RunState, index: int, q: QlooClient | None = None,
     answers: AnswerCache | None = None,
 ) -> dict:
     concept = run.concepts[index]
@@ -878,20 +879,21 @@ def facade_prompt(run: RunState, concept: dict, dna: dict, design: dict, sign: s
     )
 
 
-def render_key(images: ImageGen, shot: dict) -> str:
+def render_key(images: Images, shot: dict) -> str:
     return fingerprint("image", images.provider, images.model, shot["aspect"], shot["prompt"])
 
 
-def saved_render(images: ImageGen, shot: dict, answers: AnswerCache | None) -> str | None:
+def saved_render(images: Images, shot: dict, answers: AnswerCache | None) -> tuple[str, str | None] | None:
     saved = answers.get("image", render_key(images, shot)) if answers else None
-    return saved.get("image") if saved else None
+    return (saved["image"], saved.get("model") or images.model) if saved and saved.get("image") else None
 
 
-async def render(images: ImageGen, shot: dict, answers: AnswerCache | None) -> str | None:
-    image = await images.generate(shot["prompt"], shot["aspect"])
+async def render(images: Images, shot: dict, answers: AnswerCache | None) -> tuple[str | None, str | None]:
+    """The image and the model that made it; the first provider that answers renders it."""
+    image, model = await images.render(shot["prompt"], shot["aspect"])
     if image and answers:
-        answers.put("image", render_key(images, shot), {"image": image})
-    return image
+        answers.put("image", render_key(images, shot), {"image": image, "model": model})
+    return image, model
 
 
 PARTNER_KINDS = {

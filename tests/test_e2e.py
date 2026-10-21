@@ -360,8 +360,16 @@ def test_renders_are_capped_per_day_and_a_failed_render_can_be_retried():
         images.error = httpx.HTTPStatusError("429", request=free_tier.request, response=free_tier)
         failed = render(client, run_id, "interior")
         assert failed.status_code == 502 and "turn on billing" in failed.json()["detail"]
-        images.error, images.fail = None, True
-        assert render(client, run_id, "interior").json()["detail"] == "The image model could not render this right now."
+        images.error = TimeoutError("queue")
+        queued = render(client, run_id, "interior")
+        assert queued.status_code == 202
+        assert queued.json() == {"image": None, "model": None, "queued": True, "detail": "Still waiting in the free volunteer queue."}
+        client.app.state.render_budget = DailyBudget(0)
+        images.error = None
+        assert render(client, run_id, "interior").json()["image"] == FakeImages.TINY_PNG  # resuming is not a new render
+        client.app.state.render_budget = DailyBudget(60)
+        images.fail = True
+        assert render(client, run_id, "exterior").json()["detail"] == "The image model could not render this right now."
         images.fail = False
         assert render(client, run_id, "interior").json()["image"] == FakeImages.TINY_PNG
         client.app.state.render_budget = DailyBudget(0)
