@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
+import re
 import time
 import uuid
 from collections import OrderedDict
@@ -11,9 +13,10 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from . import engine, scoring
+from .answers import AnswerCache, fingerprint
 from .catchment import Catchment, CatchmentService
 from .images import ImageGen
-from .llm import LLM
+from .llm import LLM, LLMUnavailable
 from .qloo import QlooClient, QlooError
 
 log = logging.getLogger("blankspace")
@@ -105,26 +108,48 @@ def evidence_brief(run: RunState) -> dict:
         },
         "gap_table": [gap_summary(g) for g in run.gaps],
         "taste_cues": run.cues,
-        "local_brands": [b["name"] for b in run.taste.get("distinctive_brands", [])],
-        "local_artists": [a["name"] for a in run.taste.get("distinctive_artists", [])],
+        "brands_this_area_over_indexes_on": [b["name"] for b in run.taste.get("distinctive_brands", [])],
+        "artists_this_area_over_indexes_on": [a["name"] for a in run.taste.get("distinctive_artists", [])],
+        "most_popular_brands_here": [b["name"] for b in run.taste.get("brands", [])[:10]],
         "crowd": describe_age(run.demographics),
     }
 
 
 def gap_summary(g: dict) -> dict:
+    """One gap row as the agent sees it: comparisons are stated in words, so they cannot be misread."""
+    if g["favorites_kind"] == "local" and g["favorites_total"]:
+        travel = (
+            f"{g['favorites_far']} of the {g['favorites_total']} places locals love more than the city does are outside "
+            f"the walk; median distance {g['median_favorite_km']} km"
+        )
+    else:
+        travel = "no evidence: locals' favorites of this type are just the city's famous places"
     return {
         "genre": g["genre"],
         "locals_rank_here": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
         "median_rank_in_6_same_size_areas_around": g["ref_rank"],
+        "demand_compared_with_areas_around": demand_comparison(g),
         "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
         "typical_for_a_block_this_dense": g["expected_nearby"],
         "relative_supply": g["relative_supply"],
-        "local_favorites_kind": g["favorites_kind"],
-        "local_favorites_outside_walk": f"{g['favorites_far']}/{g['favorites_total']}",
-        "median_distance_to_local_favorites_km": g["median_favorite_km"],
+        "do_locals_travel_for_it": travel,
         "evidence": g["evidence"],
         "gap_score": g["gap_score"],
     }
+
+
+def demand_comparison(g: dict) -> str:
+    """Rank 1 is the strongest, so a smaller number here than around means more demand here."""
+    local, ref = g["demand_rank"], g.get("ref_rank")
+    if ref is None:
+        return "no comparison available"
+    if local >= scoring.UNRANKED and ref >= scoring.UNRANKED:
+        return "outside the top 50 both here and around"
+    if ref - local >= 3:
+        return "ranked higher here than in the areas around: stronger local demand"
+    if local - ref >= 3:
+        return "ranked lower here than in the areas around: weaker local demand"
+    return "about the same as in the areas around"
 
 
 def gap_for(run: RunState, genre: str) -> dict | None:
@@ -141,20 +166,25 @@ async def fans_of(q: QlooClient, run: RunState, genre_id: str) -> dict:
 
 def inspect_payload(run: RunState, row: dict) -> dict:
     entities, cards = storefront_favorites(row)
+    # Only places locals love more than the city does say anything about travel; otherwise they are just the
+    # city's famous places, and naming them that way keeps the agent from claiming that locals travel to them.
+    favorites_key = (
+        "places_locals_love_more_than_the_city_does" if row.get("favorites_kind") == "local"
+        else "the_citys_famous_places_of_this_type"
+    )
     return {
         "genre": row["genre"],
         "competitors_within_walk": [
             {k: c.get(k) for k in ("name", "rating", "price_level", "praise", "complaints", "distance_m")}
             for c in row["competitors"][:6]
         ],
-        "locals_favorites": [
+        favorites_key: [
             {"name": f["name"], "km_away": round((f.get("distance_m") or 0) / 1000, 1), "price_level": f.get("price_level"),
              "praise": f.get("praise"), "inside_walk": f.get("within_walk", False)}
             for f in cards[:8]
         ],
-        "locals_favorites_kind": row.get("favorites_kind"),
-        "city_famous_favorites": row.get("city_favorites", []),
-        "design_dna_of_favorites": scoring.design_dna(entities),
+        "do_locals_travel_for_it": gap_summary(row)["do_locals_travel_for_it"],
+        "design_dna_of_these_places": scoring.design_dna(entities),
     }
 
 
@@ -164,17 +194,27 @@ def ground_names(names: list[str] | None, allowed: set[str]) -> list[str]:
 
 
 def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
-    """Keep only concepts whose genre exists in the gap table, and only cite real places."""
+    """Keep only concepts whose genre exists in the evidence, one per genre, citing real places under original names."""
     cleaned = []
+    known_places = place_names(run)
     for concept in concepts or []:
-        row = gap_for(run, concept.get("genre", ""))
-        if not row:
+        if not isinstance(concept, dict):
+            continue
+        row = gap_for(run, str(concept.get("genre") or ""))
+        if not row or any(c["genre_id"] == row["genre_id"] for c in cleaned):
             continue
         favorites = {card["name"] for card in storefront_favorites(row)[1] if card.get("name")}
         concept["genre"] = row["genre"]
         concept["genre_id"] = row["genre_id"]
         concept["gap_score"] = row["gap_score"]
         concept["inspired_by"] = ground_names(concept.get("inspired_by"), favorites)[:4]
+        name = str(concept.get("name") or "").strip()
+        taken = taken_name(name, known_places)
+        if not name or taken:
+            if taken:
+                log.info("Concept name %r reuses the existing place %r; renamed", name, taken)
+            name = f"{scoring.genre_title(row['genre'])}, {short_label(run.site.label)}"
+        concept["name"] = name[:60]
         try:
             concept["price_level"] = max(1, min(4, int(concept.get("price_level") or 2)))
         except (TypeError, ValueError):
@@ -182,6 +222,39 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
         concept["evidence"] = gap_evidence(row, run.site.minutes)
         cleaned.append(concept)
     return cleaned[:3]
+
+
+# Category words that are names of real places somewhere ("Diner", "Bakery") but are free for anyone to use.
+COMMON_NAME_WORDS = {
+    "bar", "cafe", "café", "coffee", "diner", "bakery", "deli", "grill", "kitchen", "tavern", "pub", "market",
+    "wine", "tea", "bistro", "brasserie", "lounge", "club", "studio", "shop", "store", "gallery", "pizza",
+    "pizzeria", "trattoria", "cantina", "taqueria", "restaurant", "eatery", "canteen", "corner", "local",
+}
+
+
+def place_names(run: RunState) -> set[str]:
+    names = {p.get("name") for p in run.block}
+    for row in run.gaps + run.explored:
+        names |= {c.get("name") for c in row.get("competitors", [])}
+        names |= {f.get("name") for f in row.get("favorites", [])}
+        names |= set(row.get("city_favorites", []))
+    return {name for name in names if isinstance(name, str) and name.strip()}
+
+
+def _name_words(text: str) -> list[str]:
+    return [word for word in re.findall(r"[a-z0-9']+", text.lower().replace("&", " and ")) if word != "the"]
+
+
+def taken_name(name: str, places: set[str]) -> str | None:
+    """The existing place a concept name reuses, if any: 'Otis & Main' reuses the restaurant 'Otis'."""
+    text = f" {' '.join(_name_words(name))} "
+    for place in places:
+        words = _name_words(place)
+        if not words or len("".join(words)) < 3 or (len(words) == 1 and words[0] in COMMON_NAME_WORDS):
+            continue
+        if f" {' '.join(words)} " in text:
+            return place
+    return None
 
 
 def short_label(label: str) -> str:
@@ -290,22 +363,25 @@ def rule_concepts(run: RunState) -> list[dict]:
 CONCEPT_SYSTEM = """You are Blank Space, a retail and hospitality strategist that designs businesses for empty storefronts.
 You only reason from Qloo evidence about the people inside the site's walking catchment.
 Demand is compared with six same-size areas around the site, not the whole city; supply is compared with what a block
-this dense would typically hold. Locals' favorites of kind "citywide" are just the city's famous places: do not treat
-them as evidence that locals travel.
-Work like an analyst:
-1. Form at least one hypothesis the gap table does not cover, from the brands, artists and taste cues this area
-   over-indexes on (sports teams suggest a sports bar; a list of design brands suggests a concept store), and test it
-   with test_category, which queries Qloo live. You have at most 3 tests.
-2. Ask fan_taste what people near the site who love a category also love. Overlap with the area's own signature
-   brands and artists is evidence of fit; the names are material for programming, partners and music.
-3. Inspect the gaps you will build on with inspect_gap (at least two).
-4. Call submit_concepts with exactly 3 distinct concepts, each on a different genre from the gap table or your tests.
-   Prefer evidence "ok". A weak test result is a finding: mention it in risk or move on.
-Rules: cite numbers from the evidence in why_here; never invent places, brands or statistics;
-inspired_by must only contain names returned by inspect_gap; respect the owner's notes."""
+this dense would typically hold. Only claim that locals travel for something when the evidence says so; when it says
+their favorites are just the city's famous places, there is no travel evidence. Distances are medians, not averages.
+Work like an analyst, in as few turns as possible. Tools called in the same turn run in parallel, so batch them:
+1. First turn: test_category for up to 3 hunches the gap table does not cover, drawn from the brands, artists and
+   taste cues this area over-indexes on (sports teams suggest a sports bar; design brands suggest a concept store);
+   in the same turn, inspect_gap and fan_taste for the 2 or 3 strongest gaps. Fan taste that overlaps the area's
+   own signature brands and artists is evidence of fit, and its names are material for programming and partners.
+2. Second turn, only if needed: inspect_gap or fan_taste for a tested category you now want to build on.
+3. Then call submit_concepts with exactly 3 concepts, each on a different genre from the gap table or your tests.
+   Prefer evidence "ok". A weak test result is a finding: say so in risk, or move on.
+Give every tool call a one-sentence reason that names the evidence behind it.
+Rules: why_here cites numbers exactly as they appear in the evidence; never invent places, brands or statistics;
+inspired_by only contains names returned by inspect_gap; concept names are original and never reuse or echo the
+name of an existing place; respect the owner's notes."""
 
 MAX_LIVE_TESTS = 3
 MAX_FAN_CHECKS = 4
+
+REASON = {"type": "string", "description": "One sentence: why you are checking this, naming the evidence behind it"}
 
 CONCEPT_TOOLS = [
     {
@@ -317,8 +393,11 @@ CONCEPT_TOOLS = [
                            "scale as the table. At most 3 per survey.",
             "parameters": {
                 "type": "object",
-                "properties": {"category": {"type": "string", "description": "A storefront category, e.g. 'bakery' or 'sports bar'"}},
-                "required": ["category"],
+                "properties": {
+                    "category": {"type": "string", "description": "A storefront category, e.g. 'bakery' or 'sports bar'"},
+                    "reason": REASON,
+                },
+                "required": ["category", "reason"],
             },
         },
     },
@@ -330,8 +409,11 @@ CONCEPT_TOOLS = [
                            "love, and which of them belong to the area's own signature taste.",
             "parameters": {
                 "type": "object",
-                "properties": {"category": {"type": "string", "description": "A genre from the gap table or a tested category"}},
-                "required": ["category"],
+                "properties": {
+                    "category": {"type": "string", "description": "A genre from the gap table or a tested category"},
+                    "reason": REASON,
+                },
+                "required": ["category", "reason"],
             },
         },
     },
@@ -342,17 +424,12 @@ CONCEPT_TOOLS = [
             "description": "Competitors within walking distance (with review praise and complaints) and locals' favorite places of one genre, plus the design DNA of those favorites.",
             "parameters": {
                 "type": "object",
-                "properties": {"genre": {"type": "string", "description": "Genre exactly as written in the gap table or a test result"}},
-                "required": ["genre"],
+                "properties": {
+                    "genre": {"type": "string", "description": "Genre exactly as written in the gap table or a test result"},
+                    "reason": REASON,
+                },
+                "required": ["genre", "reason"],
             },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "local_taste",
-            "description": "Brands and artists this neighborhood over-indexes on versus same-size areas around it, plus crowd age skew.",
-            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -373,13 +450,15 @@ CONCEPT_TOOLS = [
                                 "one_liner": {"type": "string"},
                                 "for_whom": {"type": "string"},
                                 "price_level": {"type": "integer", "minimum": 1, "maximum": 4},
-                                "why_here": {"type": "array", "items": {"type": "string"}},
+                                "why_here": {"type": "array", "items": {"type": "string"},
+                                             "description": "2-3 lines, each citing numbers exactly as they appear in the evidence"},
                                 "beat_competitors": {"type": "string"},
-                                "signature": {"type": "array", "items": {"type": "string"}},
+                                "signature": {"type": "array", "items": {"type": "string"},
+                                              "description": "3-4 specific things people would come for, not amenities"},
                                 "inspired_by": {"type": "array", "items": {"type": "string"}},
-                                "risk": {"type": "string"},
+                                "risk": {"type": "string", "description": "The biggest risk the evidence shows"},
                             },
-                            "required": ["name", "genre", "one_liner", "why_here", "signature"],
+                            "required": ["name", "genre", "one_liner", "for_whom", "why_here", "signature", "risk"],
                         },
                     }
                 },
@@ -390,53 +469,75 @@ CONCEPT_TOOLS = [
 ]
 
 
-async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> list[dict]:
+AGENT_VERSION = fingerprint(CONCEPT_SYSTEM, CONCEPT_TOOLS, MAX_LIVE_TESTS, MAX_FAN_CHECKS)
+
+
+@dataclass
+class AgentResult:
+    concepts: list[dict]
+    raw_concepts: list[dict]
+    model: str | None
+    trail: list[list]  # replayable record of what the agent did: [event, data] pairs
+
+
+async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> AgentResult:
+    trail: list[list] = []
+    testing: dict[str, asyncio.Future] = {}  # genre id -> live measurement, shared by concurrent calls
+    announced: set[tuple[str, str]] = set()
+    results: dict[tuple[str, str], asyncio.Future] = {}
     fan_checks = 0
 
-    async def inspect(args: dict) -> dict:
-        row = gap_for(run, args.get("genre", ""))
-        return inspect_payload(run, row) if row else {"error": "Unknown genre. Use one from the gap table or a test result."}
+    def call_key(name: str, args: dict) -> tuple[str, str]:
+        return name, str(args.get("category") or args.get("genre") or "").strip().lower()
 
-    async def taste(_: dict) -> dict:
-        return {
-            "local_brands": [b["name"] for b in run.taste.get("brands", [])],
-            "distinctive_brands": [b["name"] for b in run.taste.get("distinctive_brands", [])],
-            "local_artists": [a["name"] for a in run.taste.get("distinctive_artists", [])],
-            "crowd": describe_age(run.demographics),
-        }
+    async def record(event: str, data: dict) -> None:
+        trail.append([event, data])
+        await emit(event, data)
 
     async def refuse(message: str) -> dict:
-        await emit("finding", {"text": message})
+        await record("finding", {"text": message})
         return {"error": message}
 
-    async def resolve(query: str) -> dict | None:
+    async def inspect(args: dict) -> dict:
+        row = gap_for(run, str(args.get("genre") or ""))
+        return inspect_payload(run, row) if row else {"error": "Unknown genre. Use one from the gap table or a test result."}
+
+    async def resolve(query: str) -> tuple[dict | None, str | None]:
         row = gap_for(run, query)
         if row:
-            return {"id": row["genre_id"], "name": row["genre"]}
+            return {"id": row["genre_id"], "name": row["genre"]}, None
         return await engine.find_genre(q, run.genres, query)
+
+    async def measure(genre: dict) -> dict:
+        row = await engine.probe_genre(q, run.catchment, genre, run.gaps)
+        row["source"] = "agent"
+        run.explored.append(row)
+        trail.append(["explored", {"genre": genre}])
+        await emit("explored", {"row": public_gap(row)})
+        return row
 
     async def test_category(args: dict) -> dict:
         query = str(args.get("category") or "").strip()[:80]
         try:
-            genre = await engine.find_genre(q, run.genres, query) if query else None
+            genre, why_not = await engine.find_genre(q, run.genres, query) if query else (None, "No category given.")
         except QlooError as exc:
             return await refuse(f"Qloo lookup for '{query}' failed: {exc}")
         if not genre:
-            return await refuse(f"Qloo has no storefront category matching '{query}'.")
-        existing = gap_for(run, genre["name"])
-        if existing:
-            return {"already_measured": True, **gap_summary(existing)}
-        if not scoring.matches_focus(genre["name"], run.site.focus):
-            return await refuse(f"{genre['name']} is outside the owner's focus.")
-        if len(run.explored) >= MAX_LIVE_TESTS:
-            return await refuse(f"Live test budget used ({MAX_LIVE_TESTS} per survey).")
+            return await refuse(why_not or f"Qloo has no storefront category matching '{query}'.")
+        if genre["id"] not in testing:
+            existing = gap_for(run, genre["name"])
+            if existing:
+                await record("finding", {"text": f"{existing['genre']} is already in the gap table (gap {existing['gap_score']})."})
+                return {"already_measured": True, **gap_summary(existing)}
+            if not scoring.matches_focus(genre["name"], run.site.focus):
+                return await refuse(f"{genre['name']} is outside the owner's focus.")
+            if len(testing) >= MAX_LIVE_TESTS:
+                return await refuse(f"Live test budget used ({MAX_LIVE_TESTS} per survey).")
+            testing[genre["id"]] = asyncio.ensure_future(measure(genre))
         try:
-            row = await engine.probe_genre(q, run.catchment, genre, run.gaps)
+            row = await asyncio.shield(testing[genre["id"]])
         except QlooError as exc:
             return await refuse(f"Qloo test of {genre['name']} failed: {exc}")
-        row["source"] = "agent"
-        run.explored.append(row)
-        await emit("explored", {"row": public_gap(row)})
         return {"tested_live": True, **gap_summary(row), "evidence": gap_evidence(row, run.site.minutes)}
 
     async def fan_taste(args: dict) -> dict:
@@ -444,11 +545,11 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         query = str(args.get("category") or "").strip()[:80]
         if fan_checks >= MAX_FAN_CHECKS:
             return await refuse(f"Fan taste budget used ({MAX_FAN_CHECKS} per survey).")
+        fan_checks += 1
         try:
-            genre = await resolve(query) if query else None
+            genre, why_not = await resolve(query) if query else (None, "No category given.")
             if not genre:
-                return await refuse(f"Qloo has no storefront category matching '{query}'.")
-            fan_checks += 1
+                return await refuse(why_not or f"Qloo has no storefront category matching '{query}'.")
             fans = await fans_of(q, run, genre["id"])
         except QlooError as exc:
             return await refuse(f"Qloo fan taste for '{query}' failed: {exc}")
@@ -457,31 +558,73 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         signature = {e["name"] for e in run.taste.get("distinctive_brands", []) + run.taste.get("distinctive_artists", [])}
         shared = [name for name in brands + artists if name in signature]
         text = f"Local fans of {genre['name']} also love {', '.join(brands[:4]) or 'no brands Qloo knows'}"
-        text += f"; artists {', '.join(artists[:3])}." if artists else "."
+        text += f"; artists {', '.join(artists[:3])}" if artists else ""
+        text = text.rstrip(".") + "."
         if shared:
-            text += f" Shared with the area's signature taste: {', '.join(shared)}."
-        await emit("finding", {"text": text})
+            text += f" Shared with the area's signature taste: {', '.join(shared)}".rstrip(".") + "."
+        await record("finding", {"text": text})
         return {"category": genre["name"], "local_fans_also_love": {"brands": brands, "artists": artists},
                 "shared_with_area_signature": shared}
 
     async def on_call(name: str, args: dict, thought: str | None) -> None:
-        if name != "submit_concepts":
-            await emit("agent", {"tool": name, "args": args, "thought": thought})
+        if name == "submit_concepts":
+            return
+        key = call_key(name, args)
+        if key in announced:  # a repeated check adds nothing new to the log
+            return
+        announced.add(key)
+        await record("agent", {"tool": name, "args": args, "thought": thought})
 
-    result = await llm.run_tools(
+    def once(name: str, handler: Callable[[dict], Awaitable[dict]]) -> Callable[[dict], Awaitable[dict]]:
+        """Runs each distinct check once; a repeat gets the earlier result back, saying so."""
+        async def checked(args: dict) -> dict:
+            key = call_key(name, args)
+            if key in results:
+                result = await asyncio.shield(results[key])
+                return {**result, "note": "You already ran this check in this survey; this is the same result."}
+            results[key] = asyncio.ensure_future(handler(args))
+            return await asyncio.shield(results[key])
+        return checked
+
+    async def on_step(step: int, phase: str) -> None:
+        label = "Agent reads the evidence and plans what to check" if step == 0 else "Agent weighs what it found"
+        state = {"start": "running", "end": "done"}.get(phase, phase)
+        await emit("status", {"step": f"agent-{step}", "state": state, "label": label})
+
+    result, model = await llm.run_tools(
         CONCEPT_SYSTEM,
         "Evidence pack:\n" + json.dumps(evidence_brief(run), ensure_ascii=False),
         CONCEPT_TOOLS,
-        {"inspect_gap": inspect, "local_taste": taste, "test_category": test_category, "fan_taste": fan_taste},
+        {
+            "inspect_gap": once("inspect_gap", inspect),
+            "test_category": once("test_category", test_category),
+            "fan_taste": once("fan_taste", fan_taste),
+        },
         final_tool="submit_concepts",
-        max_steps=10,
+        max_steps=6,
         on_call=on_call,
+        on_step=on_step,
     )
-    return clean_concepts(run, (result or {}).get("concepts", []))
+    raw = [c for c in (result or {}).get("concepts") or [] if isinstance(c, dict)]
+    return AgentResult(clean_concepts(run, copy.deepcopy(raw)), raw, model, trail)
+
+
+async def replay_agent(q: QlooClient, run: RunState, saved: dict, emit: Emit) -> list[dict]:
+    """Re-emits a saved investigation for identical evidence; live tests are re-measured from the Qloo cache."""
+    for event, data in saved.get("trail", []):
+        if event == "explored":
+            row = await engine.probe_genre(q, run.catchment, data["genre"], run.gaps)
+            row["source"] = "agent"
+            run.explored.append(row)
+            await emit("explored", {"row": public_gap(row)})
+        else:
+            await emit(event, data)
+    return clean_concepts(run, copy.deepcopy(saved.get("raw_concepts", [])))
 
 
 async def analyze_site(
     q: QlooClient, walker: CatchmentService, llm: LLM, store: RunStore, site: Site, emit: Emit,
+    answers: AnswerCache | None = None,
 ) -> RunState:
     run = RunState(id=uuid.uuid4().hex[:12], site=site)
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
@@ -527,18 +670,15 @@ async def analyze_site(
             await emit("concepts", {"concepts": [], "mode": "none", "note": "Not enough Qloo data around this site."})
         else:
             await emit("status", {"step": "concepts", "state": "running", "label": "Designing concepts from the gaps"})
-            concepts, mode = [], "rules"
+            concepts, mode, about = [], "rules", {}
             if llm.enabled:
-                try:
-                    concepts, mode = await agent_concepts(llm, q, run, emit), "agent"
-                except Exception as exc:  # LLM outages must not break the demo
-                    log.warning("Concept agent failed; falling back to evidence rules", exc_info=True)
-                    await emit("notice", {"message": f"LLM unavailable ({type(exc).__name__}); using evidence rules."})
+                concepts, about = await concepts_from_agent(llm, q, run, emit, answers)
+                mode = "agent" if concepts else "rules"
             if not concepts:
-                concepts, mode = rule_concepts(run), "rules"
+                concepts, mode, about = rule_concepts(run), "rules", {}
             run.concepts = concepts
             await emit("status", {"step": "concepts", "state": "done", "label": "Designing concepts from the gaps"})
-            await emit("concepts", {"concepts": concepts, "mode": mode})
+            await emit("concepts", {"concepts": concepts, "mode": mode, **about})
     except QlooError as exc:
         await emit("error", {"message": str(exc)})
     finally:
@@ -552,16 +692,44 @@ async def analyze_site(
     return run
 
 
+async def concepts_from_agent(
+    llm: LLM, q: QlooClient, run: RunState, emit: Emit, answers: AnswerCache | None,
+) -> tuple[list[dict], dict]:
+    """The agent's concepts and how they were made; an empty list means the evidence rules must step in."""
+    key = fingerprint("concepts", AGENT_VERSION, evidence_brief(run))
+    saved = answers.get("concepts", key) if answers else None
+    try:
+        if saved:
+            await emit("replay", {"saved_at": saved.get("saved_at"), "model": saved.get("model")})
+            concepts = await replay_agent(q, run, saved, emit)
+            return concepts, {"model": saved.get("model"), "replayed_from": saved.get("saved_at")}
+        result = await agent_concepts(llm, q, run, emit)
+    except LLMUnavailable:
+        log.warning("Every LLM model is resting; falling back to evidence rules", exc_info=True)
+        await emit("notice", {"message": "Every free AI model is busy or out of quota right now, so these concepts come from the evidence rules."})
+        return [], {}
+    except Exception as exc:  # LLM outages must not break the demo
+        log.warning("Concept agent failed; falling back to evidence rules", exc_info=True)
+        await emit("notice", {"message": f"The AI agent failed ({type(exc).__name__}), so these concepts come from the evidence rules."})
+        return [], {}
+    if result.concepts and answers:
+        answers.put("concepts", key, {"trail": result.trail, "raw_concepts": result.raw_concepts, "model": result.model})
+    return result.concepts, {"model": result.model}
+
+
 DESIGN_SYSTEM = """You are Blank Space's concept designer. Turn a business concept into a design brief for an empty storefront.
 Ground every choice in the evidence: design DNA of the locals' favorite places, what local fans of this category also
 love, local artists, nearby places and local brands.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), hours, music {direction, artists (list, only from local_artists)},
-partners (list of {name, why}; name only from nearby_places or partner_brands), launch (string), image_prompt
-(a photorealistic interior description with no text, logos or people's faces)."""
+partners (list of {name, why}; name only from nearby_places or partner_brands), launch (an opening-night idea; never
+mention dates or years), image_prompt (a photorealistic interior description with no people, text or logos)."""
 
 
-async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int, q: QlooClient | None = None) -> dict:
+async def design_concept(
+    llm: LLM, images: ImageGen, run: RunState, index: int, q: QlooClient | None = None,
+    answers: AnswerCache | None = None,
+) -> dict:
     concept = run.concepts[index]
     row = gap_for(run, concept["genre"])
     dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
@@ -580,30 +748,39 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int, 
     brand_cards = list({b["name"]: b for b in area_brands + fans["brands"]}.values())
     fitting_brands = [b["name"] for b in scoring.partner_brands(brand_cards, concept["genre"])]
     design: dict[str, Any] = {}
-    mode = "rules"
+    mode, model = "rules", None
     if llm.enabled:
+        payload = json.dumps({
+            "site": run.site.label,
+            "owner_notes": run.site.notes or None,
+            "concept": {k: concept.get(k) for k in ("name", "genre", "one_liner", "for_whom", "price_level", "signature")},
+            "design_dna_of_locals_favorites": dna,
+            "local_artists": local_artists[:15],
+            "nearby_places": nearby[:40],
+            "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
+            "local_fans_of_this_category_also_love": {"brands": [b["name"] for b in fans["brands"]], "artists": fan_artists},
+            "partner_brands": fitting_brands[:8],
+            "taste_cues": run.cues,
+            "crowd": describe_age(run.demographics),
+        }, ensure_ascii=False)
+        key = fingerprint("design", DESIGN_SYSTEM, payload)
+        saved = answers.get("design", key) if answers else None
         try:
-            design = await llm.json(DESIGN_SYSTEM, json.dumps({
-                "site": run.site.label,
-                "owner_notes": run.site.notes or None,
-                "concept": {k: concept.get(k) for k in ("name", "genre", "one_liner", "for_whom", "price_level", "signature")},
-                "design_dna_of_locals_favorites": dna,
-                "local_artists": local_artists[:15],
-                "nearby_places": nearby[:40],
-                "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
-                "local_fans_of_this_category_also_love": {"brands": [b["name"] for b in fans["brands"]], "artists": fan_artists},
-                "partner_brands": fitting_brands[:8],
-                "taste_cues": run.cues,
-                "crowd": describe_age(run.demographics),
-            }, ensure_ascii=False))
+            if saved:
+                design, model = saved["design"], saved.get("model")
+            else:
+                design, model = await llm.complete_json(DESIGN_SYSTEM, payload)
+                if design and answers:
+                    answers.put("design", key, {"design": design, "model": model})
+            design = copy.deepcopy(design) if isinstance(design, dict) else {}
             mode = "agent"
         except Exception:
             log.warning("Design brief LLM call failed; using evidence rules", exc_info=True)
             design = {}
     if not design:
         design = rule_design(run, concept, dna, local_artists, fitting_brands, fan_led=bool(fan_artists))
-        mode = "rules"
-    music = design.get("music") or {}
+        mode, model = "rules", None
+    music = design.get("music") if isinstance(design.get("music"), dict) else {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
     design["music"] = music
     allowed_partners = {name.lower(): name for name in set(nearby) | set(fitting_brands)}
@@ -614,15 +791,26 @@ async def design_concept(llm: LLM, images: ImageGen, run: RunState, index: int, 
     ][:4]
     design["dna"] = dna
     design["mode"] = mode
-    design["image"] = None
-    if images.enabled:
-        prompt = design.get("image_prompt") or interior_prompt(run, concept, dna)
-        try:
-            design["image"] = await images.generate(prompt)
-        except Exception:
-            log.warning("Interior image generation failed", exc_info=True)
-            design["image"] = None
+    design["model"] = model
+    design["image"] = await interior_image(images, design.get("image_prompt") or interior_prompt(run, concept, dna), answers)
     return design
+
+
+async def interior_image(images: ImageGen, prompt: str, answers: AnswerCache | None) -> str | None:
+    if not images.enabled:
+        return None
+    key = fingerprint("image", images.provider, prompt)
+    saved = answers.get("image", key) if answers else None
+    if saved:
+        return saved.get("image")
+    try:
+        image = await images.generate(prompt)
+    except Exception:
+        log.warning("Interior image generation failed", exc_info=True)
+        return None
+    if image and answers:
+        answers.put("image", key, {"image": image})
+    return image
 
 
 def interior_prompt(run: RunState, concept: dict, dna: dict) -> str:
@@ -642,15 +830,36 @@ def interior_prompt(run: RunState, concept: dict, dna: dict) -> str:
     )
 
 
+PARTNER_KINDS = {
+    "food": ("bar", "venue", "retail"),
+    "bar": ("food", "venue"),
+    "venue": ("food", "bar"),
+    "retail": ("food", "bar"),
+    "wellness": ("food", "retail"),
+}
+
+LAYOUTS = {
+    "food": "Open dining room with a window counter onto the street",
+    "bar": "Long bar along one wall, low tables by the window",
+    "venue": "Screen or stage at the back, bar to one side, standing room up front",
+    "retail": "Open floor behind a front display window, counter at the back",
+    "wellness": "Calm front reception with private rooms behind",
+}
+
+
 def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
-    """Well-loved nearby places from other genres, so partners complement rather than compete."""
-    candidates = [
-        p for p in run.block
-        if p.get("name") and genre not in {name for _, name in scoring.genre_tags(p)}
-        and any(scoring.is_business_genre(name) for _, name in scoring.genre_tags(p))
-    ]
-    candidates.sort(key=lambda p: -(p.get("popularity") or 0))
-    return [p["name"] for p in candidates[:limit]]
+    """Well-loved nearby places that complement the concept (dinner, then drinks) rather than compete with it."""
+    wanted = PARTNER_KINDS.get(scoring.genre_kind(genre), ())
+    candidates = []
+    for place in run.block:
+        names = [name for _, name in scoring.genre_tags(place)]
+        business = [name for name in names if scoring.is_business_genre(name)]
+        if not place.get("name") or genre in names or not business:
+            continue
+        kind = scoring.genre_kind(business[0])
+        order = wanted.index(kind) if kind in wanted else len(wanted)
+        candidates.append((order, -(place.get("popularity") or 0), place["name"]))
+    return [name for _, _, name in sorted(candidates)[:limit]]
 
 
 def rule_design(
@@ -659,15 +868,22 @@ def rule_design(
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
     decor = dna.get("decor", [])[:4]
     minutes = run.site.minutes
+    title = scoring.genre_title(concept["genre"])
+    layout = LAYOUTS.get(scoring.genre_kind(concept["genre"]), LAYOUTS["food"])
+    if any("outdoor" in amenity.lower() for amenity in dna.get("amenities", [])):
+        layout += ", plus sidewalk seating"
     partners = [
-        {"name": name, "why": f"Popular inside the {minutes}-minute walk and not a direct competitor; cross-promote."}
+        {"name": name, "why": f"Popular inside the {minutes}-minute walk and complements rather than competes; cross-promote."}
         for name in partner_places(run, concept["genre"])
     ]
     if partner_brands:
         partners.append({"name": partner_brands[0], "why": "A brand this area over-indexes on; a natural co-branded launch."})
-    cue = run.cues[0].lower() if run.cues else ""
-    if cue and not cue.endswith("s"):
-        cue += "s"
+    if partners and fan_led and artists:
+        launch = f"Opening night co-hosted with {partners[0]['name']}, playing artists local {title} fans love ({', '.join(artists[:2])})."
+    elif partners:
+        launch = f"Opening night co-hosted with {partners[0]['name']}."
+    else:
+        launch = f"Opening night for the neighbors within a {minutes}-minute walk."
     return {
         "name": concept["name"],
         "tagline": concept.get("one_liner"),
@@ -676,30 +892,37 @@ def rule_design(
             "mood": ambience,
             "materials": decor,
             "lighting": "Warm, layered lighting" if "romantic" in ambience or "cozy" in ambience else "Bright, natural light",
-            "layout": ", ".join(dna.get("setting", [])[:2]) or "Street-facing, open to the sidewalk",
+            "layout": layout,
             "seating": ", ".join(a for a in dna.get("amenities", []) if "seating" in a.lower()) or "Mixed bar and table seating",
         },
         "offer": scoring.signature_items(concept["genre"], dna, limit=6),
         "price_level": concept.get("price_level", 2),
         "hours": "To be set from local foot traffic",
         "music": {
-            "direction": (
-                f"What local {scoring.genre_title(concept['genre'])} fans also listen to"
-                if fan_led else "Built from artists that over-index locally"
-            ),
+            "direction": f"What local {title} fans also listen to" if fan_led else "Built from artists that over-index locally",
             "artists": artists[:5],
         },
         "partners": partners,
-        "launch": f"Opening night with a nod to the neighborhood's love of {cue}." if cue else "Opening night with local partners.",
+        "launch": launch,
         "image_prompt": None,
     }
 
 
-async def plain_llm_concepts(llm: LLM, site: Site) -> list[dict]:
+BASELINE_SYSTEM = "You are a retail strategy consultant."
+
+
+async def baseline_concepts(llm: LLM, site: Site, answers: AnswerCache | None = None) -> list[dict]:
     """What a language model suggests with no data, shown next to the evidence-based concepts."""
-    data = await llm.json(
-        "You are a retail strategy consultant.",
+    prompt = (
         f"There is an empty ground-floor storefront at {site.label} (lat {site.lat}, lon {site.lon}). "
-        "Propose 3 business concepts likely to succeed there. Return JSON {\"concepts\": [{\"name\", \"genre\", \"one_liner\"}]}.",
+        "Propose 3 business concepts likely to succeed there. Return JSON {\"concepts\": [{\"name\", \"genre\", \"one_liner\"}]}."
     )
-    return [c for c in data.get("concepts", []) if isinstance(c, dict)][:3]
+    key = fingerprint("baseline", BASELINE_SYSTEM, prompt)
+    saved = answers.get("baseline", key) if answers else None
+    if saved:
+        return saved.get("concepts", [])
+    data, model = await llm.complete_json(BASELINE_SYSTEM, prompt)
+    concepts = [c for c in data.get("concepts") or [] if isinstance(c, dict)][:3]
+    if concepts and answers:
+        answers.put("baseline", key, {"concepts": concepts, "model": model})
+    return concepts

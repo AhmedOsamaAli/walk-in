@@ -45,6 +45,18 @@ We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower Ea
 
 Other safeguards: categories Qloo barely knows locally are flagged as thin data and ranked last; categories whose local favorites are mostly hotels or malls (hotel spas in Cairo, for example) are flagged as atypical; partners are limited to makers, shops and designers (plus teams for sports concepts), never nonprofits, media groups or corporations; negated review keywords ("not crowded") are not counted as complaints.
 
+## Running on free AI tiers
+
+Free Gemini keys allow about five requests a minute and a few dozen a day per model, and popular models are often overloaded. While we tested, `gemini-3.8-flash` and `gemini-3.7-flash` timed out on every call for hours and `gemini-3.6-flash` returned "high demand" errors on and off. Blank Space is built for that:
+
+- **A chain of models.** Every call walks `LLM_FALLBACK_MODELS`. A rate-limited model rests for Google's retry delay, one out of daily quota for an hour, an overloaded one for two minutes, a hanging one for five; the next model answers meanwhile.
+- **Conversations survive a model change.** If the model running the agent fails between tool turns, the next model continues the same conversation: the old model's thought signatures are replaced with Google's documented `skip_thought_signature_validator` value.
+- **Fewer calls.** The agent batches its tool calls, which run in parallel, so a survey takes two or three model turns.
+- **No repeated spending.** When a site's Qloo evidence and the prompts are unchanged, the agent's earlier investigation, the design sheets and the no-data baseline are replayed, and the survey log says so.
+- **Never a dead end.** When every model is resting, concepts and design sheets come from the evidence rules, and the page says why.
+
+The agent's numbers are grounded: at Williamsburg, Fort Greene, East Austin and Zamalek, every rank, gap score, count, supply ratio and distance it cited matched the evidence. Its wording slipped twice: it called medians averages, and it described the city's famous places as places locals travel to. The evidence it receives now states travel in words, and says plainly when there is no travel signal. Its concept names are checked against nearby places ("Otis & Main" reused the name of Otis, a real restaurant, and was renamed).
+
 ## Limitations
 
 - Qloo measures taste and affinity, not foot traffic, rents or sales. A gap is evidence for a decision, not a forecast.
@@ -70,8 +82,10 @@ Open http://127.0.0.1:8765. Tests: `pytest` (unit tests for the scoring, plus en
 | Variable | Needed | Notes |
 |---|---|---|
 | `QLOO_API_KEY` | yes | Hackathon key; works only with `QLOO_BASE_URL=https://hackathon.api.qloo.com` |
-| `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` | no | Any OpenAI-compatible endpoint. Recommended free option: Gemini (`gemini-3.8-flash` via `https://generativelanguage.googleapis.com/v1beta/openai/`). Without it, concepts and design sheets come from deterministic evidence rules |
-| `LLM_REASONING_EFFORT`, `LLM_TEMPERATURE` | no | Passed through when set |
+| `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` | no | Any OpenAI-compatible endpoint. Recommended free option: Gemini (`gemini-3.6-flash` via `https://generativelanguage.googleapis.com/v1beta/openai/`). Without it, concepts and design sheets come from deterministic evidence rules |
+| `LLM_FALLBACK_MODELS` | no | Comma-separated models tried in order when the main one is rate limited, out of daily quota, overloaded or hanging. Free tiers are per model, so a chain multiplies capacity. A tool conversation that changes model mid-way continues with Google's documented signature sentinel |
+| `LLM_REASONING_EFFORT`, `LLM_TEMPERATURE`, `LLM_TIMEOUT` | no | Passed through when set; the timeout (default 45 s, 25 s for the agent's first turn) marks a model as hanging |
+| `AGENT_CACHE` | no | `1` (default) reuses the agent's answers, design sheets and images while a site's Qloo evidence and the prompts are unchanged; the UI says when a run is replayed. `0` always asks the model |
 | `IMAGE_PROVIDER` | no | `cloudflare` (Workers AI FLUX.1 schnell, free daily allowance) with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`, or `openai` with `IMAGE_API_KEY`, `IMAGE_BASE_URL`, `IMAGE_MODEL` |
 
 ## Deploy

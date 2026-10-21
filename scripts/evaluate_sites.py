@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import agent  # noqa: E402
+from app.answers import AnswerCache  # noqa: E402
 from app.catchment import CatchmentService  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.main import PRESETS  # noqa: E402
@@ -40,7 +41,9 @@ def print_report(run: agent.RunState, events: list[tuple[str, dict]]) -> None:
             f" (rel {row['relative_supply']}) | {row['favorites_kind']} favorites outside {row['favorites_far']}/{row['favorites_total']}"
             f"{'' if row['evidence'] == 'ok' else ' | ' + row['evidence'].upper()}"
         )
-    print("concepts:")
+    about = next((data for event, data in events if event == "concepts"), {})
+    credit = f" (agent: {about['model']}{', replayed' if about.get('replayed_from') else ''})" if about.get("model") else ""
+    print(f"concepts:{credit}")
     for concept in run.concepts:
         print(f"  - {concept['name']} [{concept['genre']}, gap {concept['gap_score']}] {concept.get('one_liner')}")
         print(f"    signature: {', '.join(concept.get('signature') or []) or '-'} | inspired by: {', '.join(concept.get('inspired_by') or []) or '-'}")
@@ -48,8 +51,19 @@ def print_report(run: agent.RunState, events: list[tuple[str, dict]]) -> None:
     print("taste: brands", ", ".join(b["name"] for b in taste.get("distinctive_brands", [])[:6]) or "-")
     print("       artists", ", ".join(a["name"] for a in taste.get("distinctive_artists", [])[:6]) or "-")
     print("       crowd", agent.describe_age(run.demographics), "| cues:", ", ".join(run.cues) or "-")
+    for row in run.explored:
+        print(
+            f"  TESTED LIVE {row['gap_score']:>3} {row['genre']:<24} #{row['demand_rank']} here"
+            f" | inside {row['nearby_count']} vs ~{row['expected_nearby']} typical | {row['evidence']}"
+        )
     for event, data in events:
-        if event in ("error", "notice"):
+        if event == "agent":
+            reason = (data.get("args") or {}).get("reason")
+            target = (data.get("args") or {}).get("category") or (data.get("args") or {}).get("genre")
+            print(f"  AGENT {data['tool']}({target}){' - ' + reason if reason else ''}")
+        elif event in ("finding", "replay"):
+            print(f"  {event.upper()}: {data.get('text') or data}")
+        elif event in ("error", "notice"):
             print(f"  {event.upper()}: {data.get('message')}")
 
 
@@ -58,6 +72,7 @@ async def main() -> None:
     parser.add_argument("sites", nargs="*", help="preset ids (default: all)")
     parser.add_argument("--minutes", type=int, default=10)
     parser.add_argument("--focus", default="any")
+    parser.add_argument("--fresh", action="store_true", help="ignore saved agent answers and ask the model again")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -65,6 +80,7 @@ async def main() -> None:
     qloo = QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir)
     walker = CatchmentService(settings.walk_cache_dir)
     llm = build_llm(settings)
+    answers = AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache and not args.fresh)
     store = agent.RunStore()
     try:
         for preset in PRESETS:
@@ -76,7 +92,7 @@ async def main() -> None:
                 events.append((event, data))
 
             site = agent.Site(preset["lat"], preset["lon"], preset["label"], args.focus, "", args.minutes)
-            run = await agent.analyze_site(qloo, walker, llm, store, site, emit)
+            run = await agent.analyze_site(qloo, walker, llm, store, site, emit, answers)
             print_report(run, events)
     finally:
         await qloo.aclose()

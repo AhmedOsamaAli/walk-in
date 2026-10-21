@@ -41,9 +41,16 @@ class Settings:
     # Any OpenAI-compatible chat endpoint. Recommended free option: Gemini's OpenAI-compatible endpoint.
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY"))
     llm_base_url: str | None = field(default_factory=lambda: _env("LLM_BASE_URL") or None)
-    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini-3.8-flash"))
+    llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini-3.6-flash"))
+    # Tried in order when the main model is rate limited, overloaded or failing (free tiers have per-model quotas).
+    llm_fallback_models: tuple[str, ...] = field(
+        default_factory=lambda: tuple(m.strip() for m in _env("LLM_FALLBACK_MODELS").split(",") if m.strip())
+    )
+    llm_timeout: float = field(default_factory=lambda: _env_float("LLM_TIMEOUT") or 45.0)
     llm_temperature: float | None = field(default_factory=lambda: _env_float("LLM_TEMPERATURE"))
     llm_reasoning_effort: str | None = field(default_factory=lambda: _env("LLM_REASONING_EFFORT") or None)
+    # Agent answers are reused when a site's evidence is unchanged, which saves the free AI quota. "0" turns it off.
+    agent_cache: bool = field(default_factory=lambda: _env("AGENT_CACHE", "1") != "0")
     # Interior images: "cloudflare" (Workers AI FLUX, free daily allowance) or "openai" (OpenAI-compatible images API).
     image_provider: str = field(default_factory=lambda: _env("IMAGE_PROVIDER"))
     cloudflare_account_id: str = field(default_factory=lambda: _env("CLOUDFLARE_ACCOUNT_ID"))
@@ -53,6 +60,7 @@ class Settings:
     image_model: str = field(default_factory=lambda: _env("IMAGE_MODEL"))
     cache_dir: Path = field(default_factory=lambda: Path(_env("CACHE_DIR") or ROOT / ".cache" / "qloo"))
     walk_cache_dir: Path = field(default_factory=lambda: Path(_env("WALK_CACHE_DIR") or ROOT / ".cache" / "walk"))
+    agent_cache_dir: Path = field(default_factory=lambda: Path(_env("AGENT_CACHE_DIR") or ROOT / ".cache" / "agent"))
 
 
 settings = Settings()

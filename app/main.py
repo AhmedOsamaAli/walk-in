@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import httpx
@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import agent, engine
+from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
 from .geocode import Geocoder
@@ -67,6 +68,7 @@ class Services:
     llm: LLM
     images: ImageGen
     geocoder: Geocoder
+    answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
 
     async def aclose(self) -> None:
         for service in (self.qloo, self.walker, self.images, self.geocoder):
@@ -80,6 +82,7 @@ def default_services() -> Services:
         llm=build_llm(settings),
         images=build_images(settings),
         geocoder=Geocoder(),
+        answers=AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache),
     )
 
 
@@ -94,11 +97,14 @@ router = APIRouter(prefix="/api")
 @router.get("/health")
 async def health(request: Request) -> dict:
     services: Services = request.app.state.services
+    llm = services.llm
     return {
         "ok": True,
         "qloo": services.qloo.configured,
-        "llm": services.llm.enabled,
-        "model": services.llm.model if services.llm.enabled else None,
+        "llm": llm.enabled,
+        "model": llm.model if llm.enabled else None,
+        "models": llm.models if llm.enabled else [],
+        "resting": llm.resting() if llm.enabled else {},
         "image": services.images.enabled,
     }
 
@@ -136,11 +142,11 @@ async def run(
         await queue.put((event, data))
 
     async def produce() -> None:
-        tasks = [agent.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit)]
+        tasks = [agent.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit, services.answers)]
         if services.llm.enabled:
             async def baseline() -> None:
                 try:
-                    await emit("baseline", {"concepts": await agent.plain_llm_concepts(services.llm, site)})
+                    await emit("baseline", {"concepts": await agent.baseline_concepts(services.llm, site, services.answers)})
                 except Exception:
                     log.warning("No-data baseline failed", exc_info=True)
             tasks.append(baseline())
@@ -183,7 +189,9 @@ async def design(request: Request, body: DesignRequest) -> dict:
     if not request.app.state.design_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many design requests. Try again later.")
     services: Services = request.app.state.services
-    result = await agent.design_concept(services.llm, services.images, run_state, body.index, services.qloo)
+    result = await agent.design_concept(
+        services.llm, services.images, run_state, body.index, services.qloo, services.answers,
+    )
     run_state.designs[body.index] = result
     return result
 

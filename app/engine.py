@@ -140,31 +140,53 @@ async def gap_table(q: QlooClient, catchment: Catchment, genres: list[dict], foc
     return scoring.score_gaps(list(rows), catchment.area_m2, around_area)
 
 
-async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> dict | None:
-    """Resolve free text ('bakeries', 'board game cafe') to a storefront place genre.
+async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dict | None, str | None]:
+    """Resolve free text ('bakeries', 'board game cafe') to a storefront place genre, or say why it cannot.
 
-    Genres locals already rank keep their local and reference ranks; others come from Qloo's tag search
-    and are marked unranked, which is itself evidence of weak local demand.
+    Genres locals already rank keep their local and reference ranks; others come from Qloo's tag search and are
+    marked unranked, which is itself evidence of weak local demand. A search result only counts when its words match
+    the query's (exactly, more specific or broader): "art gallery" must not become "Aboriginal art gallery".
     """
     wanted = _normalize_genre(query)
     exact = next((genre for genre in ranked if _normalize_genre(genre["name"]) == wanted), None)
     if exact:
-        return exact
-    data = await q.tags({"filter.query": query.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 5})
-    for tag in scoring.tags(data):
+        return exact, None
+    data = await q.tags({"filter.query": query.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 10})
+    best = None
+    for position, tag in enumerate(scoring.tags(data)):
         tag_id, name = scoring.tag_id(tag), tag.get("name")
-        if not tag_id or not name or not scoring.is_business_genre(name):
-            continue
-        known = next((genre for genre in ranked if genre["id"] == tag_id), None)
-        return known or {"id": tag_id, "name": name, "rank": scoring.UNRANKED, "ref_rank": None}
-    return None
+        quality = _match_quality(wanted, _normalize_genre(name)) if tag_id and name else 0
+        if quality and (best is None or (-quality, len(name.split()), position) < best[0]):
+            best = ((-quality, len(name.split()), position), tag_id, name)
+    if best is None:
+        return None, f"Qloo has no storefront category matching '{query}'."
+    _, tag_id, name = best
+    if name.strip().lower() in scoring.GENERIC_GENRES:
+        return None, f"Qloo has no specific storefront category for '{query}', only the generic {name}."
+    if not scoring.is_business_genre(name):
+        return None, f"Qloo treats {name} as a taste cue or a non-storefront place, not a business to open here."
+    known = next((genre for genre in ranked if genre["id"] == tag_id), None)
+    return known or {"id": tag_id, "name": name, "rank": scoring.UNRANKED, "ref_rank": None}, None
+
+
+def _match_quality(query: str, name: str) -> int:
+    if query == name:
+        return 3
+    query_words, name_words = set(query.split()), set(name.split())
+    if query_words <= name_words:
+        return 2  # a more specific category: "bakery" -> "vegan bakery"
+    if name_words <= query_words:
+        return 1  # a broader one: "natural wine bar" -> "wine bar"
+    return 0
 
 
 def _normalize_genre(text: str) -> str:
     text = " ".join(text.lower().replace("-", " ").split())
-    text = text.removesuffix(" restaurant").removesuffix(" restaurants")
+    text = text.removesuffix(" restaurants").removesuffix(" restaurant")
     if text.endswith("ies"):
         return text[:-3] + "y"
+    if text.endswith(("ches", "shes", "sses", "xes")):
+        return text[:-2]
     return text[:-1] if text.endswith("s") and not text.endswith("ss") else text
 
 

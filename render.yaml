@@ -14,9 +14,13 @@ services:
       - key: LLM_BASE_URL
         value: https://generativelanguage.googleapis.com/v1beta/openai/
       - key: LLM_MODEL
-        value: gemini-3.8-flash
+        value: gemini-3.6-flash
+      - key: LLM_FALLBACK_MODELS
+        value: gemini-3.5-flash,gemini-2.5-flash,gemini-3.1-flash-lite
       - key: LLM_REASONING_EFFORT
         value: low
+      - key: LLM_TIMEOUT
+        value: "45"
       - key: IMAGE_PROVIDER
         value: cloudflare
       - key: CLOUDFLARE_ACCOUNT_ID

@@ -13,6 +13,8 @@ def build_llm(settings: Settings) -> LLM:
         settings.llm_model,
         temperature=settings.llm_temperature,
         reasoning_effort=settings.llm_reasoning_effort,
+        fallback_models=settings.llm_fallback_models,
+        timeout=settings.llm_timeout,
     )
 
 

@@ -559,6 +559,9 @@ function handle(event, data) {
     case "agent":
       logLine(agentText(data), "agent");
       break;
+    case "replay":
+      logLine(replayText(data), "finding");
+      break;
     case "finding":
       logLine(data.text, "finding");
       break;
@@ -617,21 +620,39 @@ function onStatus({ step, state: phase, label }) {
     item = logLine(label, "running", "Run");
     state.steps.set(step, item);
   }
+  if (phase === "failed" && item.classList.contains("running")) {
+    item.classList.remove("running");
+    item.classList.add("failed");
+    item.querySelector(".state").textContent = "✕";
+  }
   if (phase === "done" && !item.classList.contains("done")) {
     item.classList.remove("running");
     item.classList.add("done");
     item.querySelector(".state").textContent = `✓ ${elapsed()}`;
-    state.doneSteps += 1;
-    setProgress(state.doneSteps / STEP_TOTAL);
+    // The agent's thinking steps vary in number, so only the fixed pipeline steps move the progress mark.
+    if (!step.startsWith("agent-")) {
+      state.doneSteps += 1;
+      setProgress(state.doneSteps / STEP_TOTAL);
+    }
   }
 }
 
 function agentText({ tool, args }) {
-  if (tool === "inspect_gap") return `Agent inspects the ${args?.genre || "unknown"} gap: competitors, favorites, design DNA`;
-  if (tool === "local_taste") return "Agent reads local brands, artists and the crowd";
-  if (tool === "test_category") return `Agent tests a hunch live on Qloo: ${args?.category || "a new category"}`;
-  if (tool === "fan_taste") return `Agent asks Qloo what local fans of ${args?.category || "this category"} also love`;
-  return `Agent calls ${tool}`;
+  const reason = args?.reason ? ` — ${args.reason}` : "";
+  if (tool === "inspect_gap") return `Agent inspects the ${args?.genre || "unknown"} gap${reason}`;
+  if (tool === "test_category") return `Agent tests a hunch live on Qloo: ${args?.category || "a new category"}${reason}`;
+  if (tool === "fan_taste") return `Agent asks Qloo what local fans of ${args?.category || "this category"} also love${reason}`;
+  return `Agent calls ${tool}${reason}`;
+}
+
+function replayText({ saved_at: savedAt, model }) {
+  const when = savedAt ? new Date(savedAt * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "earlier";
+  return `Same Qloo evidence as a survey on ${when}: replaying that agent run${model ? ` (${model})` : ""} to save the free AI quota`;
+}
+
+function agentCredit({ model, replayed_from: replayedFrom }) {
+  if (!model) return "the agent";
+  return replayedFrom ? `the agent (${model}, replayed)` : `the agent (${model})`;
 }
 
 function onDone(data) {
@@ -972,14 +993,14 @@ function cellSpan(geohash) {
 
 /* ---------- 04 Concepts ---------- */
 
-function renderConcepts({ concepts = [], mode, note }) {
+function renderConcepts({ concepts = [], mode, note, model, replayed_from: replayedFrom }) {
   state.concepts = concepts;
   show("#s-concepts");
   $("#concepts-note").textContent =
     mode === "agent"
-      ? "Designed by the agent from the gaps above. Every claim traces back to Qloo evidence."
+      ? `Designed by ${agentCredit({ model, replayed_from: replayedFrom })} from the gaps above. Every claim traces back to Qloo evidence.`
       : mode === "rules"
-        ? "Built from the evidence by deterministic rules. Add an LLM key for agent-written concepts and interiors."
+        ? "Built from the evidence by deterministic rules (no AI model was available)."
         : note || "";
   const box = $("#posters");
   if (!concepts.length) {
@@ -1151,7 +1172,7 @@ function designHtml(concept, design, index) {
     : "";
   return `
     <div class="d-main">
-      <p class="d-eyebrow mono">Design sheet · Concept ${letter(index)} · ${esc(concept.genre)} · ${design.mode === "agent" ? "agent" : "evidence rules"}</p>
+      <p class="d-eyebrow mono">Design sheet · Concept ${letter(index)} · ${esc(concept.genre)} · ${design.mode === "agent" ? esc(design.model || "agent") : "evidence rules"}</p>
       <h2 class="d-title" id="design-title">${esc(name)}</h2>
       <p class="d-tagline">${esc(design.tagline || concept.one_liner)}</p>
       ${design.concept_statement ? `<p class="d-statement serif">${esc(design.concept_statement)}</p>` : ""}

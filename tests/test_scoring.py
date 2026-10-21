@@ -59,7 +59,7 @@ def test_nonprofit_brands_are_not_partners():
 def test_signature_items_follow_the_kind_of_business():
     dna = {"menu": ["Ramen"], "offerings": ["Cocktails", "Live music"], "amenities": ["Massage"], "activities": ["Karaoke"]}
     assert scoring.signature_items("Japanese", dna)[0] == "Ramen"
-    assert scoring.signature_items("Lounge", dna) == ["Karaoke", "Cocktails", "Live music"]
+    assert scoring.signature_items("Lounge", dna) == ["Cocktails", "Live music", "Karaoke"]
     assert scoring.signature_items("Spa", dna)[0] == "Cocktails"
     generic_first = {"offerings": ["Alcohol", "Beer", "Craft cider", "Trivia night"]}
     assert scoring.signature_items("Brewery", generic_first) == ["Craft cider", "Trivia night", "Alcohol"]
@@ -202,6 +202,25 @@ def test_a_genre_tested_later_shares_the_table_baseline():
     assert scoring.score_gaps([_row("D", 4, 4, 2, 8)], 1.0, 4.0)[0]["relative_supply"] == 1.0
 
 
+def test_demand_comparisons_are_stated_in_words_for_the_agent():
+    from app.agent import demand_comparison, gap_summary
+
+    assert demand_comparison({"demand_rank": 2, "ref_rank": 1.0}) == "about the same as in the areas around"
+    assert demand_comparison({"demand_rank": 8, "ref_rank": 25.5}).startswith("ranked higher here")
+    assert demand_comparison({"demand_rank": 9, "ref_rank": 3.0}).startswith("ranked lower here")
+    assert demand_comparison({"demand_rank": 4, "ref_rank": None}) == "no comparison available"
+    citywide = gap_summary(_row("Live music", 1, 2.5, 3, 12, far=10, total=10, kind="citywide") | {
+        "expected_nearby": 3.9, "relative_supply": 0.82, "evidence": "ok", "gap_score": 63,
+    })
+    assert citywide["do_locals_travel_for_it"].startswith("no evidence")
+    local = gap_summary(_row("Seafood", 7, 7.0, 5, 30, far=7, total=7) | {
+        "expected_nearby": 8.1, "relative_supply": 0.66, "evidence": "ok", "gap_score": 55,
+    })
+    assert local["do_locals_travel_for_it"] == (
+        "7 of the 7 places locals love more than the city does are outside the walk; median distance 3.0 km"
+    )
+
+
 def test_free_text_categories_normalize_to_genre_names():
     from app.engine import _normalize_genre
 
@@ -209,6 +228,39 @@ def test_free_text_categories_normalize_to_genre_names():
     assert _normalize_genre("Wine  Bars") == _normalize_genre("Wine Bar")
     assert _normalize_genre("Seafood restaurant") == _normalize_genre("Seafood")
     assert _normalize_genre("Glass") == "glass"
+    assert _normalize_genre("Brunches") == "brunch"
+
+
+def test_find_genre_only_accepts_categories_that_match_the_hunch():
+    import asyncio
+
+    from app.engine import find_genre
+
+    class TagSearch:
+        def __init__(self, names):
+            self.names = names
+
+        async def tags(self, params):
+            return {"results": {"tags": [
+                {"id": f"urn:tag:genre:place:{name.lower().replace(' ', '_')}", "name": name} for name in self.names
+            ]}}
+
+    ranked = [{"id": "urn:tag:genre:place:brunch", "name": "Brunch", "rank": 3, "ref_rank": 2.0}]
+
+    def find(names, query):
+        return asyncio.run(find_genre(TagSearch(names), ranked, query))
+
+    assert find([], "brunches")[0]["rank"] == 3  # the locals' own ranking comes first
+    genre, _ = find(["Vegan bakery", "Bakery"], "bakery")
+    assert genre["name"] == "Bakery" and genre["rank"] == 51 and genre["ref_rank"] is None
+    assert find(["Vegan bakery"], "bakery")[0]["name"] == "Vegan bakery"
+    assert find(["Wine shop", "Wine bar"], "natural wine bar")[0]["name"] == "Wine bar"
+    genre, why = find(["Aboriginal art gallery", "Art gallery"], "art gallery")
+    assert genre is None and "taste cue" in why
+    genre, why = find(["Clothing store"], "concept store")
+    assert genre is None and "no storefront category" in why
+    genre, why = find(["Store", "Clothing store"], "concept store")
+    assert genre is None and "only the generic Store" in why
 
 
 def test_reference_rank_uses_median_and_counts_missing_as_low():

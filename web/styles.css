@@ -257,6 +257,7 @@ h1, h2, h3, h4, p, figure, dl, dd { margin: 0; }
 .log .finding .msg { padding-left: 12px; border-left: 2px solid var(--blue); }
 .log .warn .msg { background: linear-gradient(transparent 55%, var(--yellow) 55%); }
 .log .err .msg { color: var(--red); }
+.log .failed .state { color: var(--red); }
 @keyframes blink { 50% { opacity: 0; } }
 .log-meta { margin-top: 16px; color: var(--ash); }
 

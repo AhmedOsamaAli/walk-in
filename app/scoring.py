@@ -43,7 +43,8 @@ GENERIC_OFFERINGS = {
     "takeout", "delivery", "seating", "outdoor seating", "wi fi", "wifi", "bar", "full bar", "restaurant",
     # Activity and attribute tags that describe nearly every bar or restaurant.
     "dining drinking", "social community", "nightlife", "entertainment", "ok to order just drinks",
-    "sports recreation", "culture arts", "nature outdoors", "tours", "celebrations",
+    "sports recreation", "culture arts", "nature outdoors", "tours", "celebrations", "people watching",
+    "coffee culture", "date night", "brunching", "hanging out", "group outings", "meeting friends", "family friendly",
 }
 
 COMPLAINT_PATTERN = re.compile(
@@ -117,7 +118,10 @@ def matches_focus(genre_name: str, focus: str) -> bool:
     return any(re.search(rf"\b{re.escape(word)}(s|es)?\b", lowered) for word in keywords)
 
 
-VENUE_WORDS = ("bar", "lounge", "pub", "brewery", "taproom", "club", "venue", "music", "karaoke", "comedy", "cinema", "bowling", "arcade")
+# Places people go to for an experience (a game, a show, a tour); checked before plain bars.
+VENUE_WORDS = ("sports", "music", "karaoke", "comedy", "cinema", "bowling", "arcade", "club", "venue", "brewery",
+               "taproom", "theater", "theatre")
+BAR_WORDS = ("bar", "lounge", "pub")
 WELLNESS_WORDS = ("spa", "salon", "personal care", "barber", "nail", "beauty", "massage", "gym", "fitness", "yoga", "pilates", "wellness", "tattoo")
 
 
@@ -131,19 +135,23 @@ def genre_kind(genre: str) -> str:
         return "wellness"
     if _has_word(lowered, VENUE_WORDS):
         return "venue"
+    if _has_word(lowered, BAR_WORDS):
+        return "bar"
     if matches_focus(genre, "retail") and not matches_focus(genre, "food_drink"):
         return "retail"
     return "food"
 
 
 def signature_items(genre: str, dna: dict, limit: int = 3) -> list[str]:
-    """What a concept of this genre should be known for: menus for restaurants, offerings for venues and shops."""
+    """What a concept of this genre should be known for: menus for restaurants, offerings for bars and shops."""
     kind = genre_kind(genre)
     if kind == "food":
         items = (dna.get("menu") or []) + (dna.get("offerings") or [])
     elif kind == "venue":
         # What people go there to do comes first: game day viewing, concerts, brewery tours.
         items = (dna.get("activities") or []) + (dna.get("offerings") or []) + (dna.get("menu") or [])
+    elif kind == "bar":
+        items = (dna.get("offerings") or []) + (dna.get("activities") or []) + (dna.get("menu") or [])
     else:
         items = (dna.get("offerings") or []) + (dna.get("amenities") or []) + (dna.get("activities") or [])
     unique: list[str] = []
