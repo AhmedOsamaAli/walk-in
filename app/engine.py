@@ -13,6 +13,8 @@ TASTE_M = 1500  # neighborhood used for brand and artist taste
 METRO_M = 20_000  # the wider city, used for the city's own favorite places
 FAVORITES_M = 15_000  # where locals' favorite places are searched for
 MIN_AROUND_M = 900  # smallest "surrounding area" used to predict supply
+NEARBY_LIMIT = 100  # places of a genre counted inside the walk
+AROUND_LIMIT = 150  # places of a genre counted in the surrounding area
 GAP_GENRES = 8
 REF_BEARINGS = (0, 60, 120, 180, 240, 300)
 TASTE_REF_BEARINGS = (30, 150, 270)
@@ -48,6 +50,24 @@ async def places_in(q: QlooClient, location: dict, tag: str | None = None, take:
     if offset:
         params["offset"] = offset
     return scoring.entities(await q.insights(params))
+
+
+PAGE = 50
+
+
+async def places_upto(q: QlooClient, location: dict, tag: str, limit: int) -> list[dict]:
+    """Every place of a genre in an area, page by page up to `limit`: Qloo returns at most 50 per request, and a dense
+    city has more cafés than that within a kilometre, which would make every genre look equally common."""
+    found: dict[str, dict] = {}
+    offset = 0
+    while offset < limit:
+        page = await places_in(q, location, tag=tag, take=PAGE, offset=offset)
+        for place in page:
+            found.setdefault(scoring.item_id(place) or f"#{len(found)}", place)
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    return list(found.values())[:limit]
 
 
 def walk_filter(catchment: Catchment) -> dict:
@@ -112,8 +132,8 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
     lat, lon = catchment.lat, catchment.lon
     favorites_area = circle_filter(lat, lon, FAVORITES_M)
     nearby, around, local_favorites, city_favorites = await asyncio.gather(
-        places_in(q, walk_filter(catchment), tag=genre["id"]),
-        places_in(q, circle_filter(lat, lon, around_radius(catchment)), tag=genre["id"]),
+        places_upto(q, walk_filter(catchment), genre["id"], NEARBY_LIMIT),
+        places_upto(q, circle_filter(lat, lon, around_radius(catchment)), genre["id"], AROUND_LIMIT),
         places_in(q, {"signal.location": catchment.wkt, **favorites_area}, tag=genre["id"], take=20),
         places_in(
             q,
@@ -122,12 +142,21 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
             take=20,
         ),
     )
+    # Hotels and malls among the favorites make the comparison atypical; places Qloo merely tags with the genre (a
+    # museum with a bar for 'Cocktail bar') say nothing about it and are left out of the favorites.
+    storefront = scoring.storefront_share(local_favorites[:10])
+    local_favorites = scoring.relevant(local_favorites, genre["id"], genre["name"])
+    city_favorites = scoring.relevant(city_favorites, genre["id"], genre["name"])
     kind, favorites = scoring.split_favorites(local_favorites, city_favorites)
     row = scoring.gap_signals(
         genre["id"], genre["name"], genre["rank"], genre.get("ref_rank"),
-        nearby, around, favorites, kind, scoring.storefront_share(local_favorites[:10]),
+        nearby, around, favorites, kind, storefront,
         (lat, lon), catchment.contains,
+        nearby_capped=len(nearby) >= NEARBY_LIMIT, around_capped=len(around) >= AROUND_LIMIT,
     )
+    # Examples lead with the places whose main genre this is.
+    nearby = scoring.best_examples(nearby, genre["id"], genre["name"])
+    favorites = scoring.best_examples(favorites, genre["id"], genre["name"])
     row["competitors"] = [scoring.place_card(p, (lat, lon)) for p in nearby[:8]]
     row["favorites"] = [
         {**scoring.place_card(p, (lat, lon)), "within_walk": bool(loc and catchment.contains(*loc))}

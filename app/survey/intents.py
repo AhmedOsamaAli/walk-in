@@ -12,7 +12,7 @@ from statistics import median
 from .. import engine, scoring
 from ..qloo import QlooClient
 from . import experience
-from .evidence import fits, gap_evidence, gap_for, public_gap, storefront_favorites, with_fit
+from .evidence import annotate, fits, gap_evidence, gap_for, public_gap, storefront_favorites
 from .models import RunState
 
 # Tag families an owner can act on, and how many of them to suggest.
@@ -37,7 +37,7 @@ async def measured_row(q: QlooClient, run: RunState, genre: dict, source: str) -
         return row
     known = next((g for g in run.genres if g["id"] == genre["id"]), None)
     genre = {"rank": scoring.UNRANKED, "ref_rank": None, **(known or {}), **genre}
-    row = with_fit(run, await engine.probe_genre(q, run.catchment, genre, run.gaps))
+    row = annotate(run, await engine.probe_genre(q, run.catchment, genre, run.gaps))
     row["source"] = source
     run.explored.append(row)
     return row
@@ -66,7 +66,9 @@ async def verdict(q: QlooClient, run: RunState) -> dict:
     ranked = sorted([r for r in run.gaps if r["genre_id"] != row["genre_id"]] + [row], key=lambda r: -r["gap_score"])
     position, total = ranked.index(row) + 1, len(ranked)
     title = scoring.genre_title(row["genre"])
-    if not fits(row):
+    if row.get("ruled_out"):
+        level, headline = "misfit", f"Your notes rule out {title}: it {row['ruled_out']}."
+    elif not fits(row):
         level, headline = "misfit", f"{title} does not fit this unit: it {row['fit']['reason']}."
     elif row["evidence"] == "thin":
         level, headline = "thin", f"Qloo knows too few {title} places around here to judge it."

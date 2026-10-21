@@ -60,6 +60,8 @@ export interface SurveyState {
   baseline: BaselineConcept[];
   taste: TastePayload | null;
   summary: DonePayload | null;
+  /** The owner's notes as the server understood them. */
+  understood: string[];
   /** The latest action or finding, for the live status. */
   latest: string | null;
   error: string | null;
@@ -82,6 +84,7 @@ export const initialSurvey: SurveyState = {
   baseline: [],
   taste: null,
   summary: null,
+  understood: [],
   latest: null,
   error: null,
 };
@@ -141,7 +144,9 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
   switch (event.event) {
     case "run": {
       const mode = event.data.llm ? "LLM agent with Qloo tools" : "evidence rules (no LLM key set)";
-      return note({ ...state, runId: event.data.run_id }, at, "info", `Survey ${event.data.run_id} started · ${mode}`);
+      const understood = event.data.understood ?? [];
+      const started = note({ ...state, runId: event.data.run_id, understood }, at, "info", `Survey ${event.data.run_id} started · ${mode}`);
+      return understood.length ? note(started, at, "info", `Read from your notes: ${understood.join(", ")}`) : started;
     }
     case "status":
       return onStatus(state, event.data, at);

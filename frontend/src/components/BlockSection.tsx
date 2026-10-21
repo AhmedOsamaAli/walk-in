@@ -4,13 +4,22 @@ import { price, standingText, topicForms } from "../lib/format";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
 
-function Stat({ label, children }: { label: string; children: ReactNode }) {
+function Stat({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
   return (
     <div className="stat">
       <b>{children}</b>
       <span className="mono">{label}</span>
+      {note ? <small className="stat-note mono">{note}</small> : null}
     </div>
   );
+}
+
+/** How many places sit at each price level: "$ 35 · $$ 11 · $$$ 6". */
+function priceMix(levels: Record<string, number> | undefined): string {
+  return Object.entries(levels ?? {})
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([level, count]) => `${"$".repeat(Number(level))} ${count}`)
+    .join(" · ");
 }
 
 interface TopicsProps {
@@ -58,7 +67,10 @@ function Classics({ classics }: { classics: Classic[] }) {
             <span className="c-name">{classic.name}</span>
             <span className={classic.michelin ? "badge mono michelin" : "badge mono"}>{standingText(classic)}</span>
             <span className="c-meta">
-              <span className="mono">{classic.genre}</span>
+              <span className="mono">
+                {classic.genre}
+                {classic.price_level ? ` · ${"$".repeat(classic.price_level)}` : ""}
+              </span>
               {classic.known_for.length ? <span> · known for {classic.known_for.join(", ")}</span> : null}
             </span>
           </li>
@@ -90,7 +102,9 @@ export function BlockSection({ block }: { block: BlockPayload }) {
           <CountUp value={summary.place_count ?? places.length} />
         </Stat>
         <Stat label="Average rating">{summary.avg_rating ? <CountUp value={summary.avg_rating} decimals={2} /> : "—"}</Stat>
-        <Stat label="Most common price">{typical ? price(typical) : "—"}</Stat>
+        <Stat label="Most common price" note={priceMix(summary.price_levels)}>
+          {typical ? price(typical) : "—"}
+        </Stat>
         <Stat label="Place types">
           <CountUp value={genres.length} />
         </Stat>

@@ -15,21 +15,33 @@ from ..answers import AnswerCache
 from ..catchment import CatchmentService
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
-from . import intents
-from .concepts import concepts_from_agent, rule_concepts
-from .evidence import public_gap, with_fit
+from . import constraints, intents
+from .concepts import caution, concepts_from_agent, rule_concepts
+from .evidence import annotate, public_gap
 from .models import Emit, RunState, RunStore, Site
 
 log = logging.getLogger("blankspace")
+
+
+def read_notes(site: Site) -> constraints.Constraints:
+    """The owner's notes as rules; unit details written in the notes ('60 m², no kitchen') fill what the form left out."""
+    rules = constraints.parse(site.notes)
+    if site.size_m2 is None and rules.size_m2:
+        site.size_m2 = rules.size_m2
+    if site.kitchen is None and rules.kitchen:
+        site.kitchen = rules.kitchen
+    if site.outdoor is None and rules.outdoor is not None:
+        site.outdoor = rules.outdoor
+    return rules
 
 
 async def analyze_site(
     q: QlooClient, walker: CatchmentService, llm: LLM, store: RunStore, site: Site, emit: Emit,
     answers: AnswerCache | None = None,
 ) -> RunState:
-    run = RunState(id=uuid.uuid4().hex[:12], site=site)
+    run = RunState(id=uuid.uuid4().hex[:12], site=site, constraints=read_notes(site))
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
-    await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled})
+    await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood})
 
     async def step(name: str, label: str, coro):
         await emit("status", {"step": name, "state": "running", "label": label})
@@ -74,7 +86,7 @@ async def analyze_site(
             "gaps", "Comparing supply with the surroundings and finding places locals love more than the city",
             engine.gap_table(q, catchment, genres, site.focus),
         )
-        run.gaps = [with_fit(run, row) for row in gaps]
+        run.gaps = [annotate(run, row) for row in gaps]
         await emit("gaps", {"rows": [public_gap(g) for g in run.gaps]})
 
         if site.intent == "improve":
@@ -100,7 +112,12 @@ async def analyze_site(
 
 async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, answers: AnswerCache | None) -> None:
     if not run.gaps:
-        await emit("concepts", {"concepts": [], "mode": "none", "note": "Not enough Qloo data around this site."})
+        note = (
+            "Not enough Qloo data around this site." if run.site.focus == "any" else
+            f"None of the place types Qloo ranks for locals here is {scoring.FOCUS_NAMES[run.site.focus]}, so Qloo points "
+            "to no gap of that kind. Try any business."
+        )
+        await emit("concepts", {"concepts": [], "mode": "none", "note": note})
         return
     await emit("status", {"step": "concepts", "state": "running", "label": "Designing concepts from the gaps"})
     concepts, mode, about = [], "rules", {}
@@ -110,7 +127,11 @@ async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, an
     if not concepts:
         concepts, mode, about = rule_concepts(run), "rules", {}
     if not concepts:
-        mode, about = "none", {"note": "None of the categories the block is missing fits this unit."}
+        reason = "your notes rule out" if any(row.get("ruled_out") for row in run.gaps) else "this unit cannot host"
+        mode, about = "none", {"note": f"Every category the block is missing is one {reason}."}
+    warning = caution(run, concepts)
+    if warning:
+        about = {**about, "caution": warning}
     run.concepts = concepts
     await emit("status", {"step": "concepts", "state": "done", "label": "Designing concepts from the gaps"})
     await emit("concepts", {"concepts": concepts, "mode": mode, **about})

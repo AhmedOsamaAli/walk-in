@@ -70,6 +70,7 @@ export interface Classic extends Standing {
   id: string | null;
   name: string;
   genre: string;
+  price_level?: number | null;
   known_for: string[];
 }
 
@@ -95,6 +96,22 @@ export interface DemandPayload {
 
 export type Evidence = "ok" | "thin" | "atypical";
 
+export interface PriceEvidence {
+  /** The level to charge: what the evidence supports, within the owner's price range. */
+  level: number | null;
+  evidence_level: number | null;
+  /** Median price level of the places locals love, and of the places inside the walk. */
+  loved: number | null;
+  nearby: number | null;
+  basis: string;
+}
+
+export interface UnitFit {
+  fits: boolean;
+  reason: string | null;
+  capacity_text?: string | null;
+}
+
 export interface GapRow {
   genre_id: string;
   genre: string;
@@ -115,6 +132,13 @@ export interface GapRow {
   competitors?: PlaceCard[];
   favorites?: FavoritePlace[];
   source?: string;
+  /** The row in two or three words ("Clear gap", "Crowded"), and in plain sentences with its numbers. */
+  reading?: string;
+  why?: string[];
+  price?: PriceEvidence;
+  fit?: UnitFit | null;
+  /** Why the owner's notes rule the category out ("serves alcohol"), or null. */
+  ruled_out?: string | null;
 }
 
 export interface HeatCell {
@@ -142,8 +166,12 @@ export interface Concept {
   genre: string;
   gap_score: number;
   one_liner?: string;
-  price_level?: number;
+  for_whom?: string;
+  /** Null when Qloo lists no prices for the category here. */
+  price_level?: number | null;
+  price_basis?: string;
   why_here?: unknown;
+  beat_competitors?: string;
   signature?: unknown;
   inspired_by?: unknown;
   risk?: string;
@@ -153,6 +181,8 @@ export interface ConceptsPayload {
   concepts?: Concept[];
   mode?: string;
   note?: string;
+  /** A plain warning when even the best concept rests on a weak gap. */
+  caution?: string;
   model?: string | null;
   replayed_from?: number | null;
 }
@@ -165,6 +195,8 @@ export interface BaselineConcept {
 export interface RunPayload {
   run_id: string;
   llm: boolean;
+  /** What the server read from the owner's notes as rules ("no alcohol", "budget prices ($–$$)"). */
+  understood?: string[];
 }
 
 export type StepState = "running" | "done" | "failed";
@@ -238,8 +270,10 @@ export interface Design {
   concept_statement?: string;
   interior?: Interior | null;
   offer?: unknown;
-  price_level?: number;
-  hours?: string;
+  price_level?: number | null;
+  price_basis?: string;
+  hours?: string | null;
+  hours_basis?: string | null;
   music?: { direction?: string; artists?: unknown } | null;
   partners?: Partner[] | null;
   dna?: Record<string, unknown> | null;

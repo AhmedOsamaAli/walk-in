@@ -107,6 +107,21 @@ def test_full_survey_in_rules_mode():
         assert set(concepts["concepts"][0]["inspired_by"]) <= set(SEAFOOD_LOCAL_FAVORITES)
         ok_genres = {row["genre"] for row in rows if row["evidence"] == "ok"}
         assert {c["genre"] for c in concepts["concepts"]} <= ok_genres
+        # Every line is specific: numbers, named places, and what to do about the competition.
+        seafood = concepts["concepts"][0]
+        assert seafood["one_liner"].startswith("Seafood close to home: 1 inside the walk where a block this dense has about")
+        assert seafood["why_here"][1].startswith("Only 1 seafood place inside the 10-minute walk, where a block this dense usually has about")
+        assert seafood["why_here"][2].startswith("All 5 seafood places locals love more than the city does are outside the walk")
+        assert "Harbor Oyster Bar" in seafood["why_here"][2]
+        assert seafood["beat_competitors"].startswith("1 seafood place inside the walk; it is Seafood Nearby 0 (4.0★, $)")
+        assert "Their reviews complain about long waits and lines: take bookings or run a fast counter for walk-ins." in seafood["beat_competitors"]
+        assert seafood["risk"].startswith("Qloo measures taste, not foot traffic")
+        assert seafood["price_level"] == 2 and seafood["price_basis"] == (
+            "The seafood places locals love are $$ (median of 5); the 1 inside the walk is $."
+        )
+        assert by_genre["Seafood"]["reading"] == "Clear gap" and by_genre["Yoga studio"]["reading"] == "Thin data"
+        assert by_genre["Seafood"]["why"] == seafood["why_here"]
+        assert by_genre["Seafood"]["price"]["level"] == 2
 
         run_id = first(events, "run")["run_id"]
         design = client.post("/api/design", json={"run_id": run_id, "index": 0})
@@ -128,9 +143,13 @@ def test_full_survey_in_rules_mode():
         assert "screen" not in experience and "talks" not in experience  # a seafood restaurant has no screen nights
         assert "licenses" in experience["licensing"]
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
-        assert sheet["hours_basis"] == "Typical hours of the 5 Seafood places locals love that list them"
+        assert sheet["hours_basis"] == "Typical hours of the 5 seafood places locals love that list them"
         assert "launch" not in sheet
-        assert concepts["concepts"][0]["for_whom"].startswith("Neighbors within a 10-minute walk; the Seafood places")
+        assert concepts["concepts"][0]["for_whom"].startswith(
+            "Neighbors within a 10-minute walk who now travel a median"
+        ) and "km to seafood places such as Harbor Oyster Bar and Dockside Crab" in concepts["concepts"][0]["for_whom"]
+        assert sheet["price_basis"] == seafood["price_basis"]
+        assert sheet["interior"]["lighting"].startswith("Daylight through the shopfront")
         assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet  # cached
 
         assert client.post("/api/design", json={"run_id": "nope", "index": 0}).status_code == 404
@@ -241,9 +260,21 @@ def test_agent_investigates_live_and_is_grounded():
         assert concepts["concepts"][0]["inspired_by"] == ["Harbor Oyster Bar"]
         # Signatures are what people come for: the mood and the seats are dropped; none left means the favorites' own.
         assert concepts["concepts"][0]["signature"] == ["Oysters", "Crudo flight"]
-        assert concepts["concepts"][1]["signature"] == ["House ramen special"]
+        assert concepts["concepts"][1]["signature"] == ["House ramen special", "Croissant"]
         assert concepts["concepts"][2]["name"] == "Wine Bar, Test Corner"  # "Corner Cellar" is an existing wine bar
-        assert concepts["concepts"][1]["evidence"][0] == "Locals rank Ramen #9 here, versus a median outside the top 50 in same-size areas around."
+        assert concepts["concepts"][1]["evidence"][0] == (
+            "Locals rank ramen #9 among the place types they engage with; six same-size areas around rank it outside the "
+            "top 50, so demand is stronger here."
+        )
+        # The model chooses, names and positions; every factual line is rebuilt from the measured evidence.
+        rows = {row["genre"]: row for row in first(events, "gaps")["rows"]}
+        tide = concepts["concepts"][0]
+        assert tide["why_here"] == rows["Seafood"]["why"] and tide["why_here"] != ["Seafood ranks #1 here"]
+        # A price within one level of what the places locals love charge is the model's positioning call; it is kept,
+        # and the basis states the evidence it was weighed against.
+        assert tide["one_liner"] == "Raw bar for the block" and tide["price_level"] == 3
+        assert tide["price_basis"].startswith("The seafood places locals love are $$")
+        assert tide["beat_competitors"].startswith("1 seafood place inside the walk")
         assert first(events, "baseline")["concepts"][0]["name"] == "Generic Cafe"
 
         run_id = first(events, "run")["run_id"]
@@ -349,7 +380,10 @@ def test_agent_live_tests_are_budgeted(monkeypatch):
         events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
         assert [data["row"]["genre"] for event, data in events if event == "explored"] == ["Ramen"]
         assert any("budget used" in data["text"] for event, data in events if event == "finding")
-        assert [c["genre"] for c in first(events, "concepts")["concepts"]] == ["Ramen"]
+        # The agent proposed one concept; the strongest measured gaps fill the other two places.
+        concepts = first(events, "concepts")["concepts"]
+        assert [c["genre"] for c in concepts] == ["Ramen", "Seafood", "Brunch"]
+        assert concepts[0]["name"] == "Slurp" and concepts[1]["name"] == "Seafood, Test Corner"
 
 
 def render(client: TestClient, run_id: str, shot: str, index: int = 0):
@@ -489,7 +523,26 @@ def test_a_unit_nothing_fits_gets_an_honest_answer():
         events = sse_events(client.get("/api/run", params={**RUN_PARAMS, "focus": "food_drink", "kitchen": "none"}).text)
         concepts = first(events, "concepts")
         assert concepts["concepts"] == [] and concepts["mode"] == "none"
-        assert concepts["note"] == "None of the categories the block is missing fits this unit."
+        assert concepts["note"] == "Every category the block is missing is one this unit cannot host."
+
+
+def test_owner_notes_are_hard_rules():
+    with make_client() as client:
+        params = {**RUN_PARAMS, "notes": "no alcohol licence, about 60 m2, budget prices"}
+        events = sse_events(client.get("/api/run", params=params).text)
+        understood = first(events, "run")["understood"]
+        assert understood == ["no alcohol", "budget prices ($–$$)", "unit of about 60 m²"]
+        rows = {row["genre"]: row for row in first(events, "gaps")["rows"]}
+        assert rows["Wine Bar"]["ruled_out"] == "serves alcohol"
+        assert rows["Coffee shop"]["ruled_out"] is None
+        assert rows["Seafood"]["fit"]["fits"] is True  # 60 m² from the notes, no kitchen limit given
+        concepts = first(events, "concepts")["concepts"]
+        assert "Wine Bar" not in [c["genre"] for c in concepts]
+        assert all(c["price_level"] in (1, 2) for c in concepts)
+
+        params = {**RUN_PARAMS, "intent": "open", "business": "wine bar", "notes": "halal"}
+        verdict = first(sse_events(client.get("/api/run", params=params).text), "verdict")
+        assert verdict["level"] == "misfit" and verdict["headline"] == "Your notes rule out Wine Bar: it serves alcohol."
 
 
 def test_open_intent_judges_the_requested_business_and_designs_it_first():
@@ -501,7 +554,7 @@ def test_open_intent_judges_the_requested_business_and_designs_it_first():
         assert verdict["found"] and verdict["genre"] == "Ramen" and verdict["row"]["source"] == "owner"
         assert verdict["row"]["nearby_count"] == 0 and verdict["of"] == 9
         assert verdict["headline"].startswith("Ramen is ") and f"#{verdict['position']} of 9" in verdict["headline"]
-        assert verdict["evidence"][0] == "Locals rank Ramen #9 here, versus a median outside the top 50 in same-size areas around."
+        assert verdict["evidence"][0].startswith("Locals rank ramen #9 among the place types they engage with")
         concepts = first(events, "concepts")["concepts"]
         assert concepts[0]["genre"] == "Ramen" and len(concepts) == 3
 

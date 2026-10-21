@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GapRow } from "../api/types";
-import { agentText, coords, gapWhy, list, price, safeUrl, shortLabel, standingText, topicForms } from "./format";
+import { agentText, coords, gapWhy, list, price, priceLabel, safeUrl, shortLabel, standingText, topicForms } from "./format";
 
 const base: GapRow = {
   genre_id: "urn:tag:genre:place:seafood",
@@ -50,6 +50,13 @@ describe("formatting", () => {
     expect(price(1)).toBe("$");
     expect(price(9)).toBe("$$$$");
     expect(price(undefined)).toBe("$$");
+  });
+
+  it("labels known prices in words and never guesses an unknown one", () => {
+    expect(priceLabel(2)).toBe("$$ · moderate");
+    expect(priceLabel(4)).toBe("$$$$ · high-end");
+    expect(priceLabel(null)).toBe("");
+    expect(priceLabel(undefined)).toBe("");
   });
 
   it("shortens geocoder labels to two parts", () => {

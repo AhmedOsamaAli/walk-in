@@ -17,6 +17,13 @@ export function price(level: unknown): string {
   return "$".repeat(Math.max(1, Math.min(4, Number(level) || 2)));
 }
 
+const PRICE_WORDS = ["", "inexpensive", "moderate", "pricey", "high-end"];
+
+/** "$$ · moderate", or "" when Qloo lists no price: an unknown price is never shown as a guess. */
+export function priceLabel(level: number | null | undefined): string {
+  return level && level >= 1 && level <= 4 ? `${"$".repeat(level)} · ${PRICE_WORDS[level]}` : "";
+}
+
 /** Seconds as the log shows them: "4.2s". */
 export const secondsText = (seconds: number) => `${seconds.toFixed(1)}s`;
 

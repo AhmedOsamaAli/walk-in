@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from typing import Any
 
 from .. import scoring, space
@@ -12,8 +13,8 @@ from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
 from . import experience
-from .concepts import ground_names
-from .evidence import gap_for, storefront_favorites
+from .concepts import ground_names, grounded_price
+from .evidence import example_places, gap_for, in_sentence, offer_items
 from .experience import fans_of
 from .models import RunState
 
@@ -25,6 +26,8 @@ Ground every choice in the evidence: design DNA of the locals' favorite places, 
 love, local artists, nearby places and local brands.
 Design for the unit: no patio, terrace or sidewalk seating unless unit.outdoor_space is yes. When a unit is given,
 layout and seating fit its size and capacity, and there is no cooking line unless it has a full kitchen.
+owner_constraints are hard rules: nothing in the offer they forbid. The offer starts from offer_evidence (what the
+places locals love are known for, those no place inside the walk offers first) and price_level follows price_evidence.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), music {direction, artists (list, only from local_artists)},
 partners (list of {name, why}; name only from nearby_places or partner_brands), image_prompt (a photorealistic wide
@@ -38,7 +41,7 @@ async def design_concept(
 ) -> dict:
     concept = run.concepts[index]
     row = gap_for(run, concept["genre"])
-    dna = scoring.design_dna(storefront_favorites(row)[0]) if row else {}
+    dna = scoring.design_dna(example_places(row)) if row else {}
     fans: dict = {"brands": [], "artists": [], "specific": False}
     if row and q is not None:
         try:
@@ -72,6 +75,12 @@ async def design_concept(
             "partner_brands": fitting_brands[:8],
             "taste_cues": run.cues,
         }
+        if row:
+            brief["offer_evidence"] = offer_items(row, run.constraints, limit=8)
+            brief["price_evidence"] = (row.get("price") or {}).get("basis")
+        rules = run.constraints.as_evidence()
+        if rules:
+            brief["owner_constraints"] = rules
         if unit:
             brief["unit"] = {**unit, "capacity": capacity or "unknown"}
         payload = json.dumps(brief, ensure_ascii=False)
@@ -92,6 +101,9 @@ async def design_concept(
     if not design:
         design = rule_design(run, concept, dna, local_artists, fitting_brands, capacity=capacity)
         mode, model = "rules", None
+    design["offer"] = [item for item in design.get("offer") or [] if isinstance(item, str) and run.constraints.allows_item(item)][:6]
+    if row:
+        design["price_level"], design["price_basis"] = grounded_price(run, row, design.get("price_level", concept.get("price_level")))
     music = design.get("music") if isinstance(design.get("music"), dict) else {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
     design["music"] = music
@@ -264,35 +276,54 @@ def opening_hours(row: dict | None) -> tuple[str | None, str | None]:
     """Hours the places locals love of this type keep (competitors inside the walk when too few list theirs)."""
     if not row:
         return None, None
-    genre = scoring.genre_title(row["genre"])
-    found = scoring.typical_hours(storefront_favorites(row)[0])
+    genre = in_sentence(row["genre"])
+    found = scoring.typical_hours(example_places(row))
     if found:
         return found["text"], f"Typical hours of the {found['sample']} {genre} places locals love that list them"
-    found = scoring.typical_hours(row.get("_nearby_entities") or [])
+    found = scoring.typical_hours(scoring.relevant(row.get("_nearby_entities") or [], row["genre_id"], row["genre"]))
     if found:
         return found["text"], f"Typical hours of {found['sample']} {genre} places inside the walk"
     return None, None
+
+
+# Lighting a kind of business is designed around; the favorites' tags rarely say, so this is a design convention.
+LIGHTING = {
+    "food": "Daylight through the shopfront by day, warm pendants over the tables after dark",
+    "bar": "Low, warm light with the bar itself lit brightest",
+    "venue": "Dim house lights with a lit stage; brighter at the bar",
+    "retail": "Bright, even light on the displays, warmer at the counter",
+    "wellness": "Soft, calm light, dimmable in the treatment rooms",
+}
+WARM_AMBIENCE = re.compile(r"\b(romantic|cozy|cosy|intimate|dim|moody|candle)", re.IGNORECASE)
+BIG_ROOM_SEATING = re.compile(r"\b(outdoor|balcon\w*|stadium|tiered|mezzanine|patio|terrace|rooftop|lawn|bleacher\w*)\b", re.IGNORECASE)
 
 
 def rule_design(
     run: RunState, concept: dict, dna: dict, artists: list[str], partner_brands: list[str], capacity: str | None = None,
 ) -> dict:
     ambience = ", ".join(dna.get("ambience", [])[:3]).lower() or "warm and welcoming"
-    decor = dna.get("decor", [])[:4]
+    decor = [item.lower() for item in dna.get("decor", [])[:4]]
     minutes = run.site.minutes
-    layout = LAYOUTS.get(scoring.genre_kind(concept["genre"]), LAYOUTS["food"])
+    kind = scoring.genre_kind(concept["genre"])
+    layout = LAYOUTS.get(kind, LAYOUTS["food"])
     # Only space the owner says the unit has: favorites with patios say nothing about this unit.
     if run.site.outdoor:
         layout += ", plus sidewalk seating"
+    # Seating the favorites list, unless it belongs to a big building (balconies, stadium rows) or the outdoors.
     seating = ", ".join(
-        a for a in dna.get("amenities", []) if "seating" in a.lower() and "outdoor" not in a.lower()
+        a for a in dna.get("amenities", []) if "seating" in a.lower() and not BIG_ROOM_SEATING.search(a)
     ) or "Mixed bar and table seating"
+    lighting = LIGHTING.get(kind, LIGHTING["food"])
+    if kind == "food" and WARM_AMBIENCE.search(ambience):
+        lighting = "Low, warm light at every table"
     partners = [
-        {"name": name, "why": f"Popular inside the {minutes}-minute walk and complements rather than competes; cross-promote."}
+        {"name": name, "why": f"Loved inside the {minutes}-minute walk for a different visit than this one: cross-promote."}
         for name in partner_places(run, concept["genre"])
     ]
     if partner_brands:
-        partners.append({"name": partner_brands[0], "why": "A brand this area over-indexes on; a natural co-branding partner."})
+        partners.append({"name": partner_brands[0], "why": "A brand people within 1.5 km over-index on; a natural co-branding partner."})
+    row = gap_for(run, concept["genre"])
+    offer = [i["item"] for i in offer_items(row, run.constraints, limit=6)] if row else list(concept.get("signature") or [])
     return {
         "name": concept["name"],
         "tagline": concept.get("one_liner"),
@@ -300,12 +331,12 @@ def rule_design(
         "interior": {
             "mood": ambience,
             "materials": decor,
-            "lighting": "Warm, layered lighting" if "romantic" in ambience or "cozy" in ambience else "Bright, natural light",
+            "lighting": lighting,
             "layout": layout,
             "seating": f"{seating}; {capacity}" if capacity else seating,
         },
-        "offer": scoring.signature_items(concept["genre"], dna, limit=6),
-        "price_level": concept.get("price_level", 2),
+        "offer": offer,
+        "price_level": concept.get("price_level"),
         "music": {
             "direction": "Artists people within 1.5 km over-index on",
             "artists": artists[:5],

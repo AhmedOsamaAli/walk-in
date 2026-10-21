@@ -1,6 +1,6 @@
 import type { FavoritePlace, GapRow, PlaceCard } from "../api/types";
 import { cssVars, cx } from "../lib/css";
-import { gapWhy, standingText } from "../lib/format";
+import { gapWhy, priceLabel, standingText } from "../lib/format";
 import { CountUp } from "./CountUp";
 
 const MAX_PIPS = 24;
@@ -8,7 +8,12 @@ const MAX_PIPS = 24;
 function Competitor({ place }: { place: PlaceCard }) {
   const known = (place.known_for ?? []).slice(0, 2).join(", ");
   const complaints = (place.complaints ?? []).slice(0, 2).join(", ");
-  const meta = [place.rating ? `★ ${place.rating.toFixed(1)}` : "", standingText(place.standing), known ? `known for ${known}` : ""]
+  const meta = [
+    place.rating ? `★ ${place.rating.toFixed(1)}` : "",
+    place.price_level ? "$".repeat(place.price_level) : "",
+    standingText(place.standing),
+    known ? `known for ${known}` : "",
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -30,9 +35,13 @@ function Favorite({ place }: { place: FavoritePlace }) {
     : place.distance_m != null
       ? `${(place.distance_m / 1000).toFixed(1)} km away`
       : "";
+  const detail = [place.rating ? `★ ${place.rating.toFixed(1)}` : "", place.price_level ? "$".repeat(place.price_level) : ""]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <li>
       <span className="n">{place.name}</span>
+      {detail ? <span className="s">{detail}</span> : null}
       <span className="km">{where}</span>
     </li>
   );
@@ -80,15 +89,21 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
   const favoritesTitle = local ? `Places locals love more than the city does${median}` : "Locals' favorites (the city's famous spots)";
   const competitors = (gap.competitors ?? []).slice(0, 6);
   const favorites = (gap.favorites ?? []).slice(0, 6);
+  const why = gap.why ?? [];
+  const blocked = gap.ruled_out ? `Ruled out: ${gap.ruled_out}` : gap.fit && !gap.fit.fits ? `Doesn't fit: ${gap.fit.reason ?? "the unit"}` : null;
+  const priced = priceLabel(gap.price?.level);
 
   return (
-    <li className={cx("gap", index === 0 && "first", gap.evidence !== "ok" && "thin", open && "open")} style={cssVars({ "--i": index })}>
+    <li
+      className={cx("gap", index === 0 && "first", gap.evidence !== "ok" && "thin", open && "open", blocked && "out")}
+      style={cssVars({ "--i": index })}
+    >
       <button
         className="gap-row"
         type="button"
         aria-expanded={open}
         aria-controls={`${id}-detail`}
-        aria-label={`${gap.genre}, gap score ${gap.gap_score}`}
+        aria-label={`${gap.genre}, gap score ${gap.gap_score}${gap.reading ? `, ${gap.reading}` : ""}`}
         aria-describedby={`${id}-why`}
         onClick={() => {
           onToggle(index);
@@ -98,16 +113,16 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
         <span>
           <span className="gap-name">{gap.genre}</span>
           <span className="gap-meta">
+            {gap.reading ? <small className={cx("mono reading", reading(gap.reading))}>{gap.reading}</small> : null}
             <small className="mono">
               #{rankHere} here{around}
             </small>
-            {gap.evidence === "ok" ? null : (
-              <small className="mono flag">{gap.evidence === "thin" ? "thin data" : "atypical"}</small>
-            )}
             {gap.source === "agent" ? <small className="mono flag live">tested live by agent</small> : null}
+            {gap.source === "owner" ? <small className="mono flag live">your request</small> : null}
           </span>
+          {blocked ? <span className="gap-out mono">{blocked}</span> : null}
           <span className="gap-why serif" id={`${id}-why`}>
-            {gapWhy(gap)}
+            {leadLine(gap)}
           </span>
           <span className="gap-bars">
             <span className="meter">
@@ -137,6 +152,22 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
       <div className="gap-detail-wrap" id={`${id}-detail`} inert={!open}>
         <div className="gap-detail">
           <div className="gap-detail-inner">
+            {why.length || priced ? (
+              <div className="gap-evidence">
+                <h4 className="label mono">The evidence</h4>
+                <ul className="why-list">
+                  {why.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                  {gap.price ? (
+                    <li>
+                      {priced ? <b className="mono">Price {priced}. </b> : null}
+                      {gap.price.basis}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+            ) : null}
             <div>
               <h4 className="label mono">Competitors inside the walk</h4>
               <ul className="mini">
@@ -162,4 +193,30 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
       </div>
     </li>
   );
+}
+
+/** The badge's tone: a real gap is highlighted, a crowded or uncertain one is muted. */
+function reading(label: string): string {
+  if (label === "Clear gap" || label === "Under-supplied" || label === "Locals travel for it") return "strong";
+  if (label === "Crowded" || label === "Thin data" || label === "Atypical") return "weak";
+  return "";
+}
+
+/** The one evidence line that explains the badge; the rest are in the expanded row. */
+function leadLine(gap: GapRow): string {
+  const why = gap.why ?? [];
+  const find = (pattern: RegExp) => why.find((line) => pattern.test(line));
+  switch (gap.reading) {
+    case "Clear gap":
+    case "Under-supplied":
+    case "Crowded":
+      return find(/inside the \d+-minute walk/) ?? why[0] ?? gapWhy(gap);
+    case "Locals travel for it":
+      return find(/outside the walk|already inside the walk/) ?? why[0] ?? gapWhy(gap);
+    case "Thin data":
+    case "Atypical":
+      return why.at(-1) ?? gapWhy(gap);
+    default:
+      return why[0] ?? gapWhy(gap);
+  }
 }

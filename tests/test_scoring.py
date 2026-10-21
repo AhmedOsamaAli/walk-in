@@ -434,7 +434,8 @@ def test_summarize_block_counts_genres_keywords_and_classics():
     assert [c["name"] for c in summary["classics"]] == ["Chez Three", "Cafe One"]
     assert summary["classics"][0]["michelin"] == "1 star"
     assert summary["classics"][1] == {
-        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "reviews": 900, "known_for": ["great espresso"],
+        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "price_level": 2, "reviews": 900,
+        "known_for": ["great espresso"],
     }
 
 
@@ -523,3 +524,39 @@ def test_focus_matching():
     assert scoring.matches_focus("Yoga studio", "leisure")
     assert not scoring.matches_focus("Barbershop", "food_drink")
     assert scoring.matches_focus("Anything", "any")
+    # Shops where people eat or drink on the spot are food and drink, never retail; shops selling bottles are retail.
+    for genre in ("Coffee shop", "Ice cream shop", "Dessert shop", "Sandwich shop"):
+        assert not scoring.matches_focus(genre, "retail"), genre
+    assert scoring.matches_focus("Wine shop", "retail") and scoring.matches_focus("Book store", "retail")
+    assert scoring.genre_kind("Coffee shop") == "food" and scoring.genre_kind("Gift shop") == "retail"
+
+
+def place_with(primary: tuple[str, str] | None, tags: list[tuple[str, str]]) -> dict:
+    props = {"primary_genre": {"id": primary[0], "name": primary[1]}} if primary else {}
+    return {"entity_id": "p", "name": "P", "properties": props,
+            "tags": [{"id": i, "name": n, "type": "urn:tag:genre:place"} for i, n in tags]}
+
+
+def test_relevance_tiers_keep_places_that_are_the_business_in_earnest():
+    cocktail = ("urn:tag:genre:place:cocktail_bar", "Cocktail bar")
+    museum = place_with(("urn:tag:genre:place:tourist_attraction", "Tourist attraction"), [cocktail])
+    bar = place_with(("urn:tag:genre:place:bar", "Bar"), [cocktail])
+    real = place_with(cocktail, [cocktail])
+    assert [scoring.relevance_tier(p, *cocktail) for p in (real, bar, museum)] == [1, 2, 3]
+    assert scoring.relevant([museum, bar, real], *cocktail) == [bar, real]
+    assert scoring.best_examples([museum, bar, real], *cocktail) == [real, bar, museum]
+    # A seafood restaurant is the genre 'Seafood'; without a primary genre, the first genre tag decides.
+    seafood = place_with(("urn:tag:genre:place:x", "Seafood restaurant"), [])
+    assert scoring.relevance_tier(seafood, "urn:tag:genre:place:seafood", "Seafood") == 1
+    assert scoring.relevance_tier(place_with(None, [("urn:tag:genre:place:seafood", "Seafood")]), "urn:tag:genre:place:seafood", "Seafood") == 1
+    assert scoring.genre_key("Café") == scoring.genre_key("Cafe") and scoring.genre_key("Steak house") == "steakhouse"
+
+
+def test_global_stars_are_not_distinctive_of_a_neighborhood():
+    star = {"entity_id": "star", "name": "Global Star", "popularity": 0.9999}
+    homegrown = {"entity_id": "home", "name": "Homegrown Star", "popularity": 0.9999}
+    local = [star, homegrown, {"entity_id": "gem", "name": "Local Gem", "popularity": 0.6}]
+    filler = [{"entity_id": f"x{i}", "name": f"X{i}"} for i in range(20)]
+    # The global star sits low in one comparison list (rank noise); the homegrown star is in none of them.
+    references = [filler[:12] + ([star] if i == 0 else []) for i in range(3)]
+    assert [e["name"] for e in scoring.distinctive_by_rank(local, references)] == ["Homegrown Star", "Local Gem"]

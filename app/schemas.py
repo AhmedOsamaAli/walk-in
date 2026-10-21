@@ -90,6 +90,8 @@ class DesignSheet(BaseModel):
     offer: Any = None
     music: dict
     partners: list[dict]
+    price_level: int | None = Field(None, description="Price level the evidence supports, within the owner's range")
+    price_basis: str | None = Field(None, description="What the places locals love and the places inside the walk charge")
     hours: str | None = Field(description="Typical hours of the places locals love of this type")
     hours_basis: str | None
     capacity: str | None = Field(description="Most guests the unit holds, from building-code load factors")

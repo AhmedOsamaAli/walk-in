@@ -65,6 +65,7 @@
   display: grid; gap: 8px; padding: 30px var(--pad) 44px;
   color: var(--ash); font-size: 11px; text-transform: none; letter-spacing: .01em; line-height: 1.6;
 }
+.section-error { color: var(--red); text-transform: none; letter-spacing: .01em; }
 
 /* ---------- View transitions ---------- */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .5s; animation-timing-function: var(--ease); }

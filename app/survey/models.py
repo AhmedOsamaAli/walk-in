@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from ..catchment import Catchment
+from .constraints import Constraints
 
 Emit = Callable[[str, dict], Awaitable[None]]
 
@@ -34,6 +35,8 @@ class Site:
 class RunState:
     id: str
     site: Site
+    # What the owner's notes rule in or out, read once (constraints.parse) so every step applies the same rules.
+    constraints: Constraints = field(default_factory=Constraints)
     catchment: Catchment | None = None
     block: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)

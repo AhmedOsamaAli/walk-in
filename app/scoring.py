@@ -98,14 +98,31 @@ FOCUS_KEYWORDS = {
         "karaoke", "comedy", "music", "dance", "arcade", "game", "sports", "lounge", "coworking",
     ),
 }
+FOCUS_NAMES = {"food_drink": "food and drink", "retail": "retail", "leisure": "leisure and wellness"}
+
+
+def _matches(genre_name: str, keywords: Iterable[str]) -> bool:
+    lowered = genre_name.lower()
+    return any(re.search(rf"\b{re.escape(word)}(s|es)?\b", lowered) for word in keywords)
+
+
+# Shops that sell goods to take home, even when the goods are food or drink.
+RETAIL_GOODS = ("liquor", "wine shop", "wine store", "bottle shop", "cheese shop", "butcher", "grocery", "supermarket",
+                "convenience store", "spice", "health food store", "farmers market", "deli shop")
+
+
+def is_food_service(genre_name: str) -> bool:
+    """Eat or drink on the spot: a coffee shop or an ice cream shop is food and drink, not retail."""
+    return _matches(genre_name, FOCUS_KEYWORDS["food_drink"]) and not _matches(genre_name, RETAIL_GOODS)
 
 
 def matches_focus(genre_name: str, focus: str) -> bool:
     keywords = FOCUS_KEYWORDS.get(focus)
     if not keywords:
         return True
-    lowered = genre_name.lower()
-    return any(re.search(rf"\b{re.escape(word)}(s|es)?\b", lowered) for word in keywords)
+    if focus == "retail":
+        return (_matches(genre_name, keywords) or _matches(genre_name, RETAIL_GOODS)) and not is_food_service(genre_name)
+    return _matches(genre_name, keywords)
 
 
 # Places people go to for an experience (a game, a show, a tour); checked before plain bars.
@@ -127,9 +144,59 @@ def genre_kind(genre: str) -> str:
         return "venue"
     if _has_word(lowered, BAR_WORDS):
         return "bar"
-    if matches_focus(genre, "retail") and not matches_focus(genre, "food_drink"):
+    if matches_focus(genre, "retail"):
         return "retail"
     return "food"
+
+
+def strict_kind(genre: str) -> str | None:
+    """The kind of business a genre names, or None for what is not a storefront business ('Tourist attraction')."""
+    lowered = genre.lower()
+    if _has_word(lowered, WELLNESS_WORDS):
+        return "wellness"
+    if _has_word(lowered, VENUE_WORDS + ("concert hall", "theater", "event venue")):
+        return "venue"
+    if _has_word(lowered, BAR_WORDS):
+        return "bar"
+    if matches_focus(genre, "retail"):
+        return "retail"
+    if is_food_service(genre):
+        return "food"
+    return None
+
+
+GENRE_SUFFIXES = {"restaurant", "place", "spot", "eatery", "joint"}
+
+
+def genre_key(name: str) -> str:
+    """'Seafood restaurant' and 'Seafood' are one genre; 'Steak house' and 'Steakhouse', 'Café' and 'Cafe' too."""
+    return "".join(word for word in topic_text(name).split() if word not in GENRE_SUFFIXES)
+
+
+def relevance_tier(entity: dict, genre_id: str, genre_name: str) -> int:
+    """How truly a place is of a genre: 1 when it is its main genre, 2 when it is the same kind of business (a bar for a
+    cocktail bar, a restaurant for seafood), 3 when Qloo only tags it with the genre (a museum with a bar)."""
+    # The main genre as Qloo gives it, generic or not ('Bar', 'Tourist attraction'); the first genre tag without one.
+    main = (entity.get("properties") or {}).get("primary_genre") or {}
+    tag = (main.get("id"), main["name"]) if isinstance(main.get("name"), str) else next(iter(genre_tags(entity)), None)
+    if not tag:
+        return 3
+    tag_id, name = tag
+    if tag_id == genre_id or genre_key(name) == genre_key(genre_name):
+        return 1
+    kind = strict_kind(genre_name)
+    return 2 if kind and strict_kind(name) == kind else 3
+
+
+def relevant(places: list[dict], genre_id: str, genre_name: str) -> list[dict]:
+    """Places of the genre in earnest, in their original order: a museum Qloo tags 'Cocktail bar' is left out."""
+    return [place for place in places if relevance_tier(place, genre_id, genre_name) <= 2]
+
+
+def best_examples(places: list[dict], genre_id: str, genre_name: str) -> list[dict]:
+    """Places whose main genre it is first, then the same kind of business, each in their original order."""
+    tiers = [(relevance_tier(place, genre_id, genre_name), index, place) for index, place in enumerate(places)]
+    return [place for _, _, place in sorted(tiers, key=lambda item: item[:2])]
 
 
 def signature_items(genre: str, dna: dict, limit: int = 3) -> list[str]:
@@ -610,6 +677,12 @@ def menu_key(core: str) -> str:
     return MENU_SYNONYMS.get(key, key)
 
 
+def item_key(name: str) -> str:
+    """One key for any wording of a dish, drink or activity: 'Great croissants', 'croissant' and 'Croissants' meet."""
+    text = topic_text(name)
+    return menu_key(" ".join(_drop_fillers(text.split())) or text)
+
+
 @lru_cache(maxsize=16384)
 def topic(keyword: str, setting: str = "food") -> tuple[str, str] | None:
     """What one review keyword is about: ('complaint' | 'experience', theme label), ('menu', dish key), or None.
@@ -776,6 +849,7 @@ def summarize_block(places: Iterable[dict]) -> dict:
             liked = [label for label in known_for(topic_groups([place]), 6) if "michelin" not in label.lower()]
             classics.append((order, {
                 "id": item_id(place), "name": place["name"], "genre": genre_title(primary_genre(place) or business[0]),
+                "price_level": props.get("price_level"),
                 **evidence,
                 "known_for": liked[:3],
             }))
@@ -905,8 +979,13 @@ def gap_signals(
     storefront: float,
     site: tuple[float, float],
     within: Callable[[float, float], bool],
+    nearby_capped: bool | None = None,
+    around_capped: bool | None = None,
 ) -> dict:
-    """Raw evidence for one genre. `within(lat, lon)` says whether a point is inside the walking catchment."""
+    """Raw evidence for one genre. `within(lat, lon)` says whether a point is inside the walking catchment.
+
+    The capped flags say a count reached the most places that were fetched, so the true count may be higher.
+    """
     locations = [loc for loc in (place_location(f) for f in favorites) if loc]
     distances = [distance_m(site[0], site[1], *loc) for loc in locations]
     far = [loc for loc in locations if not within(*loc)]
@@ -916,9 +995,9 @@ def gap_signals(
         "demand_rank": local_rank,
         "ref_rank": ref_rank,
         "nearby_count": len(nearby),
-        "nearby_capped": len(nearby) >= 50,
+        "nearby_capped": len(nearby) >= 50 if nearby_capped is None else nearby_capped,
         "around_count": len(around),
-        "around_capped": len(around) >= 50,
+        "around_capped": len(around) >= 50 if around_capped is None else around_capped,
         "favorites_kind": favorites_kind,
         "favorites_total": len(locations),
         "favorites_far": len(far),
@@ -988,6 +1067,10 @@ def _supply_ratio(row: dict) -> float:
     return (row["nearby_count"] + 1) / (row["expected_raw"] + 1)
 
 
+# Qloo popularity is a percentile; above this an artist or brand is a household name everywhere (Beyoncé, Chanel).
+SUPERSTAR = 0.998
+
+
 def distinctive(local: list[dict], baseline: list[dict], limit: int = 8) -> list[dict]:
     """Entities that rank for the neighborhood but not for the wider metro baseline."""
     baseline_ids = {item_id(e) for e in baseline}
@@ -1006,6 +1089,10 @@ def distinctive_by_rank(
     for rank, entity in enumerate(local[:max_local_rank], 1):
         eid = item_id(entity)
         if not eid or not is_safe_name(entity.get("name")):
+            continue
+        # A global star counts as local taste only when no comparison area lists it at all; anywhere else, being ranked
+        # a few places higher here is rank noise among the same household names.
+        if (entity.get("popularity") or 0) >= SUPERSTAR and any(eid in ranks for ranks, _ in rank_maps):
             continue
         ref_rank = median([ranks.get(eid, missing) for ranks, missing in rank_maps])
         if ref_rank - rank >= min_lift:

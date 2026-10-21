@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { messageOf } from "../api/client";
 import type { Concept, Design } from "../api/types";
-import { letter, list, price } from "../lib/format";
+import { letter, list, priceLabel } from "../lib/format";
 import { loadDesign, shotsOf } from "../state/designs";
 import { Plate } from "./Plate";
 import { RenderFrame } from "./RenderFrame";
@@ -37,16 +37,18 @@ function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
 
 function Sheet({ runId, index, concept, design }: SheetProps & { design: Design }) {
   const interior = design.interior ?? {};
-  const rows: [string, string | null | undefined][] = [
-    ["Mood", interior.mood],
-    ["Decor & materials", list(interior.materials).join(", ")],
-    ["Lighting", interior.lighting],
-    ["Layout", interior.layout],
-    ["Seating", interior.seating],
-    ["Price", price(design.price_level ?? concept.price_level)],
-    ["Hours", design.hours],
+  const priced = priceLabel(design.price_level ?? concept.price_level);
+  const priceBasis = design.price_basis ?? concept.price_basis;
+  const rows: [string, string | null | undefined, string | null | undefined][] = [
+    ["Mood", interior.mood, null],
+    ["Decor & materials", list(interior.materials).join(", "), null],
+    ["Lighting", interior.lighting, null],
+    ["Layout", interior.layout, null],
+    ["Seating", interior.seating, null],
+    ["Price", priced || (priceBasis ? "Not listed" : null), priceBasis],
+    ["Hours", design.hours, design.hours_basis],
   ];
-  const spec = rows.filter((row): row is [string, string] => Boolean(row[1]));
+  const spec = rows.filter((row): row is [string, string, string | null | undefined] => Boolean(row[1]));
   const offer = list(design.offer);
   const artists = list(design.music?.artists);
   const direction = design.music?.direction;
@@ -70,10 +72,13 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
         {design.concept_statement ? <p className="d-statement serif">{design.concept_statement}</p> : null}
         <h3 className="d-h">Interior</h3>
         <dl className="spec">
-          {spec.map(([key, value]) => (
+          {spec.map(([key, value, basis]) => (
             <div key={key}>
               <dt>{key}</dt>
-              <dd>{value}</dd>
+              <dd>
+                {value}
+                {basis ? <small className="spec-basis">{basis}</small> : null}
+              </dd>
             </div>
           ))}
         </dl>

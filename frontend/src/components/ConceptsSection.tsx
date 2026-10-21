@@ -43,6 +43,7 @@ export function ConceptsSection({ data, baseline, onOpen }: ConceptsSectionProps
   return (
     <section id="s-concepts" className="sec reveal">
       <SectionHead no="04" title="What it should become" note={conceptsNote(data)} />
+      {data.caution && concepts.length ? <p className="concepts-caution">{data.caution}</p> : null}
       {concepts.length ? (
         <div className="posters">
           {concepts.map((concept, index) => (

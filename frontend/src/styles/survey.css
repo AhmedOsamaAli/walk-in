@@ -103,6 +103,7 @@
   font: 300 clamp(40px, 3.7vw, 62px)/.95 var(--f-sans); letter-spacing: -.045em; font-variant-numeric: tabular-nums;
 }
 .stat > span { display: block; margin-top: 10px; color: var(--text-4); }
+.stat-note { display: block; margin-top: 4px; font-size: 10.5px; color: var(--ash); }
 .voices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; }
 .topics li {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline;
@@ -158,6 +159,16 @@
 .gap-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 7px 0 10px; color: var(--ash); }
 .flag { padding: 3px 9px 2px; border: 1px solid var(--on-yellow); border-radius: 999px; background: var(--yellow); color: var(--on-yellow); }
 .flag.live { background: var(--blue-fill); border-color: var(--blue-fill); color: var(--on-blue); }
+.reading { padding: 3px 9px 2px; border: 1px solid var(--edge); border-radius: 999px; color: var(--text-3); }
+.reading.strong { background: var(--yellow); border-color: var(--on-yellow); color: var(--on-yellow); }
+.reading.weak { border-style: dashed; color: var(--ash); }
+.gap-out { display: block; margin: -2px 0 10px; color: var(--red); }
+.gap.out .gap-score, .gap.out .gap-name, .gap.out .gap-why, .gap.out .gap-bars { opacity: .45; }
+.gap-evidence { grid-column: 1 / -1; margin-bottom: 8px; }
+.why-list { border-top: var(--rule); }
+.why-list li { padding: 9px 0 9px 18px; border-bottom: var(--hair); position: relative; font-size: 14.5px; line-height: 1.45; color: var(--text-2); }
+.why-list li::before { content: ""; position: absolute; left: 2px; top: 16px; width: 6px; height: 6px; background: var(--blue-fill); }
+.why-list b { font-size: 10.5px; color: var(--ink); }
 .gap-why { display: block; margin-bottom: 12px; font-size: 16px; line-height: 1.38; color: var(--text-2); }
 .gap-bars { display: grid; gap: 10px; }
 .meter { display: grid; gap: 5px; }
@@ -235,6 +246,8 @@
 .poster-sig { display: flex; flex-wrap: wrap; gap: 6px; }
 .poster-sig span { padding: 5px 11px; border: 1px solid currentColor; border-radius: 999px; font-size: 12.5px; }
 .poster-insp { opacity: .8; line-height: 1.5; }
+.poster-note { max-width: 66ch; font-size: 14px; line-height: 1.45; }
+.poster-note b { display: block; margin-bottom: 3px; font-size: 10.5px; opacity: .85; }
 .poster-open {
   display: flex; justify-content: space-between; align-items: center;
   width: 100%; margin-top: 4px; padding-top: 14px; border-top: 1px solid currentColor;
@@ -242,6 +255,11 @@
 .poster-open:hover span:last-child { transform: translateX(4px); }
 .poster-open span:last-child { transition: transform .5s var(--ease); font-size: 18px; }
 .concepts-empty { font-size: 18px; }
+.concepts-caution {
+  margin: -8px 0 18px; padding: 12px 16px;
+  border: 1px dashed var(--on-yellow); border-radius: var(--r-m); background: var(--marker);
+  font-size: 15px; line-height: 1.45; color: var(--ink);
+}
 .without { margin-top: 22px; padding: 20px 22px; border: 1px dashed var(--edge); border-radius: var(--r-l); color: var(--text-5); }
 .without .label { margin: 0 0 12px; color: var(--text-5); }
 .without li { font: italic 380 21px/1.35 var(--f-serif); }

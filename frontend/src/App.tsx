@@ -7,6 +7,7 @@ import { ConceptsSection } from "./components/ConceptsSection";
 import { DesignSheet, type DesignTarget } from "./components/DesignSheet";
 import { GapsSection } from "./components/GapsSection";
 import { LiveStatus } from "./components/LiveStatus";
+import { SectionBoundary } from "./components/SectionBoundary";
 import { SiteHeader, type TitleField } from "./components/SiteHeader";
 import { SurveyLog } from "./components/SurveyLog";
 import { TasteSection } from "./components/TasteSection";
@@ -37,6 +38,14 @@ function briefFields(site: Site, minutes: WalkMinutes, area: number | null, focu
     { label: "Business", lines: [FOCUS_LABELS[focus]] },
     { label: "Constraints", lines: [shortNotes || "None"] },
   ];
+}
+
+/** Once the server has read the owner's notes, the title block shows the rules it applies rather than the raw text. */
+function withUnderstood(fields: TitleField[], understood: string[]): TitleField[] {
+  if (!understood.length) return fields;
+  return fields.map((field) =>
+    field.label === "Constraints" ? { ...field, lines: [understood.map((rule) => rule.charAt(0).toUpperCase() + rule.slice(1)).join(" · ")] } : field,
+  );
 }
 
 function readySections(survey: SurveyState): SectionId[] {
@@ -122,15 +131,33 @@ export function App() {
           />
           {surveyed ? (
             <>
-              <LiveStatus key={survey.run} survey={survey} />
-              <SiteHeader label={surveyed.label} fields={surveyed.fields} onNewSurvey={newSurvey} />
-              <SurveyLog log={survey.log} summary={survey.summary} />
-              {survey.block ? <BlockSection block={survey.block} /> : null}
-              {survey.gaps ? <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} /> : null}
-              {survey.concepts ? (
-                <ConceptsSection data={survey.concepts} baseline={survey.baseline} onOpen={openDesign} />
+              <SectionBoundary key={`live-${survey.run}`} label="The survey status">
+                <LiveStatus survey={survey} />
+              </SectionBoundary>
+              <SiteHeader label={surveyed.label} fields={withUnderstood(surveyed.fields, survey.understood)} onNewSurvey={newSurvey} />
+              <SectionBoundary key={`log-${survey.run}`} label="The survey log">
+                <SurveyLog log={survey.log} summary={survey.summary} />
+              </SectionBoundary>
+              {survey.block ? (
+                <SectionBoundary key={`block-${survey.run}`} label="The block">
+                  <BlockSection block={survey.block} />
+                </SectionBoundary>
               ) : null}
-              {survey.taste ? <TasteSection taste={survey.taste} cues={survey.cues ?? []} /> : null}
+              {survey.gaps ? (
+                <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
+                  <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} />
+                </SectionBoundary>
+              ) : null}
+              {survey.concepts ? (
+                <SectionBoundary key={`concepts-${survey.run}`} label="The concepts">
+                  <ConceptsSection data={survey.concepts} baseline={survey.baseline} onOpen={openDesign} />
+                </SectionBoundary>
+              ) : null}
+              {survey.taste ? (
+                <SectionBoundary key={`taste-${survey.run}`} label="The wider taste">
+                  <TasteSection taste={survey.taste} cues={survey.cues ?? []} />
+                </SectionBoundary>
+              ) : null}
             </>
           ) : null}
           <footer className="sheet-foot mono">

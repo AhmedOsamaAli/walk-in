@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import type { Concept } from "../api/types";
 import { cssVars } from "../lib/css";
-import { letter, list, price } from "../lib/format";
+import { letter, list, priceLabel } from "../lib/format";
 import { CountUp } from "./CountUp";
 
 interface PosterProps {
@@ -16,6 +16,7 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
   const why = list(concept.why_here).slice(0, 3);
   const signature = list(concept.signature).slice(0, 4);
   const inspired = list(concept.inspired_by).slice(0, 3).join(" · ");
+  const priced = priceLabel(concept.price_level);
   return (
     <article
       className={`poster p${index}`}
@@ -29,7 +30,7 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
         <span>
           Concept {letter(index)} · {concept.genre}
         </span>
-        <span>{price(concept.price_level)}</span>
+        {priced ? <span title={concept.price_basis}>{priced}</span> : null}
       </div>
       <div className="poster-head">
         <div className="poster-score">
@@ -54,6 +55,24 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
             <span key={k}>{item}</span>
           ))}
         </div>
+      ) : null}
+      {concept.beat_competitors ? (
+        <p className="poster-note">
+          <b className="mono">Competition</b>
+          {concept.beat_competitors}
+        </p>
+      ) : null}
+      {concept.price_basis ? (
+        <p className="poster-note">
+          <b className="mono">Price{priced ? ` ${priced.split(" · ")[0]}` : ""}</b>
+          {concept.price_basis}
+        </p>
+      ) : null}
+      {concept.risk ? (
+        <p className="poster-note">
+          <b className="mono">Risk</b>
+          {concept.risk}
+        </p>
       ) : null}
       {inspired ? <p className="poster-insp mono">Inspired by {inspired}</p> : null}
       <button ref={button} className="poster-open mono" type="button" aria-label={`Open design sheet: ${concept.name}`}>
