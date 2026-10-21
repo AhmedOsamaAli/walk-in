@@ -216,8 +216,9 @@ def test_agent_investigates_live_and_is_grounded():
          "price_level": 3, "inspired_by": ["Harbor Oyster Bar", "Invented Place"]},
         {"name": "Ghost Concept", "genre": "Not A Genre", "one_liner": "x", "why_here": [], "signature": []},
         {"name": "Second Seafood", "genre": "seafood", "one_liner": "x", "why_here": [], "signature": []},
-        {"name": "Slurp", "genre": "Ramen", "one_liner": "Ramen nobody nearby serves", "why_here": [], "signature": []},
-        {"name": "Corner Cellar & Co", "genre": "Wine Bar", "one_liner": "Natural wine", "why_here": [], "signature": []},
+        {"name": "Slurp", "genre": "Ramen", "one_liner": "Ramen  the  shops next door don't serve", "why_here": [], "signature": []},
+        {"name": "Corner Cellar & Co", "genre": "Wine Bar", "one_liner": "Natural wine in a cozy 40-seat room",
+         "why_here": [], "signature": []},
     ]})]
     qloo = FakeQloo()
     with make_client(llm=scripted_llm([investigate, submit]), qloo=qloo) as client:
@@ -262,6 +263,11 @@ def test_agent_investigates_live_and_is_grounded():
         assert concepts["concepts"][0]["signature"] == ["Oysters", "Crudo flight"]
         assert concepts["concepts"][1]["signature"] == ["House ramen special", "Croissant"]
         assert concepts["concepts"][2]["name"] == "Wine Bar, Test Corner"  # "Corner Cellar" is an existing wine bar
+        # Positioning is the model's, but it knows nothing about the unit or what sits beside it: an invented seat count
+        # gives way to the evidence's own line, and a competitor "next door" is only known to be nearby.
+        assert concepts["concepts"][1]["one_liner"] == "Ramen the shops nearby don't serve"
+        wine_line = concepts["concepts"][2]["one_liner"]
+        assert "40-seat" not in wine_line and not wine_line.startswith("Natural wine")
         assert concepts["concepts"][1]["evidence"][0] == (
             "Locals rank ramen #9 among the place types they engage with; six same-size areas around rank it outside the "
             "top 50, so demand is stronger here."

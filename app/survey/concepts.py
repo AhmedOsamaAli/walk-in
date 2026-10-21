@@ -10,7 +10,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from .. import engine, scoring
+from .. import engine, scoring, space
 from ..answers import AnswerCache, fingerprint
 from ..llm import LLM, LLMUnavailable
 from ..qloo import QlooClient, QlooError
@@ -77,8 +77,7 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
                 log.info("Concept name %r reuses the existing place %r; renamed", name, taken)
             name = f"{scoring.genre_title(row['genre'])}, {short_label(run.site.label)}"
         concept["name"] = name[:60]
-        if not str(concept.get("one_liner") or "").strip():
-            concept["one_liner"] = one_liner(row, minutes)
+        concept["one_liner"] = grounded_line(str(concept.get("one_liner") or ""), row, run.site)
         concept["price_level"], concept["price_basis"] = grounded_price(run, row, concept.get("price_level"))
         concept["signature"] = signature_of(concept.get("signature"), row, run)
         concept["for_whom"] = for_whom(row, minutes)
@@ -88,6 +87,41 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
         concept["evidence"] = concept["why_here"]
         cleaned.append(concept)
     return cleaned[:3]
+
+
+# A count of seats or guests, or a floor area: facts about a unit the model has never seen.
+UNIT_CLAIM = re.compile(
+    r"\b(\d[\d,.]*)\s*-?\s*(seats?|seater|covers?|guests?|people|m2|m²|sq\.?\s?ft|square\s(?:feet|foot|met(?:er|re)s?))\b",
+    re.IGNORECASE,
+)
+# Competitors are measured inside the walk, never placed next to the unit.
+NEXT_DOOR = re.compile(r"\b(?:next door|across the (?:street|road|block))\b", re.IGNORECASE)
+
+
+def grounded_line(text: str, row: dict, site: Site) -> str:
+    """The model's positioning, unless it states a capacity or floor area the unit does not have (then the evidence's
+    own line); competitors it places next door are only known to be nearby."""
+    text = " ".join(text.split())
+    if not text or any(not unit_supports(match, row, site) for match in UNIT_CLAIM.finditer(text)):
+        return one_liner(row, site.minutes)
+    return NEXT_DOOR.sub("nearby", text)
+
+
+def unit_supports(claim: re.Match, row: dict, site: Site) -> bool:
+    """Whether a stated floor area is the owner's own, or a stated capacity is within what the unit holds."""
+    try:
+        number = float(claim.group(1).replace(",", ""))
+    except ValueError:
+        return False
+    unit = claim.group(2).lower()
+    if unit.startswith(("m2", "m²", "sq", "square")):
+        if not site.size_m2:
+            return False
+        metric = unit.startswith(("m2", "m²")) or "met" in unit
+        stated = number if metric else number * space.SQ_FT_M2
+        return abs(stated - site.size_m2) <= 0.1 * site.size_m2
+    capacity = (row.get("fit") or {}).get("capacity")
+    return bool(capacity) and capacity["low"] * 0.8 <= number <= capacity["high"]
 
 
 def concept_risk(run: RunState, row: dict, level: int | None) -> str:
@@ -335,7 +369,9 @@ ruled_out_by_owner_notes, nothing in the offer they forbid), and respect the own
 Be specific enough that an owner could act on it, never filler such as "great vibes" or "quality and atmosphere":
 - three concepts are three different businesses (not brunch and breakfast, not a café and a coffee shop), each one a
   business someone can open: never a broad genre such as Personal care; test a specific one instead (gym, barbershop);
-- one_liner is the positioning in one sentence: what it is and how it differs from the competitors inside the walk;
+- one_liner is the positioning in one sentence: what it is and how it differs from the competitors inside the walk.
+  It states no number the evidence does not give (no seat counts, floor areas, years or prices) and places no
+  competitor "next door" (they are inside the walk);
 - signature items come first from inspect_gap's menu_gap: what the places locals love are known for and no place
   inside the walk is;
 - price_level follows the price_evidence and the owner's price range."""
@@ -568,6 +604,17 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         state = {"start": "running", "end": "done"}.get(phase, phase)
         await emit("status", {"step": f"agent-{step}", "state": state, "label": label})
 
+    waits = 0
+
+    async def on_wait(seconds: float, phase: str) -> None:
+        nonlocal waits
+        if phase == "start":
+            waits += 1
+        await emit("status", {
+            "step": f"agent-wait-{waits}", "state": "running" if phase == "start" else "done",
+            "label": f"Free AI quota refills in {max(1, round(seconds))} s; the agent waits",
+        })
+
     result, model = await llm.run_tools(
         CONCEPT_SYSTEM,
         "Evidence pack:\n" + json.dumps(evidence_brief(run), ensure_ascii=False),
@@ -581,6 +628,7 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         max_steps=6,
         on_call=on_call,
         on_step=on_step,
+        on_wait=on_wait,
     )
     raw = [c for c in (result or {}).get("concepts") or [] if isinstance(c, dict)]
     return AgentResult(clean_concepts(run, copy.deepcopy(raw)), raw, model, trail)

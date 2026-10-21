@@ -6,7 +6,17 @@ import httpx
 import pytest
 
 from app.images import ImageGen
-from app.llm import LLM, SIGNATURE_SENTINEL, LLMUnavailable, neutralize_signatures, parse_json
+from app.llm import (
+    CUT_NOTE,
+    LLM,
+    SIGNATURE_SENTINEL,
+    LLMUnavailable,
+    Provider,
+    approx_tokens,
+    fit,
+    neutralize_signatures,
+    parse_json,
+)
 
 
 def completion(message: dict, model: str = "test-model") -> dict:
@@ -214,6 +224,169 @@ def test_parse_json_only_returns_objects():
     assert parse_json("[1, 2]") == {}
     assert parse_json("no json here") == {}
     assert parse_json(None) == {}
+
+
+def groq_limit(message: str, status: int = 429, retry_after: str = "22") -> httpx.Response:
+    return httpx.Response(status, headers={"retry-after": retry_after}, json={"error": {
+        "message": message, "type": "tokens", "code": "rate_limit_exceeded"}})
+
+
+def two_providers(replies: dict[str, list[httpx.Response]], seen: list[tuple[str, dict]], **kwargs) -> LLM:
+    """Gemini as the main provider and Groq after it, each answering from its own queue."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, json.loads(request.content), request.headers["authorization"]))
+        return replies[request.url.host].pop(0)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    groq = Provider("groq-key", "https://groq.test/v1", ("groq-big", "groq-small"), reasoning_effort="low",
+                    token_limit=kwargs.pop("token_limit", 8000))
+    return LLM("gemini-key", "https://gemini.test/v1/", "gemini-3.6-flash", http_client=client, also=[groq], **kwargs)
+
+
+def test_a_second_provider_answers_when_the_first_is_out_of_quota():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [rate_limited("Day", "20s")],
+        "groq.test": [httpx.Response(200, json=completion({"role": "assistant", "content": '{"ok": 1}'}, "groq-big"))],
+    }, seen)
+    assert llm.models == ["gemini-3.6-flash", "groq-big", "groq-small"] and llm.model == "gemini-3.6-flash"
+    assert asyncio.run(llm.complete_json("system", "user")) == ({"ok": 1}, "groq-big")
+    (gemini_host, gemini, gemini_key), (groq_host, groq, groq_key) = seen
+    assert (gemini_host, gemini_key, "reasoning_effort" in gemini) == ("gemini.test", "Bearer gemini-key", False)
+    assert (groq_host, groq_key, groq["model"], groq["reasoning_effort"]) == ("groq.test", "Bearer groq-key", "groq-big", "low")
+    assert llm.resting()["gemini-3.6-flash"] > 3500
+
+
+def test_only_groq_configured_still_enables_the_agent():
+    from app.config import Settings
+    from app.providers import build_llm
+
+    llm = build_llm(Settings(llm_api_key="", groq_api_key="groq-key", groq_models=("openai/gpt-oss-120b",)))
+    assert llm.enabled and llm.models == ["openai/gpt-oss-120b"] and llm.model == "openai/gpt-oss-120b"
+    assert not build_llm(Settings(llm_api_key="", groq_api_key="")).enabled
+
+
+def test_a_turn_from_another_provider_is_sent_with_standard_fields_only():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [
+            httpx.Response(200, json=completion({
+                "role": "assistant", "content": None, "extra_content": {"google": {"thought_signature": "msg-sig"}},
+                "tool_calls": [tool_call("c1", "inspect_gap", {"genre": "Bakery"}, signature="call-sig")],
+            }, "gemini-3.6-flash")),
+            httpx.Response(503, json={"error": {"message": "overloaded"}}),
+        ],
+        "groq.test": [httpx.Response(200, json=completion({
+            "role": "assistant", "content": None, "reasoning": "Done checking.",
+            "tool_calls": [tool_call("c2", "submit_concepts", {"concepts": []})],
+        }, "groq-big"))],
+    }, seen)
+
+    async def inspect(args):
+        return {"genre": args["genre"]}
+
+    result, model = asyncio.run(llm.run_tools("s", "u", [], {"inspect_gap": inspect}, final_tool="submit_concepts"))
+    assert (result, model) == ({"concepts": []}, "groq-big")
+    on_gemini, on_groq = seen[1][1]["messages"][2], seen[2][1]["messages"][2]
+    assert on_gemini["extra_content"] == {"google": {"thought_signature": "msg-sig"}}  # its own turn, as written
+    assert set(on_groq) == {"role", "content", "tool_calls"}
+    assert set(on_groq["tool_calls"][0]) == {"id", "type", "function"}
+    assert all('"_model"' not in json.dumps(body) for _, body, _ in seen)
+
+
+def test_groq_rate_limits_rest_for_the_advised_time():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [rate_limited("Day")],
+        "groq.test": [
+            groq_limit("Rate limit reached for model `groq-big` on tokens per minute (TPM): Limit 8000, Used 5321, "
+                       "Requested 5598. Please try again in 21.8925s."),
+            groq_limit("Rate limit reached for model `groq-small` on requests per day (RPD): Limit 1000, Used 1000, "
+                       "Requested 1. Please try again in 1m26.4s.", retry_after="87"),
+        ],
+    }, seen)
+    with pytest.raises(LLMUnavailable) as error:
+        asyncio.run(llm.complete_json("system", "user"))
+    resting = llm.resting()
+    assert 22 <= resting["groq-big"] <= 23 and 87 <= resting["groq-small"] <= 88
+    assert "HTTP 429 (rate limit)" in str(error.value) and "groq-small: HTTP 429 (daily quota)" in str(error.value)
+
+
+def test_a_request_too_large_for_one_model_moves_on_without_resting_it():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [rate_limited("Day")],
+        "groq.test": [
+            groq_limit("Request too large for model `groq-big` on tokens per minute (TPM): Limit 8000, Requested 11577, "
+                       "please reduce your message size and try again.", status=413, retry_after="27"),
+            httpx.Response(200, json=completion({"role": "assistant", "content": '{"ok": 2}'}, "groq-small")),
+        ],
+    }, seen)
+    assert asyncio.run(llm.complete_json("system", "user")) == ({"ok": 2}, "groq-small")
+    assert "groq-big" not in llm.resting()
+
+
+def test_the_agent_waits_for_a_model_that_comes_back_soon():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [rate_limited("Day")],
+        "groq.test": [
+            groq_limit("Rate limit reached on tokens per minute (TPM). Please try again in 50ms."),
+            groq_limit("Rate limit reached on tokens per minute (TPM). Please try again in 80ms."),
+            httpx.Response(200, json=completion({"role": "assistant", "content": '{"ok": 3}'}, "groq-big")),
+        ],
+    }, seen, max_wait=5)
+    waits: list = []
+
+    async def on_wait(seconds: float, phase: str) -> None:
+        waits.append((phase, seconds))
+
+    started = time.perf_counter()
+    response, model = asyncio.run(llm._create([{"role": "user", "content": "u"}], on_wait=on_wait))
+    assert model == "groq-big" and [phase for phase, _ in waits] == ["start", "end"]
+    assert 0.9 < waits[0][1] < 1.2 and time.perf_counter() - started < 3
+    impatient = two_providers({"gemini.test": [rate_limited("Day")], "groq.test": [
+        groq_limit("Please try again in 50ms."), groq_limit("Please try again in 50ms.")]}, [], max_wait=0.5)
+    with pytest.raises(LLMUnavailable):
+        asyncio.run(impatient.complete_json("system", "user"))
+
+
+def test_long_tool_results_are_cut_oldest_first_to_fit_a_token_limit():
+    turn = {"role": "assistant", "content": None, "reasoning": "x" * 800, "tool_calls": [tool_call("c1", "t", {})]}
+    messages = [
+        {"role": "system", "content": "s"}, {"role": "user", "content": "u"},
+        turn, {"role": "tool", "tool_call_id": "c1", "content": "a" * 6000},
+        turn, {"role": "tool", "tool_call_id": "c1", "content": "b" * 6000},
+    ]
+    fitted = fit(messages, None, 2000)
+    assert fitted is not None and approx_tokens(fitted, None) <= 1800
+    oldest, newest = fitted[3]["content"], fitted[5]["content"]
+    assert oldest.endswith(CUT_NOTE) and len(oldest) <= len(newest)
+    assert "reasoning" not in fitted[2] and messages[3]["content"] == "a" * 6000  # the history is untouched
+    assert fit(messages, None, 100_000) is messages
+    assert fit([{"role": "user", "content": "u" * 20_000}], None, 2000) is None
+
+
+def test_a_token_limited_provider_gets_a_conversation_that_fits():
+    seen: list = []
+    llm = two_providers({
+        "gemini.test": [rate_limited("Day")],
+        "groq.test": [
+            httpx.Response(200, json=completion({"role": "assistant", "content": None,
+                                                 "tool_calls": [tool_call("c1", "inspect_gap", {"genre": "Bakery"})]}, "groq-big")),
+            httpx.Response(200, json=completion({"role": "assistant", "content": None,
+                                                 "tool_calls": [tool_call("c2", "submit", {"done": True})]}, "groq-big")),
+        ],
+    }, seen, token_limit=1500)
+
+    async def inspect(args):
+        return {"places": ["Bakery near the site"] * 400}
+
+    result, _ = asyncio.run(llm.run_tools("s", "u", [], {"inspect_gap": inspect}, final_tool="submit"))
+    assert result == {"done": True}
+    second = seen[-1][1]["messages"]
+    assert second[-1]["role"] == "tool" and second[-1]["content"].endswith(CUT_NOTE)
+    assert approx_tokens(second, None) <= 1350
 
 
 def gemini_reply(mime: str = "image/png") -> dict:

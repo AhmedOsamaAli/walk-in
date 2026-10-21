@@ -34,6 +34,15 @@ def _env_float(name: str) -> float | None:
         return None
 
 
+def _env_list(name: str, default: str = "") -> tuple[str, ...]:
+    return tuple(item.strip() for item in _env(name, default).split(",") if item.strip())
+
+
+def _env_or(name: str, default: float) -> float:
+    value = _env_float(name)
+    return default if value is None else value
+
+
 @dataclass(frozen=True)
 class Settings:
     qloo_api_key: str = field(default_factory=lambda: _env("QLOO_API_KEY"))
@@ -43,12 +52,21 @@ class Settings:
     llm_base_url: str | None = field(default_factory=lambda: _env("LLM_BASE_URL") or None)
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "gemini-3.6-flash"))
     # Tried in order when the main model is rate limited, overloaded or failing (free tiers have per-model quotas).
-    llm_fallback_models: tuple[str, ...] = field(
-        default_factory=lambda: tuple(m.strip() for m in _env("LLM_FALLBACK_MODELS").split(",") if m.strip())
-    )
+    llm_fallback_models: tuple[str, ...] = field(default_factory=lambda: _env_list("LLM_FALLBACK_MODELS"))
     llm_timeout: float = field(default_factory=lambda: _env_float("LLM_TIMEOUT") or 45.0)
     llm_temperature: float | None = field(default_factory=lambda: _env_float("LLM_TEMPERATURE"))
     llm_reasoning_effort: str | None = field(default_factory=lambda: _env("LLM_REASONING_EFFORT") or None)
+    # Longest wait, in seconds, for a resting model to come back before the agent hands over to the evidence rules.
+    llm_max_wait: float = field(default_factory=lambda: _env_or("LLM_MAX_WAIT", 40.0))
+    # A second free provider whose models follow the main chain (console.groq.com/keys). Its free tier allows 1,000
+    # requests a day and 8,000 tokens a minute per model, so long agent conversations are cut to fit.
+    groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY"))
+    groq_base_url: str = field(default_factory=lambda: _env("GROQ_BASE_URL", "https://api.groq.com/openai/v1"))
+    groq_models: tuple[str, ...] = field(
+        default_factory=lambda: _env_list("GROQ_MODELS", "openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b")
+    )
+    groq_reasoning_effort: str | None = field(default_factory=lambda: _env("GROQ_REASONING_EFFORT", "low") or None)
+    groq_token_limit: int = field(default_factory=lambda: int(_env_or("GROQ_TOKEN_LIMIT", 8000)))
     # Agent answers are reused when a site's evidence is unchanged, which saves the free AI quota. "0" turns it off.
     agent_cache: bool = field(default_factory=lambda: _env("AGENT_CACHE", "1") != "0")
     # Renders, tried in order (comma-separated): "cloudflare" (Workers AI FLUX, free daily allowance), "horde"

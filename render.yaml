@@ -21,6 +21,8 @@ services:
         value: low
       - key: LLM_TIMEOUT
         value: "45"
+      - key: GROQ_API_KEY
+        sync: false
       - key: IMAGE_PROVIDER
         value: cloudflare,horde
       - key: IMAGE_DAILY_LIMIT
