@@ -35,8 +35,11 @@ def evidence_brief(run: RunState) -> dict:
             "most_common_genres": s.get("top_genres", [])[:8],
             "average_rating": s.get("avg_rating"),
             "price_levels": s.get("price_levels"),
-            "what_reviews_praise": [k for k, _ in s.get("praise", [])[:8]],
-            "what_reviews_complain_about": [k for k, _ in s.get("complaints", [])[:6]],
+            "what_reviews_mention": {
+                "menu": [mention_text(g) for g in s.get("menu", [])[:8]],
+                "experience": [mention_text(g) for g in s.get("experience", [])[:8]],
+                "complaints": [mention_text(g) for g in s.get("complaints", [])[:6]],
+            },
         },
         "gap_table": [gap_summary(g) for g in run.gaps],
         "taste_cues": run.cues,
@@ -59,6 +62,12 @@ def evidence_brief(run: RunState) -> dict:
             "evidence": gap_summary(row) if row else None,
         }
     return brief
+
+
+def mention_text(group: dict) -> str:
+    """A review topic group in words: 'Long waits and lines (6,071 mentions at 75 places)'."""
+    mentions, places = group["mentions"], group["places"]
+    return f"{group['label']} ({mentions:,} mention{'' if mentions == 1 else 's'} at {places} place{'' if places == 1 else 's'})"
 
 
 def gap_summary(g: dict) -> dict:
@@ -120,12 +129,12 @@ def inspect_payload(run: RunState, row: dict) -> dict:
     return {
         "genre": row["genre"],
         "competitors_within_walk": [
-            {k: c.get(k) for k in ("name", "rating", "price_level", "praise", "complaints", "distance_m")}
+            {k: c.get(k) for k in ("name", "rating", "price_level", "known_for", "complaints", "distance_m")}
             for c in row["competitors"][:6]
         ],
         favorites_key: [
             {"name": f["name"], "km_away": round((f.get("distance_m") or 0) / 1000, 1), "price_level": f.get("price_level"),
-             "praise": f.get("praise"), "inside_walk": f.get("within_walk", False)}
+             "known_for": f.get("known_for"), "inside_walk": f.get("within_walk", False)}
             for f in cards[:8]
         ],
         "do_locals_travel_for_it": gap_summary(row)["do_locals_travel_for_it"],

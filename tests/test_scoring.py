@@ -27,32 +27,125 @@ def place(name, genres=(), keywords=(), rating=None, price=None, reviews=None, l
     return entity
 
 
+def kind(keyword: str, setting: str = "food") -> str | None:
+    found = scoring.topic(keyword, setting)
+    return found[0] if found else None
+
+
 def test_complaint_detection():
-    assert scoring.is_complaint("slow service")
-    assert scoring.is_complaint("long wait")
-    assert scoring.is_complaint("touts")
-    assert not scoring.is_complaint("outdoor seating")
-    assert not scoring.is_complaint("airlines lounge")
+    assert scoring.topic("slow service") == ("complaint", "Slow service")
+    assert scoring.topic("long wait") == ("complaint", "Long waits and lines")
+    assert scoring.topic("touts") == ("complaint", "Touts and tourist traps")
+    assert scoring.topic("outdoor seating") == ("experience", "Outdoor seating")
+    assert kind("airlines lounge") != "complaint"
 
 
 def test_review_keywords_that_repeat_the_name_or_address_are_dropped():
-    cafe = place("Zamalek Corner Cafe", keywords=[("zamalek", 9), ("koshari", 4), ("corner", 2), ("rude waiters", 1)])
+    cafe = place("Zamalek Corner Cafe", ["Cafe"], keywords=[("zamalek", 9), ("koshari", 4), ("corner", 2), ("rude waiters", 1),
+                                                             ("el zamalek", 3)])
     cafe["properties"]["address"] = "26th of July St, Zamalek, Cairo"
     assert [k["name"] for k in scoring.review_keywords(cafe)] == ["koshari", "rude waiters"]
-    assert scoring.place_card(cafe)["praise"] == ["koshari"]
+    card = scoring.place_card(cafe)
+    assert card["known_for"] == ["koshari"] and card["complaints"] == ["rude staff"]
+    # A keyword is dropped only when it repeats a whole word: "tea" is not in "Steak House".
+    steak = place("Steak House", ["Steak house"], keywords=[("tea", 2), ("house", 1)])
+    assert [k["name"] for k in scoring.review_keywords(steak)] == ["tea"]
+
+
+def test_string_keywords_do_not_crash():
+    # Movies and shows carry keywords as plain strings, sometimes next to records.
+    film = {"entity_id": "f1", "name": "Heist Film", "properties": {"keywords": ["heist", "drama", {"name": "oysters", "count": 2}]}}
+    assert scoring.review_keywords(film) == [{"name": "oysters", "count": 2}]
+    assert scoring.place_card(film)["known_for"] == []
+    assert scoring.summarize_block([film, {"name": "Bare", "properties": {"keywords": ["x", None, 3]}}])["menu"] == []
 
 
 def test_menu_items_with_complaint_words_are_not_complaints():
-    assert not scoring.is_complaint("dirty martinis")
-    assert not scoring.is_complaint("dirty chai")
-    assert not scoring.is_complaint("friendly wait staff")
-    assert scoring.is_complaint("dirty tables")
+    assert kind("dirty martinis") == kind("dirty chai") == "menu"
+    assert scoring.topic("friendly wait staff") == ("experience", "Friendly staff")
+    assert scoring.topic("dirty tables") == ("complaint", "Hygiene")
 
 
-def test_negated_complaints_are_praise():
-    assert not scoring.is_complaint("not crowded")
-    assert not scoring.is_complaint("no wait")
-    assert scoring.is_complaint("crowded")
+def test_negated_complaints_are_not_complaints():
+    assert scoring.topic("not crowded") == ("experience", "Spacious")
+    assert scoring.topic("no wait") == ("experience", "Short waits")
+    assert scoring.topic("crowded") == ("complaint", "Crowding")
+
+
+def test_the_users_example_collapses_into_four_complaint_themes():
+    words = [("long lines", 117), ("wait time", 65), ("crowded", 50), ("loud music", 20), ("on line", 5),
+             ("long wait times", 2), ("rude bartender", 2)]
+    summary = scoring.summarize_block([place("Busy Bar", ["Bar"], words)])
+    assert summary["complaints"] == [
+        {"label": "Long waits and lines", "mentions": 189, "places": 1,
+         "keywords": ["long lines", "wait time", "on line", "long wait times"]},
+        {"label": "Crowding", "mentions": 50, "places": 1, "keywords": ["crowded"]},
+        {"label": "Noise", "mentions": 20, "places": 1, "keywords": ["loud music"]},
+        {"label": "Rude staff", "mentions": 2, "places": 1, "keywords": ["rude bartender"]},
+    ]
+    assert summary["menu"] == [] and summary["experience"] == []
+
+
+def test_complaint_look_alikes_are_never_complaints():
+    look_alikes = [
+        "short wait time", "short wait times", "quick lines", "fast line", "fast moving lines", "no long lines", "sight lines",
+        "clean lines", "line dancing", "line skipping", "ready to wait", "free parking", "valet parking", "pork belly burnt ends",
+        "salty honey pie", "burnt butter pecan", "dirty circus", "fixing bad haircuts", "bad bunny theme", "lineup", "slow cooked",
+        "gummy worms",
+    ]
+    assert [word for word in look_alikes if kind(word) == "complaint"] == []
+    assert {word: scoring.topic(word) for word in ("short wait time", "quick lines", "no long lines")} == {
+        "short wait time": ("experience", "Short waits"), "quick lines": ("experience", "Short waits"),
+        "no long lines": ("experience", "Short waits"),
+    }
+    assert scoring.topic("line dancing") == ("experience", "Live music and DJs")
+    assert kind("pork belly burnt ends") == kind("salty honey pie") == kind("burnt butter pecan") == "menu"
+    # Free and valet parking are neither a parking complaint nor a dish; plain "parking" is the complaint.
+    assert scoring.topic("free parking") is None and scoring.topic("valet parking") is None
+    assert scoring.topic("parking") == ("complaint", "Parking")
+    assert scoring.topic("limited seating") == ("complaint", "Crowding")
+    assert scoring.topic("greasy pizza") == ("complaint", "Food quality") and kind("greasy spoon") != "complaint"
+
+
+def test_neutral_topics_are_neither_menu_nor_experience():
+    neutral = [
+        "prices", "price", "cash only", "hotel", "school", "location", "floor", "bathroom", "security", "bouncer", "cashier",
+        "service", "selection", "kids", "delivery", "online ordering", "crowd", "space", "party", "bar", "cafe", "restaurant",
+        "coffee shop", "wine", "drinks", "food", "brunch", "great food", "michelin star", "portion size", "no reservations",
+        "fine dining", "birthday party", "book selection", "cover charge",
+    ]
+    assert {word: scoring.topic(word) for word in neutral if scoring.topic(word)} == {}
+    summary = scoring.summarize_block([place("Everything", ["Restaurant"], [(word, 10) for word in neutral])])
+    assert summary["menu"] == summary["experience"] == summary["complaints"] == []
+
+
+def test_spellings_of_a_dish_merge_under_its_most_mentioned_form():
+    places = [
+        place("A", ["Bakery"], [("croissants", 30), ("great croissants", 5), ("Crème brûlée", 4)]),
+        place("B", ["Cafe"], [("croissant", 12), ("creme brulee", 6), ("egyptian food", 3), ("egyptian", 2)]),
+    ]
+    menu = scoring.summarize_block(places)["menu"]
+    assert menu[0] == {"label": "croissants", "mentions": 47, "places": 2, "keywords": ["croissants", "croissant", "great croissants"]}
+    assert menu[1] == {"label": "creme brulee", "mentions": 10, "places": 2, "keywords": ["creme brulee", "crème brûlée"]}
+    assert menu[2]["label"] == "egyptian food" and menu[2]["keywords"] == ["egyptian food", "egyptian"]
+
+
+def test_shops_and_services_have_no_menu_and_no_merchandise_themes():
+    store = place("Gadget Store", ["Electronics store", "Shopping"], [("tvs", 40), ("helpful staff", 9), ("laptop", 5),
+                                                                       ("mattress selection", 4)])
+    barber = place("Sharp Barber", ["Barber shop", "Personal care"], [("fade", 12), ("clean", 3)])
+    venue = place("Loud Room", ["Live music venue"], [("live music", 30), ("pierogis", 2)])
+    assert scoring.place_card(store)["known_for"] == ["friendly staff"]
+    assert scoring.place_card(barber)["known_for"] == ["cleanliness"]
+    assert scoring.place_card(venue)["known_for"] == ["live music and DJs"]
+    sports_bar = place("Game Bar", ["Sports bar"], [("tvs", 40), ("wings", 9)])
+    assert scoring.place_card(sports_bar)["known_for"] == ["wings", "games and sports"]
+
+
+def test_labels_read_inside_sentences():
+    assert scoring.inline_label("Live music and DJs") == "live music and DJs"
+    assert scoring.inline_label("DJs") == "DJs" and scoring.inline_label("oysters") == "oysters"
+    assert scoring.natural_list(["a"]) == "a" and scoring.natural_list(["a", "b", "c"]) == "a, b and c"
 
 
 def test_hotels_are_not_storefront_inspiration():
@@ -333,14 +426,15 @@ def test_summarize_block_counts_genres_keywords_and_classics():
     summary = scoring.summarize_block(places)
     assert summary["place_count"] == 3
     assert dict(summary["top_genres"]) == {"Coffee shop": 1, "Wine Bar": 1, "French": 1}
-    assert ("slow service", 4) in summary["complaints"]
-    assert ("great espresso", 10) in summary["praise"]
+    assert summary["complaints"] == [{"label": "Slow service", "mentions": 4, "places": 1, "keywords": ["slow service"]}]
+    assert [(g["label"], g["mentions"]) for g in summary["menu"]] == [("great espresso", 10), ("natural wine", 7), ("tasting menu", 3)]
+    assert summary["experience"] == [] and "praise" not in summary
     assert summary["avg_rating"] == 4.47
     # Michelin first, then review history; a place with few reviews is not called established (and never "new").
     assert [c["name"] for c in summary["classics"]] == ["Chez Three", "Cafe One"]
     assert summary["classics"][0]["michelin"] == "1 star"
     assert summary["classics"][1] == {
-        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "reviews": 900, "praise": ["great espresso"],
+        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "reviews": 900, "known_for": ["great espresso"],
     }
 
 
@@ -352,7 +446,7 @@ def test_classics_use_the_primary_genre_and_skip_hotels():
     hotel = place("Grand Test Hotel", ["Extended stay hotel", "Hotel"], reviews=2000)
     classics = scoring.summarize_block([egyptian, generic, hotel])["classics"]
     assert [(c["name"], c["genre"]) for c in classics] == [("Abou Test", "Egyptian"), ("Plain Test", "Pizza Takeout")]
-    assert classics[0]["praise"] == ["okra"]
+    assert classics[0]["known_for"] == ["okra"]
 
 
 def test_standing_needs_michelin_or_a_long_review_history():
@@ -408,7 +502,7 @@ def test_places_listed_as_closed_every_day_have_unknown_hours():
 
 def test_design_dna_aggregates_tag_families_and_keywords():
     places = [
-        place("A", keywords=[("candlelit", 5), ("rude staff", 3)], price=3,
+        place("A", keywords=[("candlelit", 5), ("rude staff", 3), ("small plates", 4), ("prices", 9)], price=3,
               extra_tags=[("urn:tag:decor:qloo", "Industrial chic"), ("urn:tag:menu_highlight:qloo", "Small plates")]),
         place("B", keywords=[("candlelit", 2)], price=2,
               extra_tags=[("urn:tag:decor:qloo", "Industrial chic")]),
@@ -416,7 +510,8 @@ def test_design_dna_aggregates_tag_families_and_keywords():
     dna = scoring.design_dna(places)
     assert dna["decor"] == ["Industrial chic"]
     assert dna["menu"] == ["Small plates"]
-    assert dna["keywords"] == ["candlelit"]
+    # Grouped menu and experience topics, most mentioned first; complaints and neutral topics never appear.
+    assert dna["keywords"] == ["Atmosphere", "small plates"]
     assert dna["typical_price_level"] in (2, 3)
 
 

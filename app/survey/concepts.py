@@ -163,7 +163,7 @@ def rule_concept(run: RunState, row: dict) -> dict:
     minutes = run.site.minutes
     entities, cards = storefront_favorites(row)
     dna = scoring.design_dna(entities)
-    complaints = [c for comp in row["competitors"] for c in comp.get("complaints", [])][:3]
+    flagged = list(dict.fromkeys(theme for comp in row["competitors"] for theme in comp.get("complaints", [])))[:3]
     title = scoring.genre_title(row["genre"])
     return {
         "name": f"{title}, {short_label(run.site.label)}",
@@ -175,8 +175,8 @@ def rule_concept(run: RunState, row: dict) -> dict:
         "price_level": dna.get("typical_price_level") or 2,
         "why_here": gap_evidence(row, minutes),
         "beat_competitors": (
-            f"Nearby reviews flag: {', '.join(complaints)}. Design the service around avoiding these."
-            if complaints else "Few direct competitors nearby; win on quality and atmosphere."
+            f"Nearby reviews flag {scoring.natural_list(flagged)}. Design the service around avoiding these."
+            if flagged else "Few direct competitors nearby; win on quality and atmosphere."
         ),
         "signature": scoring.signature_items(row["genre"], dna),
         "inspired_by": [card["name"] for card in cards[:3]],
@@ -268,7 +268,8 @@ CONCEPT_TOOLS = [
         "type": "function",
         "function": {
             "name": "inspect_gap",
-            "description": "Competitors within walking distance (with review praise and complaints) and locals' favorite places of one genre, plus the design DNA of those favorites.",
+            "description": "Competitors within walking distance (with what reviews know them for and complain about) and "
+                           "locals' favorite places of one genre, plus the design DNA of those favorites.",
             "parameters": {
                 "type": "object",
                 "properties": {

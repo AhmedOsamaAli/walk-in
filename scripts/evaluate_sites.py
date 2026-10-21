@@ -32,11 +32,12 @@ def print_report(run: RunState, events: list[tuple[str, dict]]) -> None:
     s = run.summary
     print(f"block: {s.get('place_count')} places | avg rating {s.get('avg_rating')} | prices {s.get('price_levels')}")
     print("  common:", ", ".join(f"{g} {n}" for g, n in s.get("top_genres", [])[:6]))
-    print("  praise:", ", ".join(k for k, _ in s.get("praise", [])[:6]))
-    print("  complaints:", ", ".join(k for k, _ in s.get("complaints", [])[:6]) or "-")
+    for key in ("menu", "experience", "complaints"):
+        groups = s.get(key, [])[:6]
+        print(f"  {key}:", "; ".join(f"{g['label']} {g['mentions']} ({', '.join(g['keywords'][:3])})" for g in groups) or "-")
     for classic in s.get("classics", []):
         badge = f"Michelin {classic['michelin']}" if classic.get("michelin") else f"{classic['reviews']} reviews"
-        print(f"  classic: {classic['name']} ({classic['genre']}, {badge}) {', '.join(classic['praise']) or '-'}")
+        print(f"  classic: {classic['name']} ({classic['genre']}, {badge}) {', '.join(classic['known_for']) or '-'}")
     print("gaps:")
     for row in run.gaps[:6]:
         print(

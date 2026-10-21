@@ -68,12 +68,19 @@ def test_full_survey_in_rules_mode():
         assert catchment["minutes"] == 10 and len(catchment["ring"]) > 10
 
         block = first(events, "block")
-        assert block["summary"]["place_count"] == 30
-        assert any(key == "long wait" for key, _ in block["summary"]["complaints"])
-        classics = block["summary"]["classics"]
+        summary = block["summary"]
+        assert summary["place_count"] == 30
+        # Keywords are grouped by what they say; a dish written two ways is one group, labeled by its likeliest form.
+        assert summary["menu"] == [{"label": "croissant", "mentions": 60, "places": 30, "keywords": ["croissant", "great croissants"]}]
+        assert [(g["label"], g["places"]) for g in summary["experience"]] == [("Outdoor seating", 30), ("Friendly staff", 22)]
+        assert summary["complaints"] == [{"label": "Long waits and lines", "mentions": 40, "places": 8, "keywords": ["long wait"]}]
+        assert "praise" not in summary
+        classics = summary["classics"]
         assert [c["name"] for c in classics] == [f"Block Place {i}" for i in (0, 5, 10, 15, 20, 25)]
-        assert classics[0]["reviews"] == 1000 and classics[0]["praise"] == ["outdoor seating"]
-        assert "rising" not in block["summary"] and "growth" not in block["places"][0]
+        assert classics[0]["reviews"] == 1000 and classics[0]["known_for"] == ["croissant", "outdoor seating"]
+        assert "rising" not in summary and "growth" not in block["places"][0]
+        assert block["places"][0]["known_for"] == ["croissant", "outdoor seating"]
+        assert block["places"][0]["complaints"] == ["long waits and lines"]
 
         rows = first(events, "gaps")["rows"]
         by_genre = {row["genre"]: row for row in rows}
@@ -532,7 +539,9 @@ def test_improve_intent_compares_the_place_with_the_ones_locals_love():
         comparison = result["comparison"]
         # Compared with the favorites at a similar price ($$-$$$$ for a $$$ place): three of the five.
         assert comparison["peers"] == 3 and comparison["peers_label"] == "places locals love at a similar price"
-        assert comparison["complaints"] == ["slow service"]
+        assert comparison["known_for"] == ["fresh oysters"]
+        assert comparison["complaints"] == [{"label": "Slow service", "mentions": 6, "places": 1, "keywords": ["slow service"]}]
+        assert "outdoor seating" in comparison["peers_known_for"] and "fresh oysters" not in comparison["peers_known_for"]
         assert comparison["offer"]["menu"]["missing"] == [{"name": "House seafood special", "places": 3}]
         assert comparison["hours"]["place"] == {"Mon–Thu": "noon–9 pm", "Fri–Sat": "noon–9 pm", "Sun": "noon–9 pm"}
         assert set(comparison["hours"]) == {"place", "peers"}
@@ -546,6 +555,8 @@ def test_improve_intent_compares_the_place_with_the_ones_locals_love():
         assert result["moves"][1]["why"] == (
             "3 of the 3 Seafood places locals love at a similar price are known for it; Corner Fish Shack is not."
         )
+        assert result["moves"][0]["why"] == "Reviews of Corner Fish Shack flag slow service."
+        assert result["place"]["known_for"] == ["fresh oysters"] and result["place"]["complaints"] == ["slow service"]
 
 
 def test_improve_intent_reports_a_place_qloo_does_not_know():

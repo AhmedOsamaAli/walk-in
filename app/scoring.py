@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable
+from functools import lru_cache
 from statistics import mean, median
 
 from .geo import distance_m
@@ -50,21 +52,6 @@ GENERIC_OFFERINGS = {
     "happy hour food",
 }
 
-COMPLAINT_PATTERN = re.compile(
-    r"\b(slow|rude|expensive|overpriced|pricey|dirty|noisy|loud|noise|crowded|wait(ing)?|queue|lines?|"
-    r"cramped|tight|small portions?|bland|salty|smell|smelly|broken|disappoint\w*|mediocre|poor|bad|worst|"
-    r"unfriendly|parking|no seating|hygiene|stale|burnt|greasy|touts?|cold food|unhelpful)\b",
-    re.IGNORECASE,
-)
-
-# Menu items and names that contain complaint words but are not complaints.
-NOT_COMPLAINT_PATTERN = re.compile(
-    r"\bdirty (martinis?|chai|rice|fries|soda|horchata)\b|\bwait ?staff\b|\bbad bunny\b|\bline ?cooks?\b|"
-    r"\bpoor man'?s\b|\bloud(er)? than words\b",
-    re.IGNORECASE,
-)
-# "not crowded", "no wait": a complaint word that is negated reads as praise.
-NEGATED_PATTERN = re.compile(r"^\s*(not|never|no longer|hardly)\s+|\bno (wait|waiting|lines?|queues?|crowds?)\b", re.IGNORECASE)
 NON_COMMERCIAL_BRAND = re.compile(r"nonprofit|non-profit|political|government|religious|advocacy", re.IGNORECASE)
 # Makers, shops and designers can co-brand with a small storefront; media groups and corporations cannot.
 # Teams (Qloo's "entertainment" brands) are added for sports concepts only.
@@ -82,8 +69,8 @@ DESIGN_FAMILIES = {
     "interests": "urn:tag:interests",
 }
 
-# Qloo returns raw catalog names; keep slurs out of the UI.
-OFFENSIVE_PATTERN = re.compile(r"n[i1!]gg(a|ah|as|az|er|ers)\b|f[a@]gg?[o0]ts?\b|r[e3]t[a@]rd", re.IGNORECASE)
+# Qloo returns raw catalog names and review keywords; keep slurs out of the UI.
+OFFENSIVE_PATTERN = re.compile(r"n[i1!]gg(a|ah|as|az|er|ers)\b|f[a@]gg?[o0]ts?\b|r[e3]t[a@]rd|\bredskins?\b", re.IGNORECASE)
 
 
 def is_safe_name(name: str | None) -> bool:
@@ -234,13 +221,6 @@ def is_taste_cue(name: str) -> bool:
     return name.strip().lower() in TASTE_CUE_GENRES
 
 
-def is_complaint(keyword: str) -> bool:
-    keyword = keyword or ""
-    if NEGATED_PATTERN.search(keyword):
-        return False
-    return bool(COMPLAINT_PATTERN.search(NOT_COMPLAINT_PATTERN.sub("", keyword)))
-
-
 def is_storefront_place(entity: dict) -> bool:
     """False for hotels, malls and other places whose design cannot inspire a small storefront."""
     return not any(name.lower() in NOT_STOREFRONT_GENRES for _, name in genre_tags(entity))
@@ -284,17 +264,475 @@ def standing(entity: dict) -> dict | None:
     return result
 
 
+def _themes(*pairs: tuple[str, str]) -> tuple[tuple[str, re.Pattern], ...]:
+    return tuple((label, re.compile(pattern)) for label, pattern in pairs)
+
+
+# Review keywords are topics reviews mention, counted but without polarity: "parking" may be easy or a nightmare. Each
+# keyword is read as one kind: a complaint theme, an experience theme, a menu item, or nothing (a neutral topic such as
+# "prices"). Themes gather what reviews say in different words ("long lines", "wait time", "on line"), so a summary never
+# lists the same point twice. Patterns run on topic_text(): lowercase, accents and punctuation folded.
+
+# Dishes, dances, design terms and names that contain a complaint word.
+NOT_COMPLAINT_PATTERN = re.compile(
+    r"\bdirty (martinis?|chai|rice|fries|soda|horchata|circus|dancing|south|dozen|shirley)\b|\bwait ?staff\b|\bbad bunny\b|"
+    r"\bline ?cooks?\b|\bpoor mans?\b|\bloud(er)? than words\b|\bline danc\w*|\bsight ?lines?\b|\bclean lines?\b|"
+    r"\b(line|queue) (skipp|jump)\w*|\bskip (the )?(line|queue)s?\b|\bfixing bad\b|\bready to wait\b|\bworth (the )?wait\w*|"
+    r"\bburnt (ends?|butter|sugar|honey|caramel|orange|basque|cheesecake|toffee|onions?)\b|\bsalty (honey|dog|caramel|pretzels?|lassi)\b|"
+    r"\bbroken (rice|yolks?|eggs?|noodles)\b|\bslow (cooked|cooker|roasted|braised|smoked|food|jams?|danc\w*|drip|pour|burn|"
+    r"fermented|rise)\b|\bgreasy spoon\b|\bpacked with\b|\b(subway|train|bus|metro|tram|ferry|phone|front|punch|straight) lines?\b|"
+    r"\bnoise (cancel\w*|machines?)\b|\bwhite noise\b|\b(good|great|positive|friendly|nice|fun) attitude\b|\bgummy (worms?|bears?)\b"
+)
+# A positive word turns a complaint word around: "short wait time", "no long lines", "not crowded", "free parking".
+NEGATED_COMPLAINT_PATTERN = re.compile(
+    r"\b(not|never|hardly|no|without|short|shorter|quick|quicker|fast|faster|minimal|zero|little|reasonable)"
+    r"( too| very| long| much| moving| a)? (waits?|waiting|wait ?times?|lines?|queues?|crowds?|crowded|busy|noise|noisy|loud|"
+    r"rude|dirty|smells?|smelly|expensive|overpriced|pricey)\b|"
+    r"\b(free|valet|easy|ample|plenty of|lots of|street|validated|convenient|cheap|on ?site|private|covered|underground|nearby) "
+    r"parking\b|\bparking (lots?|garages?|available|validation)\b|\bfast ?moving lines?\b|\blines? (moves?|moved|moving) (fast|quickly)\b"
+)
+COMPLAINT_THEMES = _themes(
+    ("Long waits and lines", r"\b(waits?|waiting|wait ?times?|wait ?list|lines?|line up|queues?|queuing|queueing)\b"),
+    ("Crowding", r"\b(crowded|overcrowded|crowds|packed|cramped|claustrophobic|oversold|overselling|tight (seating|space|quarters)|"
+                 r"(no|limited|not enough|lack of) (indoor |outdoor )?(seats|seating))\b"),
+    ("Noise", r"\b(loud|louder|loudness|noise|noises|noisy|deafening)\b"),
+    ("Rude staff", r"\b(rude|rudeness|rudely|unfriendly|unhelpful|unprofessional|disrespectful|arrogant|condescending|impolite|"
+                   r"attitude)\b"),
+    ("Slow service", r"\b(slow|slowly|slowness|delays?|delayed|understaffed|short ?staffed|"
+                     r"(bad|poor|terrible|horrible|awful|worst|inattentive) service)\b"),
+    ("Prices", r"\b(expensive|overpriced|over priced|pricey|rip ?offs?|price gouging|(high|steep) prices)\b"),
+    ("Hygiene", r"\b(dirty|dirtiness|filthy|hygiene|unhygienic|unclean|smells?|smelly|stinks?|stinky|odou?rs?|flies|roach(es)?|"
+                r"cockroach(es)?|rats|mice|bugs|insects?|aphids?|worms?)\b"),
+    ("Food quality", r"\b(bland|stale|greasy|oily|burnt|burned|soggy|tasteless|flavou?rless|mediocre|overcooked|undercooked|"
+                     r"inedible|cold food|food (was |is )?cold|poisoning|(bad|poor|terrible|horrible|awful|worst) (food|quality|taste))\b|"
+                     r"^(too |very |overly )?salty( (food|dish|dishes|meals?|sauce|broth))?$"),
+    ("Small portions", r"\b(small|smaller|tiny|skimpy|stingy|meager|meagre) portions?\b|\bportions? (are |were |too )?small\b"),
+    ("Parking", r"\bparking\b"),
+    ("Broken equipment", r"\b(broken|out of order|not working)\b"),
+    ("Touts and tourist traps", r"\b(touts?|touting|hustlers?|scams?|scammers?|scammy|tourist traps?)\b"),
+    ("Uncomfortable seats", r"\buncomfortable (seats?|seating|chairs?|benches|stools|booths?)\b|\bhard (seats|chairs|benches)\b"),
+)
+# Experience themes that read as a complaint turned around; they come before policies, since "no wait" is not a rule.
+TURNED_THEMES = _themes(
+    ("Short waits", r"\b(quick|quickly|prompt|immediate|immediately|instant|fast|easy) seat(ing|ed)\b|\bseated (quickly|immediately)\b|"
+                    r"\b(no|short|shorter|quick|quicker|fast|faster|minimal|little|zero|reasonable) (long )?(waits?|waiting|wait ?times?|"
+                    r"lines?|queues?)\b|\bfast ?moving lines?\b|\blines? (moves?|moving) (fast|quickly)\b|\b(quick|fast|speedy|prompt) service\b"),
+    ("Spacious", r"\bspacious\w*|\b(plenty of|ample|lots of|enough) (seating|seats|space|room|tables)\b|\b(not|never|un) ?crowded\b|"
+                 r"\bno crowds?\b|\broomy\b"),
+    ("Quiet", r"\b(quiet\w*|peaceful\w*|tranquil\w*|serene|serenity|calm\w*)\b|\b(not|never) (noisy|loud)\b|\bno noise\b"),
+)
+# "no reservations", "no laptops allowed", "bring your own wine": house rules, neither praise nor complaint.
+POLICY_PATTERN = re.compile(r"^(no|not|never|without)\b|\bbring your own\b|\bbyob?\b")
+# Phrases that carry an experience word but are something else: hot dogs, cat food, the view of a stage.
+NOT_EXPERIENCE_PATTERN = re.compile(
+    r"\bview of (the )?stage\b|\bkitchen views?\b|\bpoint of view\b|\bclean (lines?|cut|food|eating|ingredients|label|beauty)\b|"
+    r"\b(hot|corn|chili|chilli|cheese|bacon|chicago|coney) dogs?\b|\bcat (food|supplies|toys|litter|treats)\b|\bdated decor\b|"
+    r"\bdecor items\b|\blate (entry|orders?|fees?|check ?outs?)\b|\b(olive|square) gardens?\b|\bmusic (schools?|stores?|lessons?)\b|"
+    r"\bpiano (stores?|lessons?)\b|\bdog (training|trainers?|grooming)\b|\bbasketball shoes\b|\bdisco (fries|tots)\b|"
+    r"\bchess pies?\b|\bmusic memorabilia\b|\bsports (equipment|stores?|shops?|wear|clothing|apparel|nutrition)\b"
+)
+STAFF_ROLES = (
+    r"(staff|wait ?staff|service|team|crew|people|employees?|workers?|bartenders?|baristas?|servers?|waiters?|waitress(es)?|owners?|"
+    r"hosts?|hostess(es)?|chefs?|cooks?|managers?|management|docents?|guides?|instructors?|teachers?|stylists?|barbers?|artists?|"
+    r"sales ?(reps?|associates?|people|staff)|salesperson|associates|reps|cashiers?|bouncers?|door ?m[ae]n|receptionists?|concierge|"
+    r"front desk|nurses?|doctors?|smile)"
+)
+STAFF_PRAISE = (
+    r"(friendly|kind|welcoming|polite|helpful|attentive|accommodating|courteous|respectful|personable|knowledgeable|informative|"
+    r"professional|efficient|caring|sweet|warm|lovely|amazing|great|nice|good|excellent|wonderful|awesome|fantastic|outstanding|"
+    r"exceptional|pleasant|patient|funny|fun|cool|chill|happy|smiley|smiling|cheerful|generous|talented|skilled|qualified|competent|"
+    r"cooperative|responsive|prompt|quick|fast|engaging|passionate|sincere|hospitable|gracious|charming|energetic|thoughtful|"
+    r"considerate|honest|best|super)"
+)
+ATMOSPHERE_ADJECTIVES = (
+    r"(cozy|cosy|intimate|beautiful|gorgeous|stunning|charming|cute|elegant|classy|chic|stylish|relaxing|relaxed|chill|lively|fun|"
+    r"cool|homey|homely|warm|inviting|comfortable|comfy|quirky|unique|upscale|luxurious|luxury|fancy|swanky|trendy|hip|rustic|"
+    r"retro|vintage|aesthetic|welcoming|friendly|vibrant|energetic|eclectic|funky|modern|minimalist|sophisticated|casual|"
+    r"laid ?back|whimsical|magical|busy|buzzing|festive)"
+)
+PLACE_NOUNS = (
+    r"(atmosphere|vibes?|ambiance|ambience|place|spot|space|setting|venue|bar|cafe|room|rooms|interior|interiors|decor|environment|"
+    r"feel|feeling|experience|restaurant|lounge|pub|shop|store|hotel|property|building|indoors|seating|seats|chairs|couches|sofas|"
+    r"booths|area|corner|studio|layout|setup|location)"
+)
+EXPERIENCE_THEMES = _themes(
+    ("Vegan options", r"\b(vegan\w*|vegetarian\w*|veggie options|plant ?based|dairy ?free|meat ?free|meatless)\b"),
+    ("Gluten-free options", r"\b(gluten ?free|celiac|coeliac)\b"),
+    ("Healthy options", r"\b(healthy|healthier|organic|wholesome|nutritious|low ?carb|keto|paleo|seed oils?)\b|^health$"),
+    ("Happy hour", r"\bhappy hours?\b|\bdrinks? specials\b"),
+    ("Food truck", r"\b(food|taco|coffee|pizza|bbq|dessert|ice cream) trucks?\b"),
+    ("Food hall", r"\bfood (courts?|halls?|stalls?|vendors?)\b|^vendors$|\bmarket stalls\b"),
+    ("Late night", r"\blate ?nights?\b|\bopen late\b|\blate hours\b|\b24 ?(hours|7)\b|\bafter hours\b"),
+    ("Rooftop and views", r"\broof ?tops?\b|^roof( deck| terrace)?$|\bbalcon(y|ies)\b|\bviews?\b|\bskyline\b|\bsunsets?\b|\bnile\b|"
+                          r"\bwater ?front\b|\boverlook\w*|\bpanoram\w*"),
+    ("Outdoor seating", r"\boutdoors?\b|\boutside (seating|area|tables?|space|bar|dining)\b|\bal ?fresco\b|\bpatios?\b|\bback ?yards?\b|"
+                        r"\bterraces?\b|\bsidewalk\b|\bcourtyards?\b|\bverandas?\b|\bporch\b|\bpicnic tables?\b|\bfire ?pits?\b|"
+                        r"\bbeer gardens?\b|\bgardens?( seating| area| patio| space)?$|\bgreen space\b|\bcabanas?\b|\bstreet seating\b"),
+    ("Bar seating", r"\b(bar|counter|kitchen counter|chefs? counter|bar ?top|high ?top) (seating|seats|stools)\b|\bseats? at the (bar|counter)\b|"
+                    r"\bbar ?stools\b|\bchefs? counter\b|^counter$"),
+    ("Drinks list", r"\b(beers?|wines?|whiske?ys?|bourbons?|scotch|mezcals?|tequilas?|sakes?|gins?|rums?|vodkas?|cocktails?|drinks?|"
+                    r"teas?|coffees?|beans?|spirits|liquors?|ciders?) (selection|list|menu|program|variety|options|choices|collection|"
+                    r"offerings?|range)\b|\bselection of (beers?|wines?|whiske?ys?|cocktails|teas?|spirits)\b"),
+    ("Dive bar", r"\bdive bars?\b|^dive$|\bdivey\b"),
+    ("Speakeasy", r"\bspeak ?easy\w*|\bspeakeasies\b|\bhidden (bar|entrance|door)\b|\bsecret (door|entrance|bar|room|passage)\b|"
+                  r"\bphone booth\b|\bprohibition\b"),
+    ("Neighborhood bar", r"\b(neighbou?rhood|local|locals) (bar|pub|tavern|saloon|watering hole)\b"),
+    ("Live music and DJs", r"\b(live music|music\w*|musicians?|bands?|djs?|dj sets?|sound ?systems?|soundsystem|acoustics|sound quality|"
+                           r"dance ?floors?|dances?|dancing|dancers?|karaoke|jazz|blues|concerts?|gigs?|live (performances?|entertainment)|"
+                           r"piano\w*|pianists?|saxophon\w*|violinists?|guitarists?|singers?|singing|sing ?alongs?|songs?|oud|"
+                           r"umm kulthum|oum kalthoum|fairuz|fayrouz|juke ?box(es)?|playlists?|hip hop|techno|disco(theque)?s?|"
+                           r"disco (balls?|music|nights?)|honky ?tonk|bluegrass|reggae|raves?|edm|drum circle|"
+                           r"(reggaeton|salsa|cumbia|bachata|swing|latin|bollywood|80s|90s|70s) nights?)\b|^(sound|speakers|country)$"),
+    ("Shows and comedy", r"\b(comedy|comedians?|stand ?up|improv\w*|drag (shows?|brunch|queens?|bingo|performers?)|burlesque|cabaret|"
+                         r"magic shows?|shows?|performances?|plays|stages?|lineups?|poetry (slam|readings?)|open mic\w*|theaters?|"
+                         r"theatres?|screenings?|movies?|films?|cinema|circus)\b|^comics$"),
+    ("Games and sports", r"\b(pool (tables?|hall)|free pool|billiards?|darts?|trivia|tvs?|televisions?|big screens?|screens|"
+                         r"watch(ing)? (sports|games?|football|soccer|basketball|the game|a game|matches|liverpool\w*)|sports|"
+                         r"football|soccer|basketball|baseball|hockey|game ?(day|night|room|selection|viewing)|games?|arcades?|"
+                         r"pinball\w*|skee ?ball|ping ?pong|table tennis|beer pong|cornhole|bocce\w*|shuffleboard|foosball|bowling|"
+                         r"axes?|axe throwing|golf|mini golf|putt putt|pickleball|padel|tennis|bingo|"
+                         r"(handball|volleyball|squash|king|padel|pickleball) courts?|courts|soccer fields?|climbing|"
+                         r"escape rooms?|go ?karts?|video games?|playstation|xbox|nintendo|jenga|chess|photo ?booths?|tokens|"
+                         r"claw machines?|ball pit|mtg|dnd|rpg|tabletop|board games?|lawn games?)\b|\baxe \w+"),
+    ("Dog friendly", r"^(dog|dogs|pet|pets|pup|pups|puppy|puppies|doggy|doggie)( friendly| allowed| welcome| park| run| treats| menu|"
+                     r" cafe| play area| bowls?| watching)?$|\b(dog|pet) friendly\b|\bdog (park|run|treats|menu|cafe)\b"),
+    ("Cats", r"^((friendly|active|rescue|sleepy|stray|resident|shop|bar|distillery|petting) )?(cats?|kitties|kitty|kittens?)$|"
+             r"\bcat (adoption|cafe|lounge|room|socialization|decor)\b|\b(with|petting) cats\b"),
+    ("Date spot", r"\bdate (spot|night|place|ideas?)\b|\bfirst dates?\b|^date$|\bromantic\w*|\bintimate dates?\b"),
+    ("People watching", r"\bpeople ?watching\b"),
+    ("Laptop friendly", r"^(free |fast |good )?wi ?fi$|^laptops?$|\blaptop (friendly|area|space|spot|seating)\b|"
+                        r"\bwork(ing)? (friendly|space|spot)\b|\bstudy (spot|space|area)\b|\b(power )?outlets\b|\bco ?working\b"),
+    ("Generous portions", r"\b(large|larger|big|bigger|huge|generous|good|great|massive|giant|hearty|decent|ample|filling) portions?\b|"
+                          r"\bportions? (are |were )?(large|big|huge|generous)\b"),
+    ("Good value", r"\baffordab\w+|\binexpensive\b|\bcheap\b|^budget( friendly)?$|\b(good|great|fair|reasonable|decent|best|low|cheap) "
+                   r"(value|prices?|pricing)\b|\bvalue for money\b|\breasonably priced\b|\bbargains?\b|\bworth the (money|price)\b"),
+    ("Cleanliness", r"\b(cleanliness|clean|spotless|tidy|tidiness|sanitary|hygienic)\b"),
+    ("Friendly staff", rf"\b{STAFF_PRAISE}( and {STAFF_PRAISE})? {STAFF_ROLES}\b|\b(helpfulness|hospitality|hospitable|friendliness|"
+                       r"kindness|politeness|professionalism|attentiveness|warm welcome|customer care)\b|"
+                       r"^(friendly|helpful|polite|kind|welcoming|attentive|patient|professional|informative|knowledgeable|courteous|"
+                       r"accommodating|respectful|personable)$"),
+    ("Atmosphere", rf"\b{ATMOSPHERE_ADJECTIVES} {PLACE_NOUNS}\b|\b(atmosphere|atmospheric|ambiance|ambience|vibes?|vibey|decor|"
+                   r"decorations?|decorated|interior design|lighting|lights|lit|candle ?lit|candlelight|fireplaces?|natural light|"
+                   r"skylights?|plant wall|aesthetics?|charm|setting|environment|(beautifully|nicely|well) (furnished|decorated|designed))\b|"
+                   r"^(cozy|cosy|intimate|beautiful|gorgeous|stunning|charming|cute|elegant|classy|chic|stylish|relaxing|chill|lively|"
+                   r"fun|funky|homey|comfortable|comfy|upscale|luxury|luxurious|fancy|trendy|aesthetic|light|eclectic|vibrant|unique|"
+                   r"quirky|whimsical|magical)$"),
+)
+# Leading words that only praise or qualify, dropped so "great croissants" and "croissants" are one dish.
+FILLER_WORDS = frozenset({
+    "great", "good", "amazing", "delicious", "excellent", "nice", "best", "tasty", "awesome", "fantastic", "wonderful", "fresh",
+    "really", "very", "super", "so", "incredible", "perfect", "yummy", "lovely", "favorite", "favourite", "the", "quality",
+    "creative", "craft", "signature", "specialty", "speciality", "unique", "homemade", "housemade", "house", "made", "authentic",
+    "local", "legit", "solid", "decent", "classic", "high", "outstanding", "exceptional", "phenomenal",
+})
+# Too generic to tell anything about a menu; "food" and "dishes" after a cuisine name it instead ("egyptian food").
+GENERIC_MENU_TOPICS = frozenset({
+    "food", "foods", "cuisine", "dish", "dishes", "drink", "drinks", "beverage", "beverages", "wine", "wines", "water", "booze",
+    "alcohol", "liquor", "topping", "toppings",
+})
+# Words a dish or a drink never ends on: people, places, money, time, events, goods and services. A keyword whose main
+# word is one of these is about something else ("cookie size", "pasta making class", "history of ice cream").
+NOT_MENU_WORDS = frozenset({
+    "price", "pricing", "priced", "cost", "fee", "charge", "tip", "tipping", "gratuity", "cash", "card", "credit", "money",
+    "deal", "sale", "discount", "coupon", "value", "payment", "pay", "purchase", "refund", "receipt", "bill", "check",
+    "dollar", "commission", "warranty", "shipping", "exchange", "budget", "staff", "team", "crew", "management", "manager",
+    "owner", "chef", "cook", "bartender", "barista", "server", "waiter", "waitress", "employee", "worker", "sommelier",
+    "host", "hostess", "cashier", "bouncer", "doorman", "doormen", "security", "guard", "concierge", "receptionist",
+    "reception", "people", "person", "crowd", "local", "tourist", "kid", "kids", "children", "child", "family", "families",
+    "student", "customer", "patron", "guest", "regular", "clientele", "homeless", "friend", "couple", "group", "nurse",
+    "doctor", "docent", "instructor", "teacher", "professor", "faculty", "artist", "engineer", "porter", "supervisor",
+    "guide", "grandmother", "service", "ordering", "order", "delivery", "takeout", "pickup", "reservation", "booking",
+    "checkout", "process", "system", "policy", "rule", "code", "accuracy", "availability", "communication", "experience",
+    "experiment", "quality", "consistency", "speed", "help", "support", "question", "answer", "appointment", "registration",
+    "membership", "loyalty", "reward", "website", "online", "email", "gmail", "instagram", "phone", "place", "spot",
+    "space", "area", "room", "venue", "location", "neighborhood", "neighbourhood", "region", "street", "block", "corner",
+    "branch", "building", "floor", "upstairs", "downstairs", "basement", "door", "entrance", "entry", "exit", "elevator",
+    "stairs", "bathroom", "restroom", "toilet", "sink", "mirror", "lobby", "hallway", "layout", "size", "setup",
+    "renovation", "construction", "garage", "parking", "valet", "access", "subway", "station", "train", "bus",
+    "transportation", "transit", "walk", "walking", "walkability", "proximity", "distance", "hotel", "motel", "hostel",
+    "school", "college", "university", "campus", "office", "church", "mosque", "temple", "park", "beach", "pool",
+    "swimming", "pond", "lake", "island", "tree", "statue", "monument", "bridge", "square", "tower", "landmark", "mall",
+    "market", "store", "shop", "boutique", "outlet", "supermarket", "grocery", "groceries", "bodega", "deli", "bakery",
+    "cafe", "coffeeshop", "restaurant", "diner", "eatery", "bar", "pub", "lounge", "club", "nightclub", "saloon", "tavern",
+    "brewery", "taproom", "winery", "distillery", "gym", "spa", "salon", "studio", "gallery", "museum", "library", "arena",
+    "stadium", "apartment", "unit", "suite", "property", "facility", "amenity", "table", "seating", "seat", "chair",
+    "couch", "sofa", "booth", "stool", "bench", "bed", "cabin", "window", "ceiling", "wall", "glass", "desk", "dryer",
+    "washer", "dishwasher", "refrigerator", "fridge", "night", "morning", "evening", "afternoon", "day", "weekend",
+    "weekday", "summer", "winter", "spring", "fall", "autumn", "holiday", "christmas", "halloween", "season", "sunday",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "hour", "time", "lunchtime", "party", "birthday",
+    "celebration", "wedding", "event", "gathering", "meeting", "occasion", "anniversary", "graduation", "festival", "class",
+    "workshop", "lesson", "camp", "tour", "trip", "visit", "ride", "cruise", "rental", "concept", "idea", "theme", "name",
+    "sign", "hope", "faith", "problem", "issue", "solid", "gem", "business", "variety", "selection", "option", "choice",
+    "item", "product", "brand", "stuff", "thing", "supply", "inventory", "collection", "range", "presentation",
+    "ingredient", "flavor", "flavour", "taste", "portion", "temperature", "level", "volume", "design", "style", "color",
+    "colour", "mood", "energy", "spirit", "culture", "history", "heritage", "architecture", "art", "artwork", "mural",
+    "graffiti", "exhibit", "exhibition", "painting", "photo", "picture", "photography", "memorabilia", "artifact",
+    "antique", "prop", "character", "actor", "celebrity", "robot", "taxidermy", "book", "comic", "magazine", "record",
+    "vinyl", "cassette", "toy", "gift", "souvenir", "merch", "merchandise", "clothes", "clothing", "apparel", "fashion",
+    "shoe", "sneaker", "boot", "jean", "shirt", "jacket", "coat", "bag", "wallet", "jewelry", "accessory", "candle",
+    "plant", "flower", "furniture", "mattress", "appliance", "electronics", "computer", "produce", "sample", "cosmetic",
+    "fragrance", "perfume", "lotion", "skincare", "makeup", "sunglasses", "hat", "umbrella", "luggage", "massage", "facial",
+    "sauna", "steam", "haircut", "fade", "trim", "shave", "manicure", "pedicure", "nail", "wax", "waxing", "tattoo",
+    "piercing", "treatment", "therapy", "yoga", "pilates", "workout", "training", "equipment", "machine", "locker",
+    "shower", "bath", "cleaning", "viewing", "instruction", "sip", "line", "skipping", "ready", "worth", "smoking",
+    "conditioning", "only", "free", "included", "allowed", "friendly", "out", "up", "menu", "dinner", "lunch", "breakfast",
+    "brunch", "supper", "meal", "special", "feel", "feeling", "star", "michelin", "job", "attention", "playground",
+    "admission", "historic", "historical", "palace", "picnic", "bike", "car", "motorcycle", "hiking", "reading",
+    "organized", "curfew", "tub", "plunge", "programming", "wristband", "tailoring", "alteration", "grooming",
+    "maintenance", "repair", "suit", "opportunity", "dining", "kosher", "halal", "thru", "through", "suitable", "handshake",
+    "smoke", "sawdust", "anime", "airport", "sand", "cellar", "swing", "recliner", "cup", "weight", "tooth", "paper", "tax",
+    "stuffed", "fan", "felt", "home", "entertainment", "voicemail", "photographer", "degree", "oven", "rehearsal", "moment",
+    "dome", "potty", "projector", "chilling", "underground", "learning", "glove", "usage", "recommendation", "cantina",
+    "convenience", "feature", "busy", "dark", "hall", "orderliness", "academy", "ramadan", "director", "licence", "license",
+    "privacy", "session", "dealing", "butcher", "work", "print", "mezzanine", "cage", "tow", "department", "counter",
+    "section", "view", "comfort", "cold",
+})
+# A role followed by a name ("chef hassan", "employee tarek") is about a person, not a dish.
+ROLE_WORDS = frozenset({
+    "chef", "employee", "waiter", "waitress", "bartender", "barista", "server", "manager", "owner", "cashier", "captain", "staff",
+})
+# Dishes and drinks that end on one of the words above: "salad bar", "seafood tower", "tasting menu".
+FOOD_COMPOUND_PATTERN = re.compile(
+    r"\b(salad|raw|sauce|salsa|oyster|taco|sushi|juice|smoothie|poke|hot food|cereal|candy|toppings?|olive|mezze|antipasti|bagel|"
+    r"waffle|pancake|nacho|condiment|dessert|sundae)s? bars?$|\b(seafood|shellfish|oyster|pancake|donut|cake) towers?$|"
+    r"\b(tasting|prix fixe|degustation|omakase|chefs?|course|set) menus?$"
+)
+# Spellings of one word in dish names, by stem: "doughnuts" and "donuts", "margs" and "margaritas", "parmesan" and "parm".
+MENU_SPELLINGS = {
+    "doughnut": "donut", "shawerma": "shawarma", "kushari": "koshari", "taameya": "tameya", "labn": "labneh",
+    "expresso": "espresso", "cappucino": "cappuccino", "marg": "margarita", "barbecu": "bbq", "barbequ": "bbq",
+    "parmesan": "parm", "parmigiana": "parm", "chilli": "chili", "omelett": "omelet", "yoghurt": "yogurt", "kabob": "kebab",
+    "kebap": "kebab", "bahn": "banh", "texmex": "tex mex", "felafel": "falafel", "desert": "dessert",
+}
+# One dish under different names, by key: Cairo's ta'ameya is falafel and its foul is fava beans; hookah is shisha.
+MENU_SYNONYMS = {
+    "tameya": "falafel", "foul": "fava bean", "ful": "fava bean", "fava": "fava bean", "feteer meshaltet": "feteer",
+    "hookah": "shisha", "ayc": "all you can eat", "chees cak": "cheesecak",
+}
+PREPOSITIONS = frozenset({"of", "on", "in", "at", "with", "for", "from", "to", "by", "over", "near", "inside", "around"})
+# Genres that mention food or drink but sell neither: a kitchen supply store, a pet food store, a grill store, a B&B.
+NOT_FOOD_GENRE = re.compile(
+    r"\b(supply|supplies|equipment|appliances?|furniture|pet|grill store|bed (and )?breakfast)\b", re.IGNORECASE
+)
+# Shops: what they sell can share a word with an experience (an electronics store's TVs, a game store's games).
+STORE_GENRE = re.compile(r"\b(stores?|shops?|shopping|boutiques?|outlets?|malls?|supermarkets?|showrooms?|pharmac(y|ies))\b",
+                         re.IGNORECASE)
+# The experience themes a shop can offer; the others would be its merchandise.
+STORE_THEMES = frozenset({
+    "Friendly staff", "Cleanliness", "Atmosphere", "Short waits", "Spacious", "Quiet", "Good value", "Outdoor seating",
+    "Dog friendly", "Cats", "Vegan options", "Gluten-free options", "Healthy options", "Late night", "Food hall", "Food truck",
+})
+# Kinds of topic groups, in the order cards list them.
+TOPIC_KINDS = ("menu", "experience", "complaint")
+
+
+def topic_text(name: str) -> str:
+    """A keyword as plain words: lowercase, accents and punctuation folded ('Crème brûlée' -> 'creme brulee')."""
+    folded = "".join(ch for ch in unicodedata.normalize("NFKD", name or "") if not unicodedata.combining(ch))
+    folded = re.sub(r"['’`]", "", folded.lower().replace("&", " and "))
+    return " ".join(re.sub(r"[^\w]+|_", " ", folded).split())
+
+
+def complaint_theme(text: str) -> str | None:
+    """The complaint a keyword makes, once dishes named after complaint words and turned-around phrases are set aside."""
+    cleaned = " ".join(NEGATED_COMPLAINT_PATTERN.sub(" ", NOT_COMPLAINT_PATTERN.sub(" ", text)).split())
+    return next((label for label, pattern in COMPLAINT_THEMES if pattern.search(cleaned)), None)
+
+
+def experience_theme(text: str) -> str | None:
+    """The part of a visit a keyword describes; None for house rules ('no laptops') and topics no theme covers."""
+    for label, pattern in TURNED_THEMES:
+        if pattern.search(text):
+            return label
+    if POLICY_PATTERN.search(text):
+        return None
+    cleaned = " ".join(NOT_EXPERIENCE_PATTERN.sub(" ", text).split())
+    return next((label for label, pattern in EXPERIENCE_THEMES if pattern.search(cleaned)), None)
+
+
+def _singular(word: str) -> str:
+    """'bartenders' -> 'bartender', to match a keyword's main word against NOT_MENU_WORDS; gentler than _stem, so a
+    'code' never meets a 'cod'."""
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith(("sses", "ches", "shes", "xes")):
+        return word[:-2]
+    if word.endswith("s") and len(word) > 3 and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+NOT_MENU_HEADS = frozenset(_singular(word) for word in NOT_MENU_WORDS)
+
+
+def _stem(word: str) -> str:
+    """One form for a word's spellings: 'pastries' and 'pastry', 'cookies' and 'cookie', 'quiches' and 'quiche' meet."""
+    if len(word) < 3 or not word.isascii():
+        return word
+    if word.endswith("ies"):
+        word = word[:-3] + "i"
+    elif word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        word = word[:-1]
+    if word.endswith("y") and len(word) > 2 and word[-2] not in "aeiou":
+        return word[:-1] + "i"
+    return word[:-1] if word.endswith("e") and len(word) > 2 else word
+
+
+def _head(core: str) -> str:
+    """The word a keyword is about: its last, or the last before a preposition ('history of ice cream' -> 'history')."""
+    words = core.split()
+    cut = next((i for i, word in enumerate(words) if i and word in PREPOSITIONS), len(words))
+    return words[cut - 1]
+
+
+def _drop_fillers(words: list[str]) -> list[str]:
+    while words and words[0] in FILLER_WORDS:
+        words = words[1:]
+    return words
+
+
+def _names_a_dish(core: str) -> bool:
+    """Whether a keyword, its filler words dropped, names a dish or a drink rather than people, places, money or goods."""
+    words = core.split()
+    if core in GENERIC_MENU_TOPICS or not any(len(word) >= 3 and any(ch.isalpha() for ch in word) for word in words):
+        return False
+    if FOOD_COMPOUND_PATTERN.search(core):
+        return True
+    return not (len(words) == 2 and words[0] in ROLE_WORDS) and _singular(_head(core)) not in NOT_MENU_HEADS
+
+
+def menu_key(core: str) -> str:
+    """One key for the ways reviews write a dish: 'croissants' and 'croissant', 'egyptian food' and 'egyptian'."""
+    stems = [MENU_SPELLINGS.get(_stem(word), _stem(word)) for word in ("and" if word == "n" else word for word in core.split())]
+    if len(stems) > 1 and stems[-1] in ("food", "cuisin", "dish"):
+        stems = stems[:-1]
+    key = " ".join(stems)
+    return MENU_SYNONYMS.get(key, key)
+
+
+@lru_cache(maxsize=16384)
+def topic(keyword: str, setting: str = "food") -> tuple[str, str] | None:
+    """What one review keyword is about: ('complaint' | 'experience', theme label), ('menu', dish key), or None.
+
+    None covers neutral topics ('prices', 'cash only', 'bathroom') and experience topics without a theme. `setting` is the
+    place's kind (place_setting): only places that sell food or drink have a menu, so a barber's 'fade' or a mattress
+    store's 'mattress selection' is no dish, and a store's merchandise is no experience (an electronics store's 'tvs').
+    """
+    text = topic_text(keyword)
+    theme = complaint_theme(text)
+    if theme:
+        return "complaint", theme
+    theme = experience_theme(text)
+    if theme:
+        return ("experience", theme) if setting != "store" or theme in STORE_THEMES else None
+    core = " ".join(_drop_fillers(text.split()))
+    if setting != "food" or POLICY_PATTERN.search(text) or not _names_a_dish(core):
+        return None
+    return "menu", menu_key(core)
+
+
+def place_setting(entity: dict) -> str:
+    """'food' for places that sell food or drink, 'store' for shops, 'other' for venues, hotels, parks and services.
+
+    Judged by the place's genres; a place without genres sells food when it has a price level or a cuisine.
+    """
+    names = [name for _, name in genre_tags(entity)]
+    if not names:
+        props = entity.get("properties") or {}
+        return "food" if props.get("price_level") or props.get("cuisine_description") else "other"
+    if any(matches_focus(name, "food_drink") and not NOT_FOOD_GENRE.search(name) for name in names):
+        return "food"
+    stores = [name for name in names if STORE_GENRE.search(name)]
+    venues = [name for name in names if genre_kind(name) == "venue" and name not in stores]
+    return "store" if stores and not venues else "other"
+
+
 def review_keywords(entity: dict) -> list[dict]:
-    """A place's review keywords without the ones that repeat its name or address ('zamalek', 'katz')."""
+    """A place's review keywords, without slurs and without the ones that repeat its name, address or neighborhood.
+
+    Movies and shows carry keywords as plain strings; only {"name", "count"} records are review topics.
+    """
     props = entity.get("properties") or {}
-    own = f"{entity.get('name') or ''} {props.get('address') or ''}".lower()
-    return [k for k in props.get("keywords") or [] if k.get("name") and k["name"].lower() not in own]
+    neighborhood = props.get("neighborhood") if isinstance(props.get("neighborhood"), str) else ""
+    own = _fold(f"{entity.get('name') or ''} {props.get('address') or ''} {neighborhood}")
+    return [
+        k for k in props.get("keywords") or []
+        if isinstance(k, dict) and isinstance(k.get("name"), str) and k["name"].strip() and is_safe_name(k["name"])
+        and not _repeats(k["name"], own)
+    ]
+
+
+def _fold(text: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)).lower()
+
+
+def _repeats(keyword: str, own: str) -> bool:
+    """Whether a keyword repeats whole words of a place's name or address: 'zamalek' or 'el zamalek' in Zamalek, 'katz' at
+    Katz's; 'tea' is not in 'Steak House'."""
+    words = re.sub(r"^(el|al|the) ", "", _fold(keyword.strip()))
+    return bool(re.search(rf"(?<!\w){re.escape(words)}(?!\w)", own))
+
+
+def topic_keys(entity: dict) -> set[tuple[str, str]]:
+    """The (kind, theme or dish) pairs a place's reviews mention."""
+    setting = place_setting(entity)
+    return {found for keyword in review_keywords(entity) if (found := topic(keyword["name"], setting))}
+
+
+def topic_groups(places: Iterable[dict], skip: set[tuple[str, str]] | frozenset = frozenset()) -> dict[str, list[dict]]:
+    """What reviews of these places mention, grouped per kind ('menu', 'experience', 'complaint'), most mentioned first.
+
+    A group is {"label", "mentions", "places", "keywords"}: the theme (or, for a dish, the form reviews use most), the
+    mentions of all its keywords, the places that mention any of them, and its keywords as reviews write them, most
+    mentioned first. Groups whose (kind, key) is in `skip` are left out.
+    """
+    found: dict[tuple[str, str], dict] = {}
+    for index, place in enumerate(places):
+        setting = place_setting(place)
+        for keyword in review_keywords(place):
+            kind_key = topic(keyword["name"], setting)
+            if not kind_key or kind_key in skip:
+                continue
+            group = found.setdefault(kind_key, {"mentions": 0, "places": set(), "forms": Counter()})
+            count = int(keyword.get("count") or 0)
+            group["mentions"] += count
+            group["places"].add(item_id(place) or index)
+            group["forms"][" ".join(keyword["name"].lower().split())] += count
+    grouped: dict[str, list[dict]] = {kind: [] for kind in TOPIC_KINDS}
+    for (kind, key), group in found.items():
+        forms = [form for form, _ in sorted(group["forms"].items(), key=lambda item: (-item[1], item[0]))]
+        grouped[kind].append({
+            "label": forms[0] if kind == "menu" else key,
+            "mentions": group["mentions"],
+            "places": len(group["places"]),
+            "keywords": forms[:5],
+        })
+    for groups in grouped.values():
+        groups.sort(key=lambda g: (-g["mentions"], -g["places"], g["label"]))
+    return grouped
+
+
+def inline_label(label: str) -> str:
+    """A label as it reads inside a sentence or a lowercase list: 'Live music and DJs' -> 'live music and DJs'."""
+    return label[:1].lower() + label[1:] if label[:1].isupper() and label[1:2].islower() else label
+
+
+def natural_list(items: list[str]) -> str:
+    """'a', 'a and b', 'a, b and c'."""
+    if len(items) < 2:
+        return "".join(items)
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def known_for(groups: dict[str, list[dict]], limit: int) -> list[str]:
+    """What a place is known for, as a lowercase list: its dishes first, then its experience themes."""
+    return [inline_label(g["label"]) for g in groups["menu"] + groups["experience"]][:limit]
 
 
 def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
     """Compact, UI-friendly view of a place entity."""
     props = entity.get("properties") or {}
-    keywords = review_keywords(entity)
+    groups = topic_groups([entity])
     location = place_location(entity)
     rating = props.get("business_rating")
     card = {
@@ -304,8 +742,8 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
         "rating": round(float(rating), 1) if rating else None,
         "price_level": props.get("price_level"),
         "genres": [name for _, name in genre_tags(entity) if is_business_genre(name)][:3],
-        "praise": [k["name"] for k in keywords if not is_complaint(k["name"])][:4],
-        "complaints": [k["name"] for k in keywords if is_complaint(k["name"])][:3],
+        "known_for": known_for(groups, 4),
+        "complaints": [inline_label(g["label"]) for g in groups["complaint"]][:3],
         "standing": standing(entity),
         "lat": location[0] if location else None,
         "lon": location[1] if location else None,
@@ -319,8 +757,6 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
 def summarize_block(places: Iterable[dict]) -> dict:
     places = list(places)
     genres: Counter = Counter()
-    praise: Counter = Counter()
-    complaints: Counter = Counter()
     prices: Counter = Counter()
     ratings: list[float] = []
     classics: list[tuple[tuple, dict]] = []
@@ -333,29 +769,25 @@ def summarize_block(places: Iterable[dict]) -> dict:
             ratings.append(float(props["business_rating"]))
         if props.get("price_level"):
             prices[int(props["price_level"])] += 1
-        place_praise = []
-        for keyword in review_keywords(place):
-            name = keyword["name"]
-            complaint = is_complaint(name)
-            (complaints if complaint else praise)[name] += int(keyword.get("count") or 0)
-            if not complaint:
-                place_praise.append(name)
         evidence = standing(place)
         if evidence and place.get("name") and business and is_storefront_place(place):
             order = ("michelin" not in evidence, -(evidence.get("reviews") or 0))
+            # The badge already says Michelin; review keywords repeating it are not what people come for.
+            liked = [label for label in known_for(topic_groups([place]), 6) if "michelin" not in label.lower()]
             classics.append((order, {
                 "id": item_id(place), "name": place["name"], "genre": genre_title(primary_genre(place) or business[0]),
                 **evidence,
-                # The badge already says Michelin; review keywords repeating it are not what people come for.
-                "praise": [word for word in place_praise if "michelin" not in word.lower()][:3],
+                "known_for": liked[:3],
             }))
+    topics = topic_groups(places)
     return {
         "place_count": len(places),
         "top_genres": genres.most_common(12),
         "avg_rating": round(mean(ratings), 2) if ratings else None,
         "price_levels": {str(level): count for level, count in sorted(prices.items())},
-        "praise": praise.most_common(12),
-        "complaints": complaints.most_common(10),
+        "menu": topics["menu"][:12],
+        "experience": topics["experience"][:10],
+        "complaints": topics["complaint"][:8],
         "classics": [card for _, card in sorted(classics, key=lambda item: item[0])[:6]],
     }
 
@@ -582,7 +1014,7 @@ def distinctive_by_rank(
 
 
 def design_dna(places: Iterable[dict], per_family: int = 6) -> dict:
-    """Most common design-relevant tags and praise keywords across a set of places."""
+    """Most common design-relevant tags across a set of places, and what their reviews mention besides complaints."""
     places = list(places)
     dna: dict[str, list[str]] = {}
     for family, prefix in DESIGN_FAMILIES.items():
@@ -593,16 +1025,10 @@ def design_dna(places: Iterable[dict], per_family: int = 6) -> dict:
             if (t.get("type") or "").startswith(prefix) and t.get("name")
         )
         dna[family] = [name for name, _ in counts.most_common(per_family)]
-    keywords: Counter = Counter()
-    price_levels: list[int] = []
-    for place in places:
-        props = place.get("properties") or {}
-        for keyword in review_keywords(place):
-            if not is_complaint(keyword["name"]):
-                keywords[keyword["name"]] += int(keyword.get("count") or 0)
-        if props.get("price_level"):
-            price_levels.append(int(props["price_level"]))
-    dna["keywords"] = [name for name, _ in keywords.most_common(10)]
+    topics = topic_groups(places)
+    liked = sorted(topics["menu"] + topics["experience"], key=lambda g: (-g["mentions"], -g["places"]))
+    dna["keywords"] = [g["label"] for g in liked[:10]]
+    price_levels = [int(level) for place in places if (level := (place.get("properties") or {}).get("price_level"))]
     dna["typical_price_level"] = round(median(price_levels)) if price_levels else None
     return dna
 

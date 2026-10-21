@@ -150,10 +150,6 @@ def tag_names(entity: dict, family: str) -> set[str]:
     return {t["name"] for t in entity.get("tags") or [] if (t.get("type") or "").startswith(prefix) and t.get("name")}
 
 
-def keywords(entity: dict) -> list[str]:
-    return [k["name"] for k in scoring.review_keywords(entity)]
-
-
 def compare(place: dict, row: dict) -> dict:
     peers, peers_label = peers_of(place, row)
     props = place.get("properties") or {}
@@ -172,10 +168,10 @@ def compare(place: dict, row: dict) -> dict:
         }
     peer_ratings = [float(r) for p in peers if (r := (p.get("properties") or {}).get("business_rating"))]
     peer_prices = [int(v) for p in peers if (v := (p.get("properties") or {}).get("price_level"))]
-    own_words = {word.lower() for word in keywords(place)}
-    peer_praise = Counter(
-        word for p in peers for word in keywords(p) if not scoring.is_complaint(word) and word.lower() not in own_words
-    )
+    own = scoring.topic_groups([place])
+    # What the peers are known for that the place's own reviews never mention, the most widely shared first.
+    others = scoring.topic_groups(peers, skip=scoring.topic_keys(place))
+    shared = sorted(others["menu"] + others["experience"], key=lambda g: (-g["places"], -g["mentions"]))
     place_hours = scoring.hours_by_group([place], minimum=1)
     peer_hours = scoring.hours_by_group(peers)
     rating = props.get("business_rating")
@@ -194,9 +190,9 @@ def compare(place: dict, row: dict) -> dict:
             "_peers": peer_hours[0] if peer_hours else {},
         },
         "offer": offer,
-        "praise": [word for word in keywords(place) if not scoring.is_complaint(word)][:5],
-        "complaints": [word for word in keywords(place) if scoring.is_complaint(word)][:4],
-        "peers_praise": [word for word, _ in peer_praise.most_common(5)],
+        "known_for": scoring.known_for(own, 5),
+        "complaints": own["complaint"][:4],
+        "peers_known_for": [scoring.inline_label(g["label"]) for g in shared[:5]],
         "standing": scoring.standing(place),
     }
 
@@ -213,7 +209,7 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
     rating, price = comparison["rating"], comparison["price"]
     out: list[dict] = []
     if comparison["complaints"]:
-        out.append({"title": "Fix what reviews flag", "why": f"Reviews of {name} mention {', '.join(comparison['complaints'])}."})
+        out.append({"title": "Fix what reviews flag", "why": f"Reviews of {name} flag {flagged(comparison['complaints'])}."})
     if comparison["comparable"]:
         for family in OFFER_FAMILIES:
             for item in comparison["offer"][family]["missing"]:
@@ -232,15 +228,26 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
             "and hours are no guide."
         )})
     if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3 and (row.get("leakage") or 0) >= 0.6:
-        praise = f"; what people praise there: {', '.join(comparison['peers_praise'][:3])}" if comparison["peers_praise"] else ""
+        known = comparison["peers_known_for"][:3]
+        known_text = f"; they are known for {scoring.natural_list(known)}" if known else ""
         out.append({"title": "Win back the trips", "why": (
             f"{row['favorites_far']} of the {row['favorites_total']} {genre} places locals love more than the city does are "
-            f"outside the walk, a median {row['median_favorite_km']} km away{praise}."
+            f"outside the walk, a median {row['median_favorite_km']} km away{known_text}."
         )})
     if plan and plan.get("soundtrack"):
         names = ", ".join(item["name"] for item in plan["soundtrack"][:3])
         out.append({"title": "Program for the neighborhood", "why": f"People within 1.5 km over-index on {names}; see the plan below."})
     return out[:8]
+
+
+def flagged(themes: list[dict]) -> str:
+    """'long waits and lines (long lines, wait time) and noise (loud music)': each complaint theme with two of its keywords."""
+    parts = []
+    for theme in themes:
+        label = scoring.inline_label(theme["label"])
+        examples = [word for word in theme["keywords"] if word != label.lower()][:2]
+        parts.append(f"{label} ({', '.join(examples)})" if examples else label)
+    return scoring.natural_list(parts)
 
 
 def hour_moves(name: str, peers: str, own: dict, others: dict) -> list[dict]:

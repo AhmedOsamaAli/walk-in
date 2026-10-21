@@ -109,7 +109,12 @@ def place(name: str, genre: str, lat: float, lon: float, index: int = 0, genre_t
             "address": f"{index + 1} Test Street",
             "business_rating": 4.0 + (index % 9) / 10,
             "price_level": 1 + index % 3,
-            "keywords": [{"name": "outdoor seating", "count": 20 + index}, {"name": "long wait" if index % 4 == 0 else "friendly staff", "count": 5}],
+            # Review topics: one experience theme, a complaint every fourth place, and a dish written two ways.
+            "keywords": [
+                {"name": "outdoor seating", "count": 20 + index},
+                {"name": "long wait" if index % 4 == 0 else "friendly staff", "count": 5},
+                {"name": "great croissants" if index % 2 else "croissant", "count": 2},
+            ],
             "hours": WEEK_HOURS,
         },
         # Every fifth place has a long review history, so blocks and favorites have established places.

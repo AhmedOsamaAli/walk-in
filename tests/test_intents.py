@@ -51,9 +51,19 @@ def test_a_comparable_place_gets_offer_and_rating_suggestions():
     taco = place("Corner Taco", price=1, rating=3.9, keywords=["al pastor", "slow service", "corner"])
     row = row_with([casual(f"Taco {i}") for i in range(4)])
     comparison = intents.compare(taco, row)
-    assert comparison["comparable"] is True and comparison["praise"] == ["al pastor"]  # "corner" repeats its name
-    titles = [m["title"] for m in intents.moves("Corner Taco", row, comparison, None)]
-    assert titles == ["Fix what reviews flag", "Consider vegan meals", "Consider live music", "Close the rating gap"]
+    assert comparison["comparable"] is True and comparison["known_for"] == ["al pastor"]  # "corner" repeats its name
+    assert [g["label"] for g in comparison["complaints"]] == ["Slow service"]
+    moves = intents.moves("Corner Taco", row, comparison, None)
+    assert [m["title"] for m in moves] == ["Fix what reviews flag", "Consider vegan meals", "Consider live music", "Close the rating gap"]
+    assert moves[0]["why"] == "Reviews of Corner Taco flag slow service."
+
+
+def test_complaint_moves_name_each_theme_with_examples():
+    themes = [
+        {"label": "Long waits and lines", "mentions": 189, "places": 1, "keywords": ["long lines", "wait time", "on line"]},
+        {"label": "Noise", "mentions": 20, "places": 1, "keywords": ["loud music"]},
+    ]
+    assert intents.flagged(themes) == "long waits and lines (long lines, wait time) and noise (loud music)"
 
 
 def test_peers_at_a_similar_price_are_preferred():
