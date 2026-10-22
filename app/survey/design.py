@@ -12,7 +12,7 @@ from ..answers import AnswerCache, fingerprint
 from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
-from . import experience
+from . import experience, launch
 from .concepts import ground_names, grounded_price
 from .evidence import example_places, gap_for, in_sentence, offer_items, price_anchors
 from .experience import fans_of
@@ -122,6 +122,7 @@ async def design_concept(
     design["capacity"] = capacity
     design["capacity_basis"] = CAPACITY_BASIS if capacity else None
     design["experience"] = experience.plan(run, concept["genre"])
+    design["launch"] = launch.plan(run, concept, row, shared, design["hours"])
     design["mode"] = mode
     design["model"] = model
     design["shots"] = design_shots(run, concept, design, dna)

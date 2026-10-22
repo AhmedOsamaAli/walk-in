@@ -110,6 +110,11 @@ export function list(value: unknown): string[] {
     .filter((item) => item.trim() !== "");
 }
 
+/** ["a", "b", "c"] -> "a, b and c". */
+export function naturalList(items: string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items[items.length - 1] ?? ""}` : (items[0] ?? "");
+}
+
 /** Only https images and inline raster data URLs are shown; anything else could be a tracking or script URL. */
 export function safeUrl(url: unknown): string | null {
   return typeof url === "string" && (/^https:\/\//i.test(url) || /^data:image\/(png|jpeg|webp);base64,/i.test(url))

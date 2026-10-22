@@ -37,6 +37,50 @@
 .partners b { font-weight: 600; }
 .partners span { display: block; font-size: 13.5px; color: var(--text-4); }
 
+/* ---------- Launch: what an ad can say (yellow, the recommendation), proved by what Qloo measured (blue) ---------- */
+.launch { display: grid; gap: 30px; margin-top: 18px; }
+.launch-spec dd { font-size: 15px; line-height: 1.5; }
+.launch-spec .tags { gap: 6px; }
+.launch-shared { font-weight: 600; }
+.launch-note { margin: 10px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--text-4); }
+.launch-block > .launch-note:not(:last-child) { margin: 0 0 12px; }
+.launch-intent { font-size: 15px; line-height: 1.45; }
+.launch-intent + .launch-intent { margin-top: 8px; }
+.launch-intent small { margin-left: 4px; font: 500 11px var(--f-mono); color: var(--text-4); }
+.launch-intent span { display: block; color: var(--text-3); }
+
+.claims { display: grid; gap: 10px; }
+.claim { padding: 15px 18px 16px; background: var(--card); border: var(--rule); border-radius: var(--r-m); }
+.claim-kind {
+  display: inline-block; margin-bottom: 9px; padding: 3px 9px 2px;
+  background: var(--ink); color: var(--on-ink); border-radius: 999px; font-size: 10px;
+}
+.claim-line { font: 400 21px/1.32 var(--f-serif); letter-spacing: -.01em; text-wrap: pretty; }
+.claim-proof { margin-top: 9px; font-size: 13.5px; line-height: 1.45; color: var(--text-3); }
+.claim-proof .mono { margin-right: 4px; font-size: 10px; color: var(--blue); }
+
+.channels { border-top: var(--rule); }
+.channel { padding: 14px 0 15px; border-bottom: var(--hair); }
+.channel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.channel-head b { font-size: 15px; font-weight: 600; }
+.channel-setting {
+  padding: 10px 13px; background: var(--bone); border: 1px dashed var(--edge); border-radius: 10px;
+  font: 400 13px/1.55 var(--f-mono); overflow-wrap: anywhere;
+}
+.channel-why { margin-top: 8px; font-size: 13.5px; line-height: 1.45; color: var(--text-4); }
+.copy {
+  flex: none; padding: 5px 12px 4px; border: 1px solid var(--edge); border-radius: 999px; font-size: 10px;
+  transition: background .3s var(--ease), color .3s, border-color .3s;
+}
+.copy:hover { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.copy[data-state="copied"], .copy[data-state="selected"] { background: var(--blue-wash); border-color: var(--blue); color: var(--blue); }
+
+.launch-cautions { padding: 16px 18px 17px; border: 1px dashed var(--ink); border-radius: var(--r-m); }
+.launch-cautions .xp-title { margin-bottom: 8px; }
+.launch-cautions li { position: relative; padding-left: 20px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
+.launch-cautions li + li { margin-top: 7px; }
+.launch-cautions li::before { content: "!"; position: absolute; top: 1px; left: 2px; font: 600 12px var(--f-mono); color: var(--red); }
+
 /* ---------- Renders ---------- */
 .renders { display: grid; gap: 14px; }
 .render { display: grid; gap: 8px; }

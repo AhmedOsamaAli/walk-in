@@ -101,6 +101,9 @@ class DesignSheet(BaseModel):
     capacity_basis: str | None
     unit: dict | None
     experience: dict | None = Field(description="Soundtrack, screen and talks from the neighborhood's signature taste")
+    launch: dict | None = Field(
+        None, description="Who to reach, where, when and what can be said, with platform settings and the proof of each claim"
+    )
     dna: dict
     mode: str = Field(description="'agent' when a language model wrote it, 'rules' otherwise")
     model: str | None

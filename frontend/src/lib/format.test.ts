@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GapRow } from "../api/types";
-import { agentText, coords, gapWhy, list, price, priceLabel, safeUrl, shortLabel, standingText, topicForms } from "./format";
+import { agentText, coords, gapWhy, list, naturalList, price, priceLabel, safeUrl, shortLabel, standingText, topicForms } from "./format";
 
 const base: GapRow = {
   genre_id: "urn:tag:genre:place:seafood",
@@ -68,6 +68,13 @@ describe("formatting", () => {
     expect(list(["Oysters", "", 3, null, { a: 1 }])).toEqual(["Oysters", "3"]);
     expect(list("Natural wine")).toEqual(["Natural wine"]);
     expect(list(undefined)).toEqual([]);
+  });
+
+  it("joins lists the way a sentence does", () => {
+    expect(naturalList(["Williamsburg", "Greenpoint", "Bushwick"])).toBe("Williamsburg, Greenpoint and Bushwick");
+    expect(naturalList(["Williamsburg", "Greenpoint"])).toBe("Williamsburg and Greenpoint");
+    expect(naturalList(["Williamsburg"])).toBe("Williamsburg");
+    expect(naturalList([])).toBe("");
   });
 
   it("only allows https images and inline raster images", () => {

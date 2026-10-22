@@ -144,7 +144,7 @@ def test_full_survey_in_rules_mode():
         assert "licenses" in experience["licensing"]
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
         assert sheet["hours_basis"] == "Typical hours of the 5 seafood places locals love that list them"
-        assert "launch" not in sheet
+        assert {"audience", "where", "when", "claims", "channels", "cautions"} <= set(sheet["launch"])
         assert concepts["concepts"][0]["for_whom"].startswith(
             "Neighbors within a 10-minute walk who now travel a median"
         ) and "km to seafood places such as Harbor Oyster Bar and Dockside Crab" in concepts["concepts"][0]["for_whom"]
@@ -288,9 +288,10 @@ def test_agent_investigates_live_and_is_grounded():
         assert sheet["mode"] == "agent" and sheet["model"] == "test-model"
         assert sheet["music"]["artists"] == ["Local Jazz Trio"]  # signature artists only: not invented, not global fans'
         assert [p["name"] for p in sheet["partners"]] == ["Block Place 1", "Riverside Cider Co"]
-        # Hours come from the places locals love, not from the model; the model's launch idea is dropped.
+        # Hours come from the places locals love, not from the model; the model's launch idea gives way to the plan
+        # built from the evidence.
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
-        assert "launch" not in sheet
+        assert isinstance(sheet["launch"], dict) and "Oyster night" not in str(sheet["launch"])
         assert client.post("/api/design", json={"run_id": run_id, "index": 1}).json()["dna"]  # designs a tested genre
 
 

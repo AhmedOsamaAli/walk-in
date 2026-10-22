@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 import { messageOf } from "../api/client";
 import type { Concept, Design } from "../api/types";
 import { letter, list, priceLabel } from "../lib/format";
+import { hasLaunchPlan } from "../lib/launch";
 import { loadDesign, shotsOf } from "../state/designs";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { ExperiencePlanView } from "./ExperiencePlan";
+import { HoursText } from "./Hours";
+import { LaunchPlanView } from "./LaunchPlan";
 import { Plate } from "./Plate";
 import { PriceAnchors } from "./Price";
 import { RenderFrame } from "./RenderFrame";
@@ -45,6 +49,18 @@ function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
         </div>
       </aside>
     </>
+  );
+}
+
+function SheetError({ concept, message }: { concept: Concept; message: string }) {
+  return (
+    <div className="d-main">
+      <p className="d-eyebrow mono">Design sheet</p>
+      <h2 className="d-title" id="design-title">
+        {concept.name}
+      </h2>
+      <p className="d-p">{message}</p>
+    </div>
   );
 }
 
@@ -91,7 +107,7 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
             <div key={key}>
               <dt>{key}</dt>
               <dd>
-                {value}
+                {key === "Hours" ? <HoursText hours={value} /> : value}
                 {basis ? <small className="spec-basis">{basis}</small> : null}
                 {key === "Price" ? <PriceAnchors anchors={design.price_anchors ?? concept.price_anchors} /> : null}
               </dd>
@@ -138,6 +154,16 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
                 </li>
               ))}
             </ul>
+          </>
+        ) : null}
+        {hasLaunchPlan(design.launch) ? (
+          <>
+            <h3 className="d-h">Launch</h3>
+            <p className="d-p launch-lede">
+              Who to reach, where and when, and only what the evidence lets an ad say. Paste the settings into each
+              platform.
+            </p>
+            <LaunchPlanView plan={design.launch} />
           </>
         ) : null}
         {concept.risk ? (
@@ -191,15 +217,13 @@ export function DesignContent({ runId, index, concept }: SheetProps) {
       {loaded === null ? (
         <Drafting concept={concept} index={index} />
       ) : "error" in loaded ? (
-        <div className="d-main">
-          <p className="d-eyebrow mono">Design sheet</p>
-          <h2 className="d-title" id="design-title">
-            {concept.name}
-          </h2>
-          <p className="d-p">{loaded.error}</p>
-        </div>
+        <SheetError concept={concept} message={loaded.error} />
       ) : (
-        <Sheet runId={runId} index={index} concept={concept} design={loaded.design} />
+        <ErrorBoundary
+          fallback={<SheetError concept={concept} message="This sheet could not be drawn. Run the site again, or open another concept." />}
+        >
+          <Sheet runId={runId} index={index} concept={concept} design={loaded.design} />
+        </ErrorBoundary>
       )}
     </div>
   );

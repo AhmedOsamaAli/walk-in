@@ -234,16 +234,19 @@ def in_running_text(label: str) -> str:
     return label if first.isupper() and len(first) > 1 else label[:1].lower() + label[1:]
 
 
-def crowd_of(row: dict, limit: int = 3) -> list[str]:
-    """Who most of the places locals love of this kind draw, from Qloo's customer tags on those places: labels on at
-    least half of them (and at least two), most common first."""
-    places = example_places(row)
+def tag_share(places: list[dict], tag_type: str, skip: set[str] = frozenset()) -> list[dict]:
+    """Tags of one type that at least half of the places carry (and at least two), most common first, with counts."""
     counts: Counter[str] = Counter()
     for place in places:
-        labels = {t.get("name") for t in place.get("tags") or [] if t.get("type") == CROWD_TAG and t.get("name")}
-        counts.update(label for label in labels if label.lower() not in CROWD_SKIP)
+        labels = {t.get("name") for t in place.get("tags") or [] if t.get("type") == tag_type and t.get("name")}
+        counts.update(label for label in labels if label.lower() not in skip)
     need = max(2, (len(places) + 1) // 2)
-    return [label for label, n in counts.most_common() if n >= need][:limit]
+    return [{"label": label, "places": n, "of": len(places)} for label, n in counts.most_common() if n >= need]
+
+
+def crowd_of(row: dict, limit: int = 3) -> list[str]:
+    """Who most of the places locals love of this kind draw, from Qloo's customer tags on those places."""
+    return [share["label"] for share in tag_share(example_places(row), CROWD_TAG, CROWD_SKIP)][:limit]
 
 
 # ---------- What to offer ----------

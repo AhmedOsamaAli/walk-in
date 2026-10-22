@@ -407,6 +407,56 @@ export interface Partner {
   why?: string;
 }
 
+/** How many of the places locals love carry one of Qloo's tags: who they draw, when people go, or why. */
+export interface TagShare {
+  label: string;
+  places: number;
+  of: number;
+}
+
+export type ClaimKind = "only" | "new" | "closer" | "promise";
+
+/** A line an ad can say, with the numbers that make it true today. */
+export interface LaunchClaim {
+  kind: ClaimKind;
+  line: string;
+  proof: string;
+}
+
+/** One ad platform's targeting settings, ready to paste. */
+export interface LaunchChannel {
+  channel: string;
+  setting: string;
+  why: string;
+}
+
+export interface LaunchPlan {
+  audience: {
+    crowd: TagShare[];
+    artists: string[];
+    podcasts: string[];
+    screen: string[];
+    brands: string[];
+    /** Names this category's fans love too. */
+    shared: string[];
+  };
+  where: {
+    minutes: number;
+    reach_m: number | null;
+    neighborhoods: string[];
+    sites_like: { name: string; url: string }[];
+  };
+  when: {
+    times: TagShare[];
+    intents: (TagShare & { angle?: string | null })[];
+    hours?: string | null;
+  };
+  claims: LaunchClaim[];
+  channels: LaunchChannel[];
+  cautions: string[];
+  basis?: string;
+}
+
 export interface Design {
   name?: string;
   tagline?: string;
@@ -423,6 +473,7 @@ export interface Design {
   capacity_basis?: string | null;
   unit?: { size: string; kitchen: string; outdoor_space: string } | null;
   experience?: ExperiencePlan | null;
+  launch?: LaunchPlan | null;
   music?: { direction?: string; artists?: unknown } | null;
   partners?: Partner[] | null;
   dna?: Record<string, unknown> | null;
