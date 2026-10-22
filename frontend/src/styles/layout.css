@@ -7,8 +7,9 @@
   background: var(--paper);
   border-bottom: var(--rule);
 }
-.mark { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
-.mark-word { font: 560 23px/1 var(--f-serif); letter-spacing: -.02em; white-space: nowrap; }
+/* The word stands on the same sidewalk as the door: its baseline sits on the mark's ground line, not its middle. */
+.mark { display: inline-flex; align-items: flex-end; gap: 9px; text-decoration: none; }
+.mark-word { font: 560 23px/1 var(--f-serif); letter-spacing: -.02em; white-space: nowrap; transform: translateY(1px); }
 
 /* ---------- The mark: footsteps that end at a door, following the survey (BrandMark.tsx) ---------- */
 .brand-mark { flex: none; width: 32px; height: 32px; overflow: visible; }
@@ -37,12 +38,15 @@
 /* At the door while the agent works: ajar, the light glowing on and off through the gap. */
 .brand-mark[data-at-door] .bm-shut { transform: scaleX(.62); }
 .brand-mark[data-at-door] .bm-light { opacity: 1; animation: bmGlow 1.6s ease-in-out infinite; }
-/* The opening walk: each step lands in turn, then the door swings open and the light spills out. */
-.brand-mark.intro .bm-step { animation: bmStep .4s var(--ease) backwards; animation-delay: calc(var(--i) * .2s + .2s); }
-.brand-mark.intro .bm-shut { animation: bmShut .45s var(--ease) 1s backwards; }
-.brand-mark.intro .bm-open { animation: bmOpen .5s var(--ease) 1.35s backwards; }
-.brand-mark.intro .bm-light { animation: bmFade .5s ease 1.05s backwards; }
-.brand-mark.intro .bm-spill { animation: bmFade .6s ease 1.45s backwards; }
+/* The opening walk, played on load and again whenever the logo is hovered or focused: each step lands in turn, the
+   door closes behind the last one, then swings open and the light spills out. */
+:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-step {
+  animation: bmStep .4s var(--ease) backwards; animation-delay: calc(var(--i) * .2s + .2s);
+}
+:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-shut { animation: bmShut .45s var(--ease) 1s backwards; }
+:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-open { animation: bmOpen .5s var(--ease) 1.35s backwards; }
+:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-light { animation: bmFade .5s ease 1.05s backwards; }
+:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-spill { animation: bmFade .6s ease 1.45s backwards; }
 @keyframes bmStep { from { opacity: 0; transform: translateX(-3px); } }
 @keyframes bmShut { from { transform: none; } }
 @keyframes bmOpen { from { transform: scaleX(0); } }
