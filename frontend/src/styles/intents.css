@@ -77,9 +77,11 @@ label.field > span { display: block; }
 .scale-ticks i.here { height: 22px; background: var(--blue-fill); border-color: var(--blue-fill); }
 .scale-ticks b { position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); color: var(--blue); white-space: nowrap; }
 .verdict[data-level="weak"] .scale-ticks i.here,
-.verdict[data-level="thin"] .scale-ticks i.here { background: var(--ash); border-color: var(--ash); }
+.verdict[data-level="thin"] .scale-ticks i.here,
+.verdict[data-level="misfit"] .scale-ticks i.here { background: var(--ash); border-color: var(--ash); }
 .verdict[data-level="weak"] .scale-ticks b,
-.verdict[data-level="thin"] .scale-ticks b { color: var(--text-4); }
+.verdict[data-level="thin"] .scale-ticks b,
+.verdict[data-level="misfit"] .scale-ticks b { color: var(--text-4); }
 .scale-ends { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10.5px; color: var(--ash); }
 .verdict-next { max-width: 60ch; font-size: 15.5px; line-height: 1.45; color: var(--text-3); }
 
