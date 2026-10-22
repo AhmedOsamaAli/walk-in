@@ -16,11 +16,11 @@
 .leaflet-pane.grid-pane.in { opacity: 1; }
 
 /* Every corner holds one thing: the readout top left, zoom top right, the legend bottom left, scale and credits
-   bottom right. */
+   bottom right. Labels are solid to the pointer: a click on one never drops a pin under it. */
 .readout {
   position: absolute; z-index: 500; top: 16px; left: 16px;
   padding: 7px 11px; background: var(--card); border: var(--rule); border-radius: 999px;
-  font-variant-numeric: tabular-nums; pointer-events: none;
+  font-variant-numeric: tabular-nums; cursor: default;
 }
 .map-hint {
   position: absolute; z-index: 500; left: 50%; bottom: 52px;
@@ -81,7 +81,7 @@
 .credits.open .credits-text { display: block; animation: fade .3s both; }
 .credits-text a { color: var(--blue); text-decoration: none; }
 .credits-text a:hover { text-decoration: underline; }
-.leaflet-control-scale.leaflet-control { margin: 0 16px 8px 0; }
+.leaflet-control-scale.leaflet-control { margin: 0 16px 8px 0; cursor: default; }
 .leaflet-control-scale-line {
   border: 1.5px solid var(--ink); border-top: 0; background: var(--map-veil); color: var(--ink);
   font: 500 10px var(--f-mono); text-shadow: none;

@@ -89,7 +89,10 @@ export class BlueprintMap {
     this.map = map;
     L.control.zoom({ position: "topright" }).addTo(map);
     this.addCredits();
-    L.control.scale({ position: "bottomright", imperial: false, maxWidth: 120 }).addTo(map);
+    const scale = L.control.scale({ position: "bottomright", imperial: false, maxWidth: 120 }).addTo(map);
+    // The scale bar is a label, not a place: a click on it must not drop a pin under it.
+    const scaleBox = scale.getContainer();
+    if (scaleBox) L.DomEvent.disableClickPropagation(scaleBox);
     for (const [name, zIndex] of [["grid", 350], ["labels", 360], ["radar", 380]] as const) {
       const pane = map.createPane(name);
       pane.style.zIndex = String(zIndex);
