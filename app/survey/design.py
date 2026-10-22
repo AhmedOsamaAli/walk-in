@@ -1,4 +1,9 @@
-"""Design sheets: what a concept looks, sounds and feels like, and the prompts for its renders."""
+"""Design sheets: what a concept looks, sounds and feels like, and the prompts for its renders.
+
+The owner's rules hold here as on the concepts: the offer keeps to them (items taken out are replaced from what the
+places people here love are known for), a budget is priced $, a unit without a hood gets no cooking line or hood in its
+layout or renders, and the sheet says how it meets each rule (owner_rules).
+"""
 from __future__ import annotations
 
 import copy
@@ -13,7 +18,16 @@ from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
 from . import experience, launch
-from .concepts import ground_names, grounded_price
+from .concepts import (
+    ground_names,
+    grounded_price,
+    owner_rule_lines,
+    place_names,
+    placeholder_name,
+    removed_text,
+    taken_name,
+)
+from .constraints import UPSCALE
 from .evidence import example_places, gap_for, in_sentence, offer_items, price_anchors
 from .experience import fans_of
 from .models import RunState
@@ -22,17 +36,29 @@ log = logging.getLogger("walkin")
 
 
 DESIGN_SYSTEM = """You are a concept designer. Turn a business concept into a design brief for an empty storefront.
-Ground every choice in the evidence: design DNA of the locals' favorite places, what local fans of this category also
-love, local artists, nearby places and local brands.
+Ground every choice in the evidence: design DNA of the favorite places of people here, what fans of this category also
+love, the area's artists, nearby places and the area's brands.
 Design for the unit: no patio, terrace or sidewalk seating unless unit.outdoor_space is yes. When a unit is given,
 layout and seating fit its size and capacity, and there is no cooking line unless it has a full kitchen.
-owner_constraints are hard rules: nothing in the offer they forbid. The offer starts from offer_evidence (what the
-places locals love are known for, those no place inside the walk offers first) and price_level follows price_evidence.
+owner_constraints are hard rules, checked after you answer: nothing in the offer they forbid; with a budget,
+price_level is 1 and nothing is described as upscale or premium; without a hood (no_hood, or a light kitchen), no item
+needs a deep fryer, griddle or flat-top, grill or charcoal, wok or pizza oven, everything is baked in a ventless oven
+or assembled cold, and the layout and renders show no cooking line, grill, fryer or extraction hood; with no kitchen,
+nothing is cooked at all. The offer starts from offer_evidence (what the places people here love are known for, those
+no place inside the walk offers first) and price_level follows price_evidence.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), music {direction, artists (list, only from local_artists)},
 partners (list of {name, why}; name only from nearby_places or partner_brands), image_prompt (a photorealistic wide
 view of the whole interior: layout, materials, lighting and seating; no people, text or logos), facade_prompt (the
 shopfront seen from a typical street of this neighborhood, with a sign that reads exactly the concept name; no people)."""
+
+# Equipment a unit without a hood cannot have, as a layout or a render might show it.
+HOOD_FIXTURES = re.compile(
+    r"\b(open kitchen|cooking line|line kitchen|range hood|extraction hood|exhaust hood|hood|fryers?|deep[- ]?fr\w*|"
+    r"grill(s|ed|ing)?|griddles?|flat[- ]?tops?|plancha|charcoal|woks?|wood[- ]?fired|pizza ovens?|brick ovens?|"
+    r"rotisserie|tandoor|broilers?|smokers?|open flames?)\b",
+    re.IGNORECASE,
+)
 
 
 async def design_concept(
@@ -63,11 +89,12 @@ async def design_concept(
     design: dict[str, Any] = {}
     mode, model = "rules", None
     if llm.enabled:
+        keys = ("name", "genre", "one_liner", "for_whom", "price_level", "signature", "owner_rules", "wildcard", "combines")
         brief: dict[str, Any] = {
             "site": site.label,
             "owner_notes": site.notes or None,
-            "concept": {k: concept.get(k) for k in ("name", "genre", "one_liner", "for_whom", "price_level", "signature")},
-            "design_dna_of_locals_favorites": dna,
+            "concept": {k: concept[k] for k in keys if concept.get(k) is not None},
+            "design_dna_of_the_favorite_places_of_people_here": dna,
             "local_artists": local_artists[:15],
             "nearby_places": nearby[:40],
             "local_brands": [{"name": b["name"], "type": b.get("kind")} for b in brand_cards[:15]],
@@ -101,7 +128,7 @@ async def design_concept(
     if not design:
         design = rule_design(run, concept, dna, local_artists, fitting_brands, capacity=capacity)
         mode, model = "rules", None
-    design["offer"] = [item for item in design.get("offer") or [] if isinstance(item, str) and run.constraints.allows_item(item)][:6]
+    notes = keep_rules(run, concept, row, design)
     if row:
         design["price_level"], design["price_basis"] = grounded_price(run, row, design.get("price_level", concept.get("price_level")))
         design["price_anchors"] = price_anchors(row, design["price_level"])
@@ -123,11 +150,89 @@ async def design_concept(
     design["capacity_basis"] = CAPACITY_BASIS if capacity else None
     design["experience"] = experience.plan(run, concept["genre"])
     design["launch"] = launch.plan(run, concept, row, shared, design["hours"])
+    design["owner_rules"] = owner_rule_lines(run, row, {
+        "genre": concept["genre"], "signature": design["offer"], "price_level": design.get("price_level"),
+    })
+    if notes:
+        design["notes"] = notes
     design["mode"] = mode
     design["model"] = model
     design["shots"] = design_shots(run, concept, design, dna)
     design["renders"] = {"enabled": images.enabled, "model": images.model}
     return design
+
+
+# A phrase that negates what follows it: "no hood", "without a grill".
+NEGATION_BEFORE = re.compile(r"\b(no|not|without|never|nor|zero|non)\b[^.;:,]{0,24}$", re.IGNORECASE)
+
+
+def shows_hood_fixtures(text: str) -> bool:
+    """Whether a layout or a render prompt shows cooking equipment that needs an extraction hood ('an open grill'),
+    not counting what it says the room has none of ('no hood')."""
+    return any(not NEGATION_BEFORE.search(text[:match.start()]) for match in HOOD_FIXTURES.finditer(text))
+
+
+def kitchen_fixtures(run: RunState, genre: str) -> str | None:
+    """What a unit without a hood (or a kitchen) has behind the counter instead of a cooking line, for the layout and
+    the renders (said positively: image models tend to draw what a prompt says is absent)."""
+    rules = run.constraints
+    if not rules.hood_free or scoring.genre_kind(genre) in ("retail", "wellness"):
+        return None
+    if rules.no_cooking:
+        return "behind the counter, a cold display case and a prep sink only"
+    return "behind the counter, a compact ventless oven and a cold-prep counter"
+
+
+def keep_rules(run: RunState, concept: dict, row: dict | None, design: dict) -> list[str]:
+    """Holds a design sheet to the owner's rules: the offer (items taken out are replaced from the evidence), the name,
+    the tagline and statement, and a layout and renders without a cooking line when the unit has no hood. Returns
+    what it repaired, in plain words."""
+    rules = run.constraints
+    notes: list[str] = []
+    evidence = offer_evidence(run, concept, row)
+    offered = [" ".join(item.split()) for item in design.get("offer") or [] if isinstance(item, str) and item.strip()]
+    removed = [(item, why) for item in offered if (why := rules.item_problem(item))]
+    kept = [item for item in offered if not rules.item_problem(item)]
+    for item in evidence if removed else []:
+        if len(kept) >= len(offered):
+            break
+        if scoring.item_key(item) not in {scoring.item_key(k) for k in kept}:
+            kept.append(item)
+    design["offer"] = (kept or (evidence if offered else []))[:6]
+    if removed:
+        notes.append(f"Took out of the offer {removed_text(removed)}.")
+    name = design.get("name")
+    if not isinstance(name, str) or not name.strip() or placeholder_name(name, concept["genre"], run.site.label) \
+            or taken_name(name, place_names(run)) or rules.item_problem(name):
+        design["name"] = concept["name"]
+    for key, fallback in (("tagline", concept.get("one_liner")), ("concept_statement", " ".join(concept.get("why_here") or []))):
+        text = design.get(key)
+        if isinstance(text, str) and (rules.item_problem(text) or rules.budget and UPSCALE.search(text)):
+            design[key] = fallback
+            notes.append(f"The {key.replace('_', ' ')} broke your rules; the concept's own words replace it.")
+    fixtures = kitchen_fixtures(run, concept["genre"])
+    interior = design.get("interior") if isinstance(design.get("interior"), dict) else None
+    if fixtures and interior is not None:
+        layout = interior.get("layout") if isinstance(interior.get("layout"), str) else ""
+        if not layout or shows_hood_fixtures(layout):
+            layout = LAYOUTS.get(scoring.genre_kind(concept["genre"]), LAYOUTS["food"])
+        if fixtures not in layout:
+            layout = f"{layout.rstrip('. ')}; {fixtures}"
+        interior["layout"] = layout
+    for key in ("image_prompt", "facade_prompt"):
+        if fixtures and isinstance(design.get(key), str) and shows_hood_fixtures(design[key]):
+            design[key] = None
+    return notes
+
+
+def offer_evidence(run: RunState, concept: dict, row: dict | None) -> list[str]:
+    """What the sheet's offer starts from: what the places people here love are known for, within the owner's rules,
+    and for a wildcard its own signature first (it combines two kinds of business)."""
+    items = [i["item"] for i in offer_items(row, run.constraints, limit=6)] if row else []
+    if concept.get("wildcard"):
+        items = [item for item in concept.get("signature") or [] if isinstance(item, str)] + items
+    seen: set[str] = set()
+    return [item for item in items if not (scoring.item_key(item) in seen or seen.add(scoring.item_key(item)))][:6]
 
 
 INTERIOR_STYLE = (
@@ -153,13 +258,19 @@ def room_scale(run: RunState) -> str:
     return f"The room is about {size}, furnished at a realistic scale for that size. " if size else ""
 
 
+def room_kitchen(run: RunState, genre: str) -> str:
+    """What a render shows behind the counter when the unit has no hood: compact equipment, never a cooking line."""
+    fixtures = kitchen_fixtures(run, genre)
+    return f"{fixtures[:1].upper()}{fixtures[1:]}, against a clean, uncluttered back wall. " if fixtures else ""
+
+
 def design_shots(run: RunState, concept: dict, design: dict, dna: dict) -> list[dict]:
     """Prompts for the two renders. The server keeps them, so a client can only render the shots it was given."""
     sign = sign_text(str(design.get("name") or concept["name"]))
     interior = design.get("image_prompt")
     facade = design.get("facade_prompt")
     if isinstance(interior, str) and interior.strip():
-        interior = f"{interior.strip()} {room_scale(run)}{INTERIOR_STYLE}"
+        interior = f"{interior.strip()} {room_scale(run)}{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}"
     else:
         interior = interior_prompt(run, concept, dna, design)
     if isinstance(facade, str) and facade.strip():
@@ -176,7 +287,8 @@ def design_shots(run: RunState, concept: dict, design: dict, dna: dict) -> list[
 
 
 def sign_text(name: str) -> str:
-    """What the sign says: rule-made names end with the neighborhood ("Seafood, Williamsburg"), which a sign would not."""
+    """What the sign says: names the evidence rules gave before they invented real ones end with the neighborhood
+    ("Seafood, Williamsburg"), which a sign would not."""
     return name.split(",")[0].strip()[:40] or "Opening soon"
 
 
@@ -210,7 +322,8 @@ def interior_prompt(run: RunState, concept: dict, dna: dict, design: dict | None
         f"lighting: {interior['lighting']}" if interior.get("lighting") else "",
     ]
     described = ". ".join(part for part in details if part and not part.endswith(": "))
-    return f"Interior of a small street-level {noun} in {run.site.label}. {described}. {room_scale(run)}{INTERIOR_STYLE}"
+    return (f"Interior of a small street-level {noun} in {run.site.label}. {described}. {room_scale(run)}"
+            f"{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}")
 
 
 def facade_prompt(run: RunState, concept: dict, dna: dict, design: dict, sign: str) -> str:
@@ -275,13 +388,13 @@ def partner_places(run: RunState, genre: str, limit: int = 2) -> list[str]:
 
 
 def opening_hours(row: dict | None) -> tuple[str | None, str | None]:
-    """Hours the places locals love of this type keep (competitors inside the walk when too few list theirs)."""
+    """Hours the places people here love of this type keep (competitors inside the walk when too few list theirs)."""
     if not row:
         return None, None
     genre = in_sentence(row["genre"])
     found = scoring.typical_hours(example_places(row))
     if found:
-        return found["text"], f"Typical hours of the {found['sample']} {genre} places locals love that list them"
+        return found["text"], f"Typical hours of the {found['sample']} {genre} places people here love that list them"
     found = scoring.typical_hours(scoring.relevant(row.get("_nearby_entities") or [], row["genre_id"], row["genre"]))
     if found:
         return found["text"], f"Typical hours of {found['sample']} {genre} places inside the walk"
@@ -325,7 +438,7 @@ def rule_design(
     if partner_brands:
         partners.append({"name": partner_brands[0], "why": "A brand people within 1.5 km over-index on; a natural co-branding partner."})
     row = gap_for(run, concept["genre"])
-    offer = [i["item"] for i in offer_items(row, run.constraints, limit=6)] if row else list(concept.get("signature") or [])
+    offer = offer_evidence(run, concept, row) or [item for item in concept.get("signature") or [] if isinstance(item, str)]
     return {
         "name": concept["name"],
         "tagline": concept.get("one_liner"),

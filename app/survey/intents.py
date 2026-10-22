@@ -1,7 +1,7 @@
 """What the owner asked for: a verdict on the business they want to open, or how to improve the place they run.
 
 Both reuse the survey's own measurements: a category the gap table does not cover is measured live the same way, so a
-verdict compares like with like, and an existing place is compared with the places locals love in its category.
+verdict compares like with like, and an existing place is compared with the places people here love in its category.
 """
 from __future__ import annotations
 
@@ -46,13 +46,13 @@ async def measured_row(q: QlooClient, run: RunState, genre: dict, source: str) -
 def weakness(row: dict) -> str:
     """The main reason a category scores low here (the score gives no credit for a local rank beyond about #15)."""
     if row["demand_rank"] >= scoring.UNRANKED:
-        return "locals do not rank it among their top 50 place types"
+        return "people here do not rank it among their top 50 place types"
     if row["demand_rank"] > 15:
-        return f"locals rank it only #{row['demand_rank']} among place types"
+        return f"people here rank it only #{row['demand_rank']} among place types"
     if row["relative_supply"] >= 1.2:
         return "the block already has more of it than its density predicts"
     if row.get("lift", 0) <= -0.3:
-        return "locals rank it lower than the areas around do"
+        return "people here rank it lower than the areas around do"
     return "demand and supply here are close to what the areas around show"
 
 
@@ -73,7 +73,7 @@ async def verdict(q: QlooClient, run: RunState) -> dict:
     elif row["evidence"] == "thin":
         level, headline = "thin", f"Qloo knows too few {title} places around here to judge it."
     elif row["evidence"] == "atypical":
-        level, headline = "thin", f"Locals' favorite {title} places are mostly hotels or malls, so the comparison is weak."
+        level, headline = "thin", f"The {title} places people here love are mostly hotels or malls, so the comparison is weak."
     elif position <= max(1, round(total / 3)):
         level, headline = "strong", f"{title} is one of the strongest gaps here: #{position} of {total} categories measured."
     elif position <= round(2 * total / 3):
@@ -97,7 +97,7 @@ def requested_row(run: RunState) -> dict | None:
 
 
 async def improve(q: QlooClient, run: RunState) -> dict | None:
-    """The owner's place against the places locals love in its category, and the moves that follow."""
+    """The owner's place against the places people here love in its category, and the moves that follow."""
     place = run.place or {}
     tag = scoring.primary_genre_tag(place) or next(
         ((tag_id, name) for tag_id, name in scoring.genre_tags(place) if scoring.is_business_genre(name)), None,
@@ -121,7 +121,7 @@ async def improve(q: QlooClient, run: RunState) -> dict | None:
 
 
 def peers_of(place: dict, row: dict) -> tuple[list[dict], str]:
-    """Places locals love in the category at a similar price (within one level), without the place itself.
+    """Places people here love in the category at a similar price (within one level), without the place itself.
 
     An upscale place is not compared with fast-casual favorites; when too few share its price, all favorites count, and
     when too few are favorites at all, nearby competitors fill in. The label says which comparison was made.
@@ -132,12 +132,12 @@ def peers_of(place: dict, row: dict) -> tuple[list[dict], str]:
     if price:
         similar = [e for e in favorites if abs(((e.get("properties") or {}).get("price_level") or price) - price) <= 1]
         if len(similar) >= 3:
-            return similar, "places locals love at a similar price"
+            return similar, "places people here love at a similar price"
     if len(favorites) >= 3:
-        return favorites, "places locals love"
+        return favorites, "places people here love"
     ids = {scoring.item_id(e) for e in favorites}
     nearby = [e for e in row.get("_nearby_entities") or [] if scoring.item_id(e) not in ids | {own}]
-    return favorites + nearby, "places locals love or that are nearby"
+    return favorites + nearby, "places people here love or that are nearby"
 
 
 def suggestible(name: str, family: str) -> bool:
@@ -230,16 +230,19 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
     elif price["place"] and price["peers"] and price["place"] != price["peers"]:
         position = "above" if price["place"] > price["peers"] else "below"
         out.append({"title": f"Own the {'high' if position == 'above' else 'low'} end", "why": (
-            f"Few of the {genre} places locals love are priced like {name} ({'$' * price['place']}); most are "
+            f"Few of the {genre} places people here love are priced like {name} ({'$' * price['place']}); most are "
             f"{'$' * price['peers']}. {name} is the {'upscale' if position == 'above' else 'budget'} option, so their offer "
             "and hours are no guide."
         )})
     if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3 and (row.get("leakage") or 0) >= 0.6:
         known = comparison["peers_known_for"][:3]
         known_text = f"; they are known for {scoring.natural_list(known)}" if known else ""
+        # The trip to the favorites outside the walk; rows saved before it was measured say no distance.
+        km = row.get("median_far_km")
+        away = f", a median {km} km away" if km else ""
         out.append({"title": "Win back the trips", "why": (
-            f"{row['favorites_far']} of the {row['favorites_total']} {genre} places locals love more than the city does are "
-            f"outside the walk, a median {row['median_favorite_km']} km away{known_text}."
+            f"{row['favorites_far']} of the {row['favorites_total']} {genre} places people here love more than the rest "
+            f"of the city does are outside the walk{away}{known_text}."
         )})
     if plan and plan.get("soundtrack"):
         names = ", ".join(item["name"] for item in plan["soundtrack"][:3])

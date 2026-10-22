@@ -12,7 +12,7 @@ from app.survey import constraints
     ("halal, family friendly", ["halal: no pork or alcohol", "family friendly"]),
     ("vegan menu, 1,200 sq ft, no kitchen", ["vegetarian offer", "unit of about 111 m²", "no kitchen"]),
     ("60m2 unit with a patio, upscale", ["upscale prices ($$$–$$$$)", "unit of about 60 m²", "outdoor space"]),
-    ("no hood, budget", ["budget prices ($–$$)", "light prep only, no extraction"]),
+    ("no hood, budget", ["budget prices ($)", "light prep only, no extraction"]),
     ("Open late, near the university", []),
 ])
 def test_notes_are_understood(notes, understood):
@@ -51,7 +51,7 @@ def test_items_follow_the_notes():
 
 
 def test_price_range_clamps_levels():
-    assert constraints.parse("budget").price_level(4) == 2
+    assert constraints.parse("budget").price_level(4) == 1  # budget is the lowest level, never $$
     assert constraints.parse("upscale").price_level(1) == 3
     assert constraints.parse("").price_level(3) == 3
     assert constraints.parse("").as_evidence() is None

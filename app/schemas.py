@@ -78,6 +78,49 @@ class Shot(BaseModel):
     prompt: str
 
 
+class LoveItem(BaseModel):
+    """One of the two things a wildcard concept combines, and where the evidence that people here love it comes from."""
+
+    item: str = Field(description="What people here love: a kind of place, in plain words ('coffee shops')")
+    genre: str = Field(description="Its category in the gap table")
+    source: str = Field(description="The Qloo evidence in words: the trips people here make, or how they rank it")
+
+
+class Concept(BaseModel):
+    """A business concept as the `concepts` event streams it (GET /api/run): the ranked concepts, then at most one
+    wildcard. The event also carries `mode`, `model`, `caution` and `notes`, the list of what the owner's rules repaired
+    or dropped, in plain words."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(description="An original business name, never the category plus the neighborhood")
+    genre: str = Field(description="The gap-table category it is built on; for a wildcard, the first of the two it combines")
+    genre_id: str | None = None
+    gap_score: int | None = Field(None, description="The category's gap score; null for the wildcard, which is never ranked")
+    one_liner: str | None = None
+    for_whom: str | None = None
+    price_level: int | None = Field(None, description="Qloo's 1-4; always 1 ($) when the owner's notes ask for budget prices")
+    price_basis: str | None = Field(
+        None, description="What the places people here love and the places inside the walk charge, and where a budget "
+                          "concept sits against the block ('below the block's usual $$')",
+    )
+    price_anchors: list[dict] = Field(default_factory=list)
+    why_here: list[str] = Field(default_factory=list)
+    beat_competitors: str | None = None
+    signature: list[str] = Field(default_factory=list, description="What people would come for, within the owner's rules")
+    inspired_by: list[str] = Field(default_factory=list)
+    risk: str | None = None
+    owner_rules: list[str] = Field(
+        default_factory=list,
+        description="How it meets each rule the owner gave, one line each: the unit ('Fits 45 m² (484 ft²): a counter and "
+                    "about 20–24 seats at most.'), the kitchen ('No hood needed: …'), the price ('Budget: $, below the "
+                    "block's usual $$.'), the diet and families",
+    )
+    wildcard: bool = Field(False, description="True for the extra concept after the ranked ones: two loves combined, untested")
+    combines: list[LoveItem] | None = Field(None, description="For the wildcard: the two things people here love it combines")
+    caution: str | None = Field(None, description="For the wildcard: why it is untested")
+
+
 class DesignSheet(BaseModel):
     """A concept's design sheet. The model writes the creative fields (loosely typed, since a model can return any
     shape and that must not fail the request); everything factual comes from the evidence and is typed."""

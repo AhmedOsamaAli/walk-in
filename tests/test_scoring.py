@@ -323,12 +323,17 @@ def test_demand_comparisons_are_stated_in_words_for_the_agent():
     citywide = gap_summary(_row("Live music", 1, 2.5, 3, 12, far=10, total=10, kind="citywide") | {
         "expected_nearby": 3.9, "relative_supply": 0.82, "evidence": "ok", "gap_score": 63,
     })
-    assert citywide["do_locals_travel_for_it"].startswith("no evidence")
-    local = gap_summary(_row("Seafood", 7, 7.0, 5, 30, far=7, total=7) | {
-        "expected_nearby": 8.1, "relative_supply": 0.66, "evidence": "ok", "gap_score": 55,
-    })
-    assert local["do_locals_travel_for_it"] == (
-        "7 of the 7 places locals love more than the city does are outside the walk; median distance 3.0 km"
+    assert citywide["do_people_here_travel_for_it"].startswith("no evidence")
+    measured = {"expected_nearby": 8.1, "relative_supply": 0.66, "evidence": "ok", "gap_score": 55}
+    local = gap_summary(_row("Seafood", 7, 7.0, 5, 30, far=7, total=7) | measured | {"median_far_km": 3.4})
+    assert local["do_people_here_travel_for_it"] == (
+        "7 of the 7 places people here love more than the rest of the city does are outside the walk; those are a "
+        "median 3.4 km away"
+    )
+    # A row saved before the far-only median existed says no distance rather than the one diluted by close favorites.
+    older = gap_summary(_row("Seafood", 7, 7.0, 5, 30, far=7, total=7) | measured)
+    assert older["do_people_here_travel_for_it"] == (
+        "7 of the 7 places people here love more than the rest of the city does are outside the walk"
     )
 
 

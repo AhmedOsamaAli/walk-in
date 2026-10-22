@@ -24,12 +24,13 @@ def public_gap(row: dict) -> dict:
 
 def annotate(run: RunState, row: dict) -> dict:
     """Adds what the owner's unit and notes allow, and the plain-words reading of the row."""
+    run.constraints.adopt_unit(run.site.size_m2, run.site.kitchen)
     row["fit"] = space.fit(row["genre"], run.site.size_m2, run.site.kitchen)
     allowed, reason = run.constraints.allows_genre(scoring.genre_title(row["genre"]))
     row["ruled_out"] = None if allowed else reason
     row["reading"] = gap_reading(row)
     row["why"] = gap_evidence(row, run.site.minutes)
-    row["price"] = price_evidence(row, run.constraints)
+    row["price"] = price_evidence(row, run.constraints, block_price(run))
     return row
 
 
@@ -115,7 +116,8 @@ def number(value: float) -> str:
 # ---------- Places of the genre ----------
 
 def storefront_favorites(row: dict) -> tuple[list[dict], list[dict]]:
-    """Locals' favorite places of a genre without hotels and malls, as (entities, cards), main-genre places first."""
+    """The favorite places of people here of a genre, without hotels and malls, as (entities, cards), main-genre places
+    first."""
     pairs = [
         (entity, card) for entity, card in zip(row["_favorite_entities"], row["favorites"], strict=True)
         if scoring.is_storefront_place(entity)
@@ -149,7 +151,8 @@ PRICE_TIERS = (1, 2, 3, 4)
 
 
 def price_ladder(row: dict) -> list[dict]:
-    """How many of the places locals love, and of the places inside the walk, sit at each of Qloo's four price levels."""
+    """How many of the places people here love, and of the places inside the walk, sit at each of Qloo's four price
+    levels."""
     loved, inside = example_places(row), competitor_places(row)
     return [
         {"level": tier, "loved": sum(_price(p) == tier for p in loved), "inside": sum(_price(p) == tier for p in inside)}
@@ -158,8 +161,8 @@ def price_ladder(row: dict) -> list[dict]:
 
 
 def open_price_note(row: dict, ladder: list[dict]) -> str | None:
-    """A price level at least two of the places locals love charge that no place inside the walk does; only said when
-    the walk has priced places of the kind, so it is a gap in price and not in the category."""
+    """A price level at least two of the places people here love charge that no place inside the walk does; only said
+    when the walk has priced places of the kind, so it is a gap in price and not in the category."""
     inside = sum(step["inside"] for step in ladder)
     loved = sum(step["loved"] for step in ladder)
     open_steps = [step for step in ladder if step["loved"] >= 2 and not step["inside"]]
@@ -169,12 +172,12 @@ def open_price_note(row: dict, ladder: list[dict]) -> str | None:
     level = dollars(step["level"])
     priced = "" if loved == len(example_places(row)) else " that list a price"
     return (f"No {level} {singular(row['genre'])} inside the walk, while {step['loved']} of the {loved} "
-            f"{plural(row['genre'])} locals love{priced} are {level}: that price level is open.")
+            f"{plural(row['genre'])} people here love{priced} are {level}: that price level is open.")
 
 
 def price_anchors(row: dict, level: int | None, limit: int = 3) -> list[dict]:
-    """Real places at this price level whose menus an owner can check: the places locals love first, then the places
-    inside the walk; places with a menu page or a website first."""
+    """Real places at this price level whose menus an owner can check: the places people here love first, then the
+    places inside the walk; places with a menu page or a website first."""
     if not level:
         return []
     inside = competitor_places(row)
@@ -195,14 +198,47 @@ def price_anchors(row: dict, level: int | None, limit: int = 3) -> list[dict]:
     return anchors
 
 
-def price_evidence(row: dict, constraints: Constraints | None = None) -> dict:
-    """The price level the evidence supports: what the places locals love charge, against the places inside the walk."""
+def block_price(run: RunState) -> dict | None:
+    """The median price level of every place inside the walk that lists one, and how many do."""
+    level, count = _median_level(run.block)
+    return {"level": level, "places": count} if level else None
+
+
+def budget_position(row: dict, nearby: int | None, nearby_n: int, block: dict | None) -> dict:
+    """Where a budget concept ($) sits against what the block charges: the places of its kind inside the walk when they
+    list prices, otherwise every place inside the walk that does. `line` is the short form, `basis` the full sentence."""
+    kind = plural(row["genre"])
+    if nearby:
+        usual, scope, places = nearby, "category", nearby_n
+        whose = f" for {kind}"
+        source = f"the median of the {nearby_n} inside the walk"
+    elif block:
+        usual, scope, places = block["level"], "block", block["places"]
+        whose = ""
+        source = f"the median of the {block['places']} places inside the walk that list a price"
+    else:
+        return {"level": 1, "usual": None, "scope": None, "places": 0, "below": False,
+                "line": "Budget: $, the lowest level Qloo lists.",
+                "basis": "Budget, as your notes ask: $, the lowest level; Qloo lists no prices inside the walk to compare with."}
+    if usual > 1:
+        line = f"Budget: $, below the block's usual {dollars(usual)}{whose}."
+        basis = f"Budget, as your notes ask: $, below the block's usual {dollars(usual)}{whose} ({source})."
+    else:
+        line = f"Budget: $, the lowest level; the block's usual{whose} is $ too, so win on value."
+        basis = (f"Budget, as your notes ask: $, the lowest level; the block's usual{whose} is $ too ({source}), so the "
+                 f"concept wins on value and speed.")
+    return {"level": 1, "usual": usual, "scope": scope, "places": places, "below": usual > 1, "line": line, "basis": basis}
+
+
+def price_evidence(row: dict, constraints: Constraints | None = None, block: dict | None = None) -> dict:
+    """The price level the evidence supports: what the places people here love charge, against the places inside the
+    walk. Budget notes set the lowest level and say where it sits against the block (`block`: block_price)."""
     loved, loved_n = _median_level(example_places(row))
     nearby, nearby_n = _median_level(competitor_places(row))
     level = loved or nearby
     parts = []
     if loved:
-        parts.append(f"the {plural(row['genre'])} locals love are {dollars(loved)} (median of {loved_n})")
+        parts.append(f"the {plural(row['genre'])} people here love are {dollars(loved)} (median of {loved_n})")
     if nearby:
         verb = "is" if nearby_n == 1 else "are"
         parts.append(f"the {nearby_n} inside the walk {verb} {dollars(nearby)}" if loved else
@@ -212,13 +248,19 @@ def price_evidence(row: dict, constraints: Constraints | None = None) -> dict:
     chosen = constraints.price_level(level) if constraints else level
     if constraints and constraints.price and level is None:
         chosen = constraints.price[0]
-    if chosen != level:
+    budget = budget_position(row, nearby, nearby_n, block) if constraints and constraints.budget else None
+    if budget:
+        basis += f" {budget['basis']}"
+    elif chosen != level:
         basis += f" Set to {dollars(chosen)} by your notes."
     ladder = price_ladder(row)
-    return {
+    out = {
         "level": chosen, "evidence_level": level, "loved": loved, "nearby": nearby, "basis": basis,
         "ladder": ladder, "open_note": open_price_note(row, ladder), "anchors": price_anchors(row, chosen),
     }
+    if budget:
+        out["budget"] = budget
+    return out
 
 
 # ---------- Who the places draw ----------
@@ -245,7 +287,7 @@ def tag_share(places: list[dict], tag_type: str, skip: set[str] = frozenset()) -
 
 
 def crowd_of(row: dict, limit: int = 3) -> list[str]:
-    """Who most of the places locals love of this kind draw, from Qloo's customer tags on those places."""
+    """Who most of the places people here love of this kind draw, from Qloo's customer tags on those places."""
     return [share["label"] for share in tag_share(example_places(row), CROWD_TAG, CROWD_SKIP)][:limit]
 
 
@@ -331,8 +373,9 @@ def _offer_key(item: str) -> str:
 
 
 def offer_items(row: dict, constraints: Constraints | None = None, limit: int = 4) -> list[dict]:
-    """What a concept should be known for, from the places locals love: items none of the places inside the walk is
-    known for come first ('new_here'), then the rest by how many favorites carry them."""
+    """What a concept should be known for, from the places people here love: items none of the places inside the walk
+    is known for come first ('new_here'), then the rest by how many favorites carry them. Items the owner's rules
+    forbid (alcohol, pork, meat, anything that needs a hood or a kitchen the unit lacks) are left out."""
     kind = scoring.genre_kind(row["genre"])
     loved, names, ranks = _offer_counts(example_places(row), kind, row["genre"])
     nearby_keys = set(_offer_counts(competitor_places(row), kind, row["genre"])[0])
@@ -373,7 +416,7 @@ def _shape(row: dict) -> dict:
 
 
 def gap_reading(row: dict) -> str:
-    """The row in two or three words, for a badge."""
+    """The row in two or three words, for a badge. The web app styles the badge by these exact labels."""
     if row.get("evidence") == "thin":
         return "Thin data"
     if row.get("evidence") == "atypical":
@@ -395,7 +438,8 @@ def gap_reading(row: dict) -> str:
 
 
 def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
-    """The row in plain sentences: demand against the areas around, supply against density, where locals travel."""
+    """The row in plain sentences: demand against the areas around, supply against density, where people here
+    travel."""
     genre = in_sentence(row["genre"])
     lines = [_demand_line(row, genre)]
     supply = _supply_line(row, minutes)
@@ -407,18 +451,18 @@ def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
     if row.get("evidence") == "thin":
         lines.append(f"Thin evidence: Qloo knows at most one {singular(row['genre'])} in the surrounding area.")
     elif row.get("evidence") == "atypical":
-        lines.append(f"The {plural(row['genre'])} locals love are mostly in hotels or malls, so the comparison is weak.")
+        lines.append(f"The {plural(row['genre'])} people here love are mostly in hotels or malls, so the comparison is weak.")
     return lines
 
 
 def _demand_line(row: dict, genre: str) -> str:
     rank, ref = row["demand_rank"], row.get("ref_rank")
     if rank >= scoring.UNRANKED:
-        return f"Locals do not rank {genre} among their top 50 place types."
+        return f"People here do not rank {genre} among their top 50 place types."
     if rank == 1:
-        text = f"{genre[:1].upper() + genre[1:]} is the place type locals engage with most"
+        text = f"{genre[:1].upper() + genre[1:]} is the place type people here engage with most"
     else:
-        text = f"Locals rank {genre} #{rank} among the place types they engage with"
+        text = f"People here rank {genre} #{rank} among the place types they engage with"
     if ref is None:
         return text + "."
     ref_text = "outside the top 50" if ref >= scoring.UNRANKED else f"#{round(ref)}"
@@ -447,21 +491,47 @@ def _supply_line(row: dict, minutes: int) -> str | None:
 
 
 def _travel_line(row: dict) -> str | None:
-    """Only places locals love more than the city does say where they travel; the city's famous places say nothing."""
-    total, far, km = row["favorites_total"], row["favorites_far"], row.get("median_favorite_km")
+    """Only places people here love more than the rest of the city does say where they travel; the city's famous places
+    say nothing. The distance is the median trip to the favorites outside the walk (median_far_km); rows saved before
+    it existed say no distance rather than one diluted by the favorites already close by."""
+    total, far, km = row["favorites_total"], row["favorites_far"], row.get("median_far_km")
     if row.get("favorites_kind") != "local" or total < 3:
         return None
     _, cards = storefront_favorites(row)
     outside = [c["name"] for c in cards if c.get("name") and not c.get("within_walk")][:3]
     inside = [c["name"] for c in cards if c.get("name") and c.get("within_walk")][:2]
-    loved = f"{plural(row['genre'])} locals love more than the city does"
+    loved = f"{plural(row['genre'])} people here love more than the rest of the city does"
+    median = f" (median {km} km)" if km else ""
     if far == total:
-        return f"All {total} {loved} are outside the walk, a median {km} km away: {scoring.natural_list(outside)}."
+        away = f", a median {km} km away" if km else ""
+        return f"All {total} {loved} are outside the walk{away}: {scoring.natural_list(outside)}."
     if far / total >= TRAVEL:
-        return f"{far} of the {total} {loved} are outside the walk (median {km} km): {scoring.natural_list(outside)}."
+        return f"{far} of the {total} {loved} are outside the walk{median}: {scoring.natural_list(outside)}."
     if far / total <= 0.4 and inside:
         return f"Most of the {loved} are already inside the walk ({total - far} of {total}), such as {scoring.natural_list(inside)}."
-    return f"{far} of the {total} {loved} are outside the walk (median {km} km)."
+    return f"{far} of the {total} {loved} are outside the walk{median}."
+
+
+def love_evidence(row: dict) -> tuple[float, str] | None:
+    """How clearly people here love a category, with the evidence in words: they travel to its favorites outside the
+    walk (3), rank it higher than the areas around do (2.5), or rank it among their top five place types (2). None
+    when the evidence is thin, atypical or weaker than that."""
+    if row.get("evidence") != "ok":
+        return None
+    s = _shape(row)
+    rank, ref = row["demand_rank"], row.get("ref_rank")
+    if s["travel"]:
+        km = row.get("median_far_km")
+        names = [c["name"] for c in storefront_favorites(row)[1] if c.get("name") and not c.get("within_walk")][:2]
+        trip = f" a median {km} km" if km else ""
+        like = f", such as {scoring.natural_list(names)}" if names else ""
+        return 3.0, f"people here travel{trip} to the {plural(row['genre'])} they love most{like}"
+    if s["stronger"] and rank <= 10 and ref is not None:
+        return 2.5, (f"people here rank {in_sentence(row['genre'])} #{rank} among place types, higher than the areas "
+                     f"around (#{round(ref)})")
+    if rank <= 5:
+        return 2.0, f"people here rank {in_sentence(row['genre'])} #{rank} among the place types they engage with"
+    return None
 
 
 # What to do about what nearby reviews complain about.
@@ -493,7 +563,8 @@ def competition(row: dict, minutes: int, constraints: Constraints | None = None)
         _, favorites = storefront_favorites(row)
         nearest = min((f for f in favorites if f.get("distance_m")), key=lambda f: f["distance_m"], default=None)
         parts.append(f"{count_of(row['genre'], 0)} competes inside the {minutes}-minute walk" + (
-            f"; the nearest one locals love is {nearest['name']}, {nearest['distance_m'] / 1000:.1f} km away." if nearest else "."
+            f"; the nearest one people here love is {nearest['name']}, {nearest['distance_m'] / 1000:.1f} km away."
+            if nearest else "."
         ))
     elif rivals:
         best = max(rivals, key=lambda c: (c.get("rating") or 0))
@@ -510,8 +581,8 @@ def competition(row: dict, minutes: int, constraints: Constraints | None = None)
             parts.append(f"Their reviews complain about {said}: {'; '.join(move for _, move in moves)}.")
     items = [i["item"].lower() for i in offer_items(row, constraints) if i["new_here"]][:3]
     if items:
-        parts.append(f"Stand apart with what the {plural(row['genre'])} locals love are known for and none inside the walk "
-                     f"is: {scoring.natural_list(items)}.")
+        parts.append(f"Stand apart with what the {plural(row['genre'])} people here love are known for and none inside the "
+                     f"walk is: {scoring.natural_list(items)}.")
     return " ".join(parts)
 
 
@@ -523,17 +594,19 @@ def risk(row: dict, minutes: int) -> str:
     if row.get("evidence") == "thin":
         return f"Thin evidence: Qloo knows at most one {singular(row['genre'])} in the surrounding area, so treat this as a hypothesis."
     if row.get("evidence") == "atypical":
-        return f"The {plural(row['genre'])} locals love are mostly in hotels or malls, so a small storefront may not draw the same crowd."
+        return (f"The {plural(row['genre'])} people here love are mostly in hotels or malls, so a small storefront may not "
+                f"draw the same crowd.")
     if s["over"]:
         return (f"{count_of(row['genre'], nearby, row.get('nearby_capped'))} are already inside the walk, more than the block's "
                 f"density predicts: you would take share, not fill a gap.")
     if s["weaker"]:
-        return f"Locals rank {genre} lower here than the areas around do (#{row['demand_rank']} against #{round(row['ref_rank'])})."
+        return (f"People here rank {genre} lower than the areas around do (#{row['demand_rank']} against "
+                f"#{round(row['ref_rank'])}).")
     if nearby >= 8:
         return f"{count_of(row['genre'], nearby, row.get('nearby_capped'))} already compete inside the {minutes}-minute walk."
     if row.get("favorites_kind") != "local":
-        return (f"No sign that locals travel for {plural(row['genre'])}: their favorites are the city's famous ones, so the case "
-                f"rests on the ranking and the supply count.")
+        return (f"No sign that people here travel for {plural(row['genre'])}: their favorites are the city's famous ones, so "
+                f"the case rests on the ranking and the supply count.")
     return "Qloo measures taste, not foot traffic: count passers-by at the door on a weekday and a weekend before signing."
 
 
@@ -597,16 +670,17 @@ def mention_text(group: dict) -> str:
 def gap_summary(g: dict) -> dict:
     """One gap row as the agent sees it: comparisons are stated in words, so they cannot be misread."""
     if g["favorites_kind"] == "local" and g["favorites_total"]:
+        km = g.get("median_far_km")
         travel = (
-            f"{g['favorites_far']} of the {g['favorites_total']} places locals love more than the city does are outside "
-            f"the walk; median distance {g['median_favorite_km']} km"
+            f"{g['favorites_far']} of the {g['favorites_total']} places people here love more than the rest of the city "
+            f"does are outside the walk" + (f"; those are a median {km} km away" if km else "")
         )
     else:
-        travel = "no evidence: locals' favorites of this type are just the city's famous places"
+        travel = "no evidence: the favorites of people here of this type are just the city's famous places"
     summary = {
         "genre": g["genre"],
         "reading": g.get("reading") or gap_reading(g),
-        "locals_rank_here": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
+        "people_here_rank_it": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
         "median_rank_in_6_same_size_areas_around": g["ref_rank"],
         "demand_compared_with_areas_around": demand_comparison(g),
         "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
@@ -614,7 +688,7 @@ def gap_summary(g: dict) -> dict:
             f"at least {g['expected_nearby']}" if g.get("around_capped") and g["expected_nearby"] is not None else g["expected_nearby"]
         ),
         "relative_supply": g["relative_supply"],
-        "do_locals_travel_for_it": travel,
+        "do_people_here_travel_for_it": travel,
         "evidence": g["evidence"],
         "gap_score": g["gap_score"],
     }
@@ -652,10 +726,10 @@ def gap_for(run: RunState, genre: str) -> dict | None:
 
 def inspect_payload(run: RunState, row: dict) -> dict:
     entities, cards = storefront_favorites(row)
-    # Only places locals love more than the city does say anything about travel; otherwise they are just the
-    # city's famous places, and naming them that way keeps the agent from claiming that locals travel to them.
+    # Only places people here love more than the rest of the city does say anything about travel; otherwise they are
+    # just the city's famous places, and naming them that way keeps the agent from claiming that people travel to them.
     favorites_key = (
-        "places_locals_love_more_than_the_city_does" if row.get("favorites_kind") == "local"
+        "places_people_here_love_more_than_the_rest_of_the_city_does" if row.get("favorites_kind") == "local"
         else "the_citys_famous_places_of_this_type"
     )
     offer = offer_items(row, run.constraints, limit=8)
@@ -670,10 +744,10 @@ def inspect_payload(run: RunState, row: dict) -> dict:
              "known_for": f.get("known_for"), "inside_walk": f.get("within_walk", False)}
             for f in cards[:8]
         ],
-        "do_locals_travel_for_it": gap_summary(row)["do_locals_travel_for_it"],
+        "do_people_here_travel_for_it": gap_summary(row)["do_people_here_travel_for_it"],
         "menu_gap": [i["item"] for i in offer if i["new_here"]],
         "also_offered_inside_the_walk": [i["item"] for i in offer if not i["new_here"]],
-        "price_evidence": (row.get("price") or price_evidence(row, run.constraints))["basis"],
+        "price_evidence": (row.get("price") or price_evidence(row, run.constraints, block_price(run)))["basis"],
         "design_dna_of_these_places": scoring.design_dna(entities),
     }
 

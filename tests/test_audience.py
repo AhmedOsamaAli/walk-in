@@ -1,4 +1,4 @@
-"""Who a concept is for: Qloo's customer tags on the places locals love, and a demand rank only when it is a reason."""
+"""Who a concept is for: Qloo's customer tags on the places people here love, and a demand rank only when it is a reason."""
 from app import scoring
 from app.survey.concepts import for_whom
 from app.survey.evidence import crowd_of, in_running_text
@@ -34,10 +34,10 @@ def test_the_crowd_is_what_most_of_the_loved_places_draw_and_never_just_locals()
 
 
 def test_a_weak_rank_is_not_sold_as_a_reason_but_the_crowd_is():
-    assert for_whom(row(21), 10) == "Neighbors within a 10-minute walk; the bakeries locals love draw families and couples"
+    assert for_whom(row(21), 10) == "Neighbors within a 10-minute walk; the bakeries people here love draw families and couples"
     assert for_whom(row(4), 10) == (
         "Neighbors within a 10-minute walk, who rank bakery #4 among the place types they engage with; "
-        "the bakeries locals love draw families and couples"
+        "the bakeries people here love draw families and couples"
     )
 
 

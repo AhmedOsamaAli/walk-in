@@ -36,10 +36,10 @@ def test_the_ladder_counts_each_level_for_loved_places_and_the_walk():
     ]
 
 
-def test_a_level_locals_love_that_the_walk_lacks_is_called_open():
+def test_a_level_people_here_love_that_the_walk_lacks_is_called_open():
     row = row_of(LOVED, INSIDE)
     assert open_price_note(row, price_ladder(row)) == (
-        "No $$$ cocktail bar inside the walk, while 3 of the 4 cocktail bars locals love are $$$: "
+        "No $$$ cocktail bar inside the walk, while 3 of the 4 cocktail bars people here love are $$$: "
         "that price level is open."
     )
     # With no priced competitor inside the walk, the whole category is the gap, not one price level.
