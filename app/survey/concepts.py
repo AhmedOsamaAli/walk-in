@@ -17,11 +17,13 @@ from ..qloo import QlooClient, QlooError
 from .evidence import (
     annotate,
     competition,
+    crowd_of,
     evidence_brief,
     fits,
     gap_evidence,
     gap_for,
     gap_summary,
+    in_running_text,
     in_sentence,
     inspect_payload,
     offer_items,
@@ -297,16 +299,24 @@ def concept_rows(run: RunState) -> list[dict]:
     return rows
 
 
+# Demand ranks are a reason to open only near the top; lower down, "who rank it #21" reads as a weakness.
+TOP_DEMAND = 10
+
+
 def for_whom(row: dict, minutes: int) -> str:
-    """Who the evidence points to. Qloo's age and gender skews describe visitors inconsistently, so none are guessed."""
+    """Who the evidence points to. Qloo's age and gender skews describe visitors inconsistently, so none are guessed;
+    who the places locals love of this kind draw comes from Qloo's tags on those places."""
     neighbors = f"Neighbors within a {minutes}-minute walk"
+    crowd = [in_running_text(label) for label in crowd_of(row)]
+    draws = f"; the {plural(row['genre'])} locals love draw {scoring.natural_list(crowd)}" if crowd else ""
     if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3 and row.get("median_favorite_km"):
         names = [c["name"] for c in storefront_favorites(row)[1] if c.get("name") and not c.get("within_walk")][:2]
         like = f" such as {scoring.natural_list(names)}" if names else ""
-        return f"{neighbors} who now travel a median {row['median_favorite_km']} km to {plural(row['genre'])}{like}"
-    if row["demand_rank"] < scoring.UNRANKED:
-        return f"{neighbors}, who rank {in_sentence(row['genre'])} #{row['demand_rank']} among the place types they engage with"
-    return neighbors
+        return f"{neighbors} who now travel a median {row['median_favorite_km']} km to {plural(row['genre'])}{like}{draws}"
+    if row["demand_rank"] <= TOP_DEMAND:
+        rank = f"{neighbors}, who rank {in_sentence(row['genre'])} #{row['demand_rank']} among the place types they engage with"
+        return rank + draws
+    return neighbors + draws
 
 
 def rule_concepts(run: RunState) -> list[dict]:

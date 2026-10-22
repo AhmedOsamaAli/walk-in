@@ -293,6 +293,11 @@ def is_storefront_place(entity: dict) -> bool:
     return not any(name.lower() in NOT_STOREFRONT_GENRES for _, name in genre_tags(entity))
 
 
+def is_open(entity: dict) -> bool:
+    """False for a place Qloo marks as closed: it is neither a competitor nor an example any more."""
+    return not (entity.get("properties") or {}).get("is_closed")
+
+
 def is_commercial_brand(entity: dict) -> bool:
     for tag in entity.get("tags") or []:
         if tag.get("type") in ("urn:tag:brand_type:qloo", "urn:tag:business_model:qloo") and NON_COMMERCIAL_BRAND.search(tag.get("name") or ""):

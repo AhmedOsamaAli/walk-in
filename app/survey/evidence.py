@@ -221,6 +221,31 @@ def price_evidence(row: dict, constraints: Constraints | None = None) -> dict:
     }
 
 
+# ---------- Who the places draw ----------
+
+CROWD_TAG = "urn:tag:customer_identity:qloo"
+# Nearly every place draws locals and regulars, so those labels say nothing about a kind of business.
+CROWD_SKIP = {"locals", "regulars"}
+
+
+def in_running_text(label: str) -> str:
+    """'Groups of friends' -> 'groups of friends'; 'LGBTQ+ community' keeps its capitals."""
+    first = label.split()[0] if label.split() else ""
+    return label if first.isupper() and len(first) > 1 else label[:1].lower() + label[1:]
+
+
+def crowd_of(row: dict, limit: int = 3) -> list[str]:
+    """Who most of the places locals love of this kind draw, from Qloo's customer tags on those places: labels on at
+    least half of them (and at least two), most common first."""
+    places = example_places(row)
+    counts: Counter[str] = Counter()
+    for place in places:
+        labels = {t.get("name") for t in place.get("tags") or [] if t.get("type") == CROWD_TAG and t.get("name")}
+        counts.update(label for label in labels if label.lower() not in CROWD_SKIP)
+    need = max(2, (len(places) + 1) // 2)
+    return [label for label, n in counts.most_common() if n >= need][:limit]
+
+
 # ---------- What to offer ----------
 
 # Where each kind of business finds its signature: dishes for restaurants, drinks and nights for bars, what people

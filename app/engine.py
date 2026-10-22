@@ -43,31 +43,35 @@ def reference_points(lat: float, lon: float, radius_m: float, bearings=REF_BEARI
     return [offset_point(lat, lon, distance, bearing) for bearing in bearings]
 
 
-async def places_in(q: QlooClient, location: dict, tag: str | None = None, take: int = 50, offset: int = 0) -> list[dict]:
+async def places_in(
+    q: QlooClient, location: dict, tag: str | None = None, take: int = 50, offset: int = 0, include_closed: bool = False,
+) -> list[dict]:
     params = {"filter.type": "urn:entity:place", **location, "take": take}
     if tag:
         params["filter.tags"] = tag
     if offset:
         params["offset"] = offset
-    return scoring.entities(await q.insights(params))
+    found = scoring.entities(await q.insights(params))
+    return found if include_closed else [place for place in found if scoring.is_open(place)]
 
 
 PAGE = 50
 
 
 async def places_upto(q: QlooClient, location: dict, tag: str, limit: int) -> list[dict]:
-    """Every place of a genre in an area, page by page up to `limit`: Qloo returns at most 50 per request, and a dense
-    city has more cafés than that within a kilometre, which would make every genre look equally common."""
+    """Every open place of a genre in an area, page by page up to `limit`: Qloo returns at most 50 per request, and a
+    dense city has more cafés than that within a kilometre, which would make every genre look equally common."""
     found: dict[str, dict] = {}
     offset = 0
     while offset < limit:
-        page = await places_in(q, location, tag=tag, take=PAGE, offset=offset)
+        # Closed places are dropped only after paging: a full page tells whether there is another one.
+        page = await places_in(q, location, tag=tag, take=PAGE, offset=offset, include_closed=True)
         for place in page:
             found.setdefault(scoring.item_id(place) or f"#{len(found)}", place)
         if len(page) < PAGE:
             break
         offset += PAGE
-    return list(found.values())[:limit]
+    return [place for place in found.values() if scoring.is_open(place)][:limit]
 
 
 def walk_filter(catchment: Catchment) -> dict:
@@ -316,7 +320,8 @@ async def place_by_id(q: QlooClient, entity_id: str) -> dict | None:
     location = scoring.place_location(thin) if thin else None
     if not location:
         return thin
-    around = await places_in(q, circle_filter(*location, 60), take=20)
+    # The owner's own record is read even when Qloo marks the place closed, so the owner can still compare it.
+    around = await places_in(q, circle_filter(*location, 60), take=20, include_closed=True)
     return next((e for e in around if scoring.item_id(e) == entity_id), thin)
 
 
