@@ -37,14 +37,14 @@ const AREA_UNITS: readonly { value: AreaUnit; label: string }[] = [
 const QUESTIONS: Record<Intent, string> = {
   explore: "What should this empty storefront become?",
   open: "Will your idea work on this block?",
-  improve: "What would make locals choose you?",
+  improve: "What would make people here choose you?",
 };
 const LEDES: Record<Intent, string> = {
   explore:
     "Drop a pin on a vacant unit. Walk-in reads what the people within a ten-minute walk love, what they leave the block for, and designs the business they would walk in for.",
   open: "Drop a pin where you want to open. Walk-in judges your idea against everything the block is missing, then designs it to win here.",
   improve:
-    "Drop a pin near the place you run. Walk-in compares it with the places locals love in its category and lists what to change, each move with its evidence.",
+    "Drop a pin near the place you run. Walk-in compares it with the places people here love in its category and lists what to change, each move with its evidence.",
 };
 /** Two columns: the map stays pinned beside the sheet, so scrolling the sheet never hides it. */
 const SIDE_BY_SIDE = "(min-width: 981px)";
@@ -189,7 +189,7 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
               <p className="mono label">Your place</p>
               <PlaceSearch near={site} place={form.place} onPick={onPlace} />
               <p className="field-note serif">
-                Its Qloo record (reviews, price, hours and what it is known for) is set against the places locals love in
+                Its Qloo record (reviews, price, hours and what it is known for) is set against the places people here love in
                 its category.
               </p>
             </div>

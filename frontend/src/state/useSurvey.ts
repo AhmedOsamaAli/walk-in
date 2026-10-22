@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, type Dispatch, type RefObje
 import { api, ApiError, messageOf, openRun } from "../api/client";
 import { readEvents, toSurveyEvent } from "../api/stream";
 import type { RunRecord, RunRequest } from "../api/types";
+import { engine } from "./engine";
 import { followRecord, POLL_MS, recordElapsed, type Poll } from "./record";
 import { initialSurvey, surveyReducer, type SurveyAction, type SurveyState } from "./survey";
 
@@ -77,6 +78,8 @@ export function useSurvey(): Survey {
     dispatch({ type: "start", startedAt, intent: run.intent });
     void (async () => {
       try {
+        // A napping engine is woken first, so a survey never fails for having been started while it slept.
+        await engine.whenReady(abort.signal);
         const stream = await openRun(run, abort.signal);
         for await (const raw of readEvents(stream)) {
           const event = toSurveyEvent(raw);
@@ -96,6 +99,7 @@ export function useSurvey(): Survey {
     dispatch({ type: "reset" });
     let record: RunRecord;
     try {
+      await engine.whenReady(abort.signal);
       record = await api.run(id, abort.signal);
     } catch (error) {
       release(controller, abort);

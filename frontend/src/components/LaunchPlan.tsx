@@ -1,65 +1,10 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useRef } from "react";
 import type { LaunchChannel, LaunchPlan } from "../api/types";
 import { naturalList } from "../lib/format";
 import { CLAIM_KINDS, audienceRows, shareText } from "../lib/launch";
+import { CopyButton } from "./CopyButton";
 import { HoursText } from "./Hours";
 import { PlaceLink } from "./Price";
-
-type CopyState = "idle" | "copied" | "selected";
-
-/** Copies a setting; where the browser blocks the clipboard, selects the setting so the owner can copy it by hand. */
-function CopyButton({ text, what, target }: { text: string; what: string; target: RefObject<HTMLElement | null> }) {
-  const [state, setState] = useState<CopyState>("idle");
-  useEffect(() => {
-    if (state === "idle") return;
-    const timer = window.setTimeout(
-      () => {
-        setState("idle");
-      },
-      state === "copied" ? 1800 : 6000,
-    );
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [state]);
-  const keys = navigator.userAgent.includes("Mac") ? "⌘C" : "Ctrl+C";
-  const select = () => {
-    const selection = window.getSelection();
-    if (!target.current || !selection) return;
-    selection.selectAllChildren(target.current);
-    setState("selected");
-  };
-  const status =
-    state === "copied"
-      ? `Copied the ${what} setting`
-      : state === "selected"
-        ? `Selected the ${what} setting: press ${keys} to copy it`
-        : "";
-  return (
-    <>
-      <button
-        type="button"
-        className="copy mono"
-        data-state={state}
-        aria-label={`Copy the ${what} setting`}
-        onClick={() => {
-          if (!("clipboard" in navigator)) {
-            select();
-            return;
-          }
-          navigator.clipboard.writeText(text).then(() => {
-            setState("copied");
-          }, select);
-        }}
-      >
-        {state === "copied" ? "Copied" : state === "selected" ? `Press ${keys}` : "Copy"}
-      </button>
-      <span className="sr-only" role="status">
-        {status}
-      </span>
-    </>
-  );
-}
 
 function Channel({ channel, sites }: { channel: LaunchChannel; sites: LaunchPlan["where"]["sites_like"] }) {
   const setting = useRef<HTMLParagraphElement>(null);
@@ -67,7 +12,7 @@ function Channel({ channel, sites }: { channel: LaunchChannel; sites: LaunchPlan
     <li className="channel">
       <div className="channel-head">
         <b>{channel.channel}</b>
-        <CopyButton text={channel.setting} what={channel.channel} target={setting} />
+        <CopyButton text={channel.setting} what={`the ${channel.channel} setting`} target={setting} />
       </div>
       <p className="channel-setting" ref={setting}>
         {channel.setting}
@@ -162,7 +107,7 @@ export function LaunchPlanView({ plan }: { plan: LaunchPlan }) {
         <div className="launch-block">
           <h4 className="xp-title">
             When
-            <span className="mono">Qloo&apos;s tags on the places locals love of this kind</span>
+            <span className="mono">Qloo&apos;s tags on the places people here love of this kind</span>
           </h4>
           <dl className="spec launch-spec">
             {when.times.length ? (

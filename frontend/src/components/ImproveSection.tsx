@@ -80,7 +80,7 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
         </ol>
       ) : (
         <p className="concepts-empty serif">
-          Nothing the places locals love do differs enough from {name} to suggest a change.
+          Nothing the places people here love do differs enough from {name} to suggest a change.
         </p>
       )}
 
@@ -93,7 +93,7 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
                 <span className="sr-only">Measure</span>
               </th>
               <th scope="col">{name}</th>
-              <th scope="col">The {c.peers} locals love</th>
+              <th scope="col">The {c.peers} places people here love</th>
             </tr>
           </thead>
           <tbody>

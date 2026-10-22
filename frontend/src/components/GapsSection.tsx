@@ -14,7 +14,7 @@ export function GapsSection({ gaps, openGap, onToggle }: GapsSectionProps) {
       <SectionHead
         no="03"
         title="What's missing"
-        note="Place types locals love, compared with same-size areas around the site and ranked by how under-supplied they are inside the walk. Open one to see the competitors and the places locals love most."
+        note="Place types people here love, compared with same-size areas around the site and ranked by how under-supplied they are inside the walk. Open one to see the competitors and the places people here love most."
       />
       <div className="gap-key mono" aria-hidden="true">
         <span>
@@ -27,7 +27,7 @@ export function GapsSection({ gaps, openGap, onToggle }: GapsSectionProps) {
         </span>
         <span>
           <i className="k-far" />
-          Local favorites outside it
+          Favorites of people here, outside it
         </span>
       </div>
       <ol className="gaps">

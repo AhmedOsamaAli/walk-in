@@ -99,7 +99,7 @@ export function TasteSection({ no, taste, cues }: TasteSectionProps) {
           <Names title="Listening here" entities={podcasts} empty="No podcast data." />
         </div>
       ) : null}
-      <h3 className="label mono">Local passions, not storefronts</h3>
+      <h3 className="label mono">Passions around here, not storefronts</h3>
       <div className="tags">
         {cues.length ? (
           cues.map((cue) => (

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import re
 
 from app import scoring
@@ -65,8 +66,8 @@ def blank_row(genre: str, score: int, rank: int, **fields) -> dict:
         "demand_rank": rank, "ref_rank": rank + 1.0, "lift": 0.1, "nearby_count": 6, "nearby_capped": False,
         "around_count": 30, "around_capped": False, "expected_nearby": 6.0, "relative_supply": 1.0,
         "favorites_kind": "citywide", "favorites_total": 0, "favorites_far": 0, "median_favorite_km": None,
-        "leakage": None, "evidence": "ok", "storefront_share": 1.0, "gap_score": score, "_favorite_entities": [],
-        "favorites": [], "_nearby_entities": [], "competitors": [], "city_favorites": [],
+        "median_far_km": None, "leakage": None, "evidence": "ok", "storefront_share": 1.0, "gap_score": score,
+        "_favorite_entities": [], "favorites": [], "_nearby_entities": [], "competitors": [], "city_favorites": [],
     }
     return {**row, **fields}
 
@@ -75,7 +76,7 @@ def bakery_row(loved: list[dict], inside: list[dict], **fields) -> dict:
     measured = {
         "ref_rank": 14.5, "lift": 0.85, "nearby_count": len(inside), "around_count": 18, "expected_nearby": 5.2,
         "relative_supply": 0.41, "favorites_kind": "local", "favorites_total": 3, "favorites_far": 3,
-        "median_favorite_km": 2.8, "leakage": 0.8, "_favorite_entities": loved,
+        "median_favorite_km": 2.8, "median_far_km": 2.8, "leakage": 0.8, "_favorite_entities": loved,
         "favorites": [{**scoring.place_card(e, SITE), "within_walk": False} for e in loved],
         "_nearby_entities": inside, "competitors": [scoring.place_card(e, SITE) for e in inside],
     }
@@ -241,6 +242,122 @@ def test_the_business_name_and_menu_are_its_own_words():
     assert facts.check("As good as Crumb") != []
     # A name that reuses a real place's name is not used: the concept's own, checked name is.
     assert kit.business_name(run, run.concepts[0], {**design, "name": "Corner Loaf"}) == "Golden Hour"
+
+
+def answer_with(channel: str, field: str, text: str) -> dict:
+    """The good answer with one line replaced."""
+    answer = copy.deepcopy(GOOD)
+    answer[channel][field] = text
+    return answer
+
+
+def reasons(facts: kit.Facts, text: str) -> str:
+    return " | ".join(facts.check(text))
+
+
+def test_possessive_names_are_still_names():
+    run = world()
+    design = sheet(run)
+    facts = facts_of(run, design)
+    for line, name in (("Skip Corner Loaf's long lines", "Corner Loaf"), ("Skip Corner Loaf’s long lines", "Corner Loaf"),
+                       ("Like Crumb's kouign amann, on your block", "Crumb"), ("Mobley's favorite morning stop", "Mobley")):
+        assert f"names {name}" in reasons(facts, line), line
+    result = build(run, design, ScriptedLLM(answer_with("nextdoor", "headline", "Skip Corner Loaf's long lines"), GOOD))
+    assert result["copy"]["nextdoor"]["headline"] == GOOD["nextdoor"]["headline"]
+    assert [r["text"] for r in result["rejected"]] == ["Skip Corner Loaf's long lines"]
+
+
+def test_one_word_names_count_wherever_they_stand_unless_they_are_plain_words():
+    run = world()
+    design = sheet(run)
+    facts = facts_of(run, design)
+    for line, name in (("Patagonia fans, meet Golden Hour.", "Patagonia"), ("Mobley fans: your new bakery is here.", "Mobley"),
+                       ("Golden Hour - Patagonia style", "Patagonia"), ("Made for stassi listeners", "Stassi"),
+                       ("Mornings (Mobley on the speakers)", "Mobley")):
+        assert f"names {name}, from the audience" in reasons(facts, line), line
+    # Crumb, Rise and Proof are places nearby, and plain words too: they count only written as names.
+    for line in ("Crumb by crumb, a better morning", "Rise and shine: Golden Hour is open", "Proof that mornings matter"):
+        assert facts.check(line) == [], line
+    assert "names Rise" in reasons(facts, "Closer than Rise")
+    assert "names Crumb" in reasons(facts, "Crumb's kouign amann, on your block")  # a possessive is a name
+    result = build(run, design, ScriptedLLM(answer_with("meta", "headline", "Patagonia fans, meet Golden Hour"), GOOD))
+    assert result["copy"]["meta"]["headline"] == GOOD["meta"]["headline"]
+    assert [r["text"] for r in result["rejected"]] == ["Patagonia fans, meet Golden Hour"]
+
+
+def test_model_written_menu_items_keep_the_rules_before_they_count_as_the_business_s_own():
+    run = world()
+    design = {**sheet(run), "offer": ["Espresso from Cuvee Coffee", "Award-winning sourdough", "Top 12 pastries", "Rye loaf"]}
+    facts = facts_of(run, design)
+    assert "names Cuvee Coffee" in reasons(facts, "Espresso from Cuvee Coffee, every morning")
+    assert "is a superlative nothing proves" in reasons(facts, "Try our award-winning sourdough")
+    assert "states 12" in reasons(facts, "Top 12 pastries every morning")
+    llm = ScriptedLLM(GOOD)
+    result = build(run, design, llm)
+    assert json.loads(llm.prompts[0])["business"]["menu"] == ["Rye loaf", "Kouign amann"]  # the model sees only these
+    left_out = [note.split('"')[1] for note in result["notes"] if note.startswith("Left out the menu item")]
+    assert left_out == ["Espresso from Cuvee Coffee", "Award-winning sourdough", "Top 12 pastries"]
+
+
+def test_prices_quantities_and_offers_are_not_the_ads_to_make():
+    run = world()
+    design = sheet(run)
+    facts = facts_of(run, design)
+    for line in ("Kouign amann from $2", "Rye loaf, $3 a slice", "A rye loaf for 3 dollars", "Coffee for two bucks"):
+        assert "states a price" in reasons(facts, line), line
+    for line, word in (("Loved by thousands of neighbors", "thousands"), ("Hundreds of neighbors already walk here", "Hundreds"),
+                       ("Dozens of pastries every morning", "Dozens"), ("A million mornings start here", "million")):
+        assert f"states {word}, a number" in reasons(facts, line), line
+    for line in ("Free coffee for every neighbor on opening day", "Half price on Mondays", "Two for one on Fridays",
+                 "Two croissants, one price: half off"):
+        assert "promises a discount" in reasons(facts, line), line
+    assert facts.check("The only $$$ bakery within a 10-minute walk") == []  # a price level is no price
+    result = build(run, design, ScriptedLLM(answer_with("poster", "subline", "Kouign amann from $2, every morning."), GOOD))
+    assert result["copy"]["poster"]["subline"] == GOOD["poster"]["subline"]
+
+
+def test_only_keeps_to_what_the_only_claim_proves():
+    run = world()
+    design = sheet(run)
+    facts = facts_of(run, design)  # the claim: "The only $$$ bakery within a 10-minute walk"
+    for line in ("The only bakery in Austin open past midnight", "Golden Hour: the only upscale bakery in Holly",
+                 "The only $$$ bakery within a 10-minute walk, and the only one open late", "Only here: kouign amann",
+                 "No other bakery on your block bakes like this"):
+        assert 'beyond what the "only" claim proves' in reasons(facts, line), line
+    for line in ("The only $$$ bakery within a 10-minute walk", "It is the only upscale bakery within a ten-minute walk.",
+                 "Golden Hour is the only upscale bakery within a 10 minute walk. Come say hello."):
+        assert facts.check(line) == [], line
+    no_claim = facts_of(run, design, claims=[])
+    for line, said in (("No other bakery on your block bakes like this", "no other"), ("Nowhere else on the block", "nowhere else"),
+                       ("The sole bakery on your block", "the sole"), ("Exclusive pastries, every morning", "exclusive"),
+                       ("The one place for kouign amann", "the one place")):
+        assert f'says "{said}" without an "only" claim' in reasons(no_claim, line), line
+    assert no_claim.check("Grilled Dover sole on Fridays") == []  # the fish claims nothing
+    body = f'{GOOD["nextdoor"]["body"]} The only bakery in Austin open late.'
+    result = build(run, design, ScriptedLLM(answer_with("nextdoor", "body", body), GOOD))
+    assert result["copy"]["nextdoor"]["body"] == GOOD["nextdoor"]["body"]
+
+
+def test_a_place_named_with_a_category_word_takes_the_name():
+    run = world()
+    run.block.append(place("Golden Hour Bakery", "Bakery", SITE[0], SITE[1] - 0.001, 9))
+    design = sheet(run)
+    concept = run.concepts[0]
+    # The sheet's name and the concept's are both 'Golden Hour', taken: the sign says what the business is instead.
+    assert kit.business_name(run, concept, design) == "Bakery"
+    assert kit.business_name(run, concept, {**design, "name": "Golden Hour Cafe"}) == "Bakery"
+    assert kit.business_name(run, concept, {**design, "name": "Golden"}) == "Golden"  # shorter is not the same name
+    assert kit.business_name(run, concept, {**design, "name": "Sunbeam"}) == "Sunbeam"
+    assert build(run, design)["poster"]["name"] == "Bakery"
+
+
+def test_a_wildcard_concept_says_plainly_that_it_is_untested():
+    run = world()
+    run.concepts[0]["wildcard"] = True
+    note = build(run, sheet(run))["notes"][0]
+    assert note.startswith("Untested") and "no place like it exists nearby" in note and "no direct proof of demand" in note
+    plain = world()
+    assert not any("no direct proof of demand" in note for note in build(plain, sheet(plain))["notes"])
 
 
 def test_rules_write_every_channel_within_its_limits():
@@ -436,8 +553,10 @@ def test_a_real_survey_gets_a_valid_kit():
     assert_valid(result["copy"], facts_of(run, design))
     competitors = {c["name"] for row in run.gaps for c in row["competitors"]}
     assert not any(name in line for name in competitors for line in kit_lines(result["copy"]))
-    # The rules-made name is just the category, so the copy introduces the category instead of repeating it.
-    assert result["copy"]["spotify"]["script"].startswith("A new seafood place.")
+    # A name that is just the category is not repeated: the copy introduces the category instead.
+    name = result["concept"]["name"]
+    intro = "A new seafood place." if name == "Seafood" else f"{name} is a new seafood place."
+    assert result["copy"]["spotify"]["script"].startswith(intro)
 
 
 def test_the_kit_carries_the_dossier_with_its_copy():

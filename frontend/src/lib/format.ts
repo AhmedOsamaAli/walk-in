@@ -32,7 +32,7 @@ export const INTENTS: Record<Intent, { label: string; does: string; action: stri
   },
   improve: {
     label: "Improve my place",
-    does: "Compares the place you run with the ones locals love in its category and lists what to change.",
+    does: "Compares the place you run with the ones people here love in its category and lists what to change.",
     action: "Compare my place",
   },
 };
@@ -152,8 +152,8 @@ export function gapWhy(gap: GapRow): string {
   else if (gap.lift <= -0.3) parts.push("loved less here than around");
   if (gap.relative_supply <= 0.8) parts.push("fewer places than a block this dense usually has");
   else if (gap.relative_supply >= 1.4) parts.push("already well supplied");
-  if (gap.leakage != null && gap.leakage >= 0.65) parts.push("locals travel for their own favorites");
-  else if (gap.leakage != null && gap.leakage <= 0.4) parts.push("locals' own favorites are already close by");
+  if (gap.leakage != null && gap.leakage >= 0.65) parts.push("people here travel for their own favorites");
+  else if (gap.leakage != null && gap.leakage <= 0.4) parts.push("people here already have their favorites close by");
   if (gap.evidence === "thin") parts.push("Qloo knows too few places of this type here to judge");
   if (gap.evidence === "atypical") parts.push("favorites are mostly hotels or malls");
   const text = parts.join("; ");
@@ -173,7 +173,7 @@ export function agentText({ tool, args }: AgentPayload): string {
     return `Agent tests a hunch live on Qloo: ${argText(args, "category") ?? "a new category"}${reason}`;
   }
   if (tool === "fan_taste") {
-    return `Agent asks Qloo what local fans of ${argText(args, "category") ?? "this category"} also love${reason}`;
+    return `Agent asks Qloo what fans of ${argText(args, "category") ?? "this category"} around here also love${reason}`;
   }
   return `Agent calls ${tool}${reason}`;
 }

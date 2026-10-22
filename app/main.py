@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -19,17 +19,21 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import engine, schemas, scoring
+from . import auth, engine, sales, schemas, scoring
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
-from .db import Database, SurveyStore
+from .db import AccountStore, Database, SurveyStore
+from .db.surveys import survey_status
+from .db.tables import utcnow
 from .geocode import Geocoder
 from .images import Images, explain_failure
 from .llm import LLM
+from .payments.paypal import PayPalClient
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
+from .routes import account
 from .survey import concepts, pipeline, snapshot
 from .survey import design as designs
 from .survey.models import EventLog, LiveRuns, RunState, RunStore, Site
@@ -41,8 +45,7 @@ RUNS_PER_HOUR = 20
 DESIGNS_PER_HOUR = 40
 RENDERS_PER_HOUR = 24
 MAP_REQUESTS_PER_HOUR = 200
-# A survey takes a minute or two; one still marked running long after it started was cut off by a restart.
-STALE_AFTER = timedelta(minutes=15)
+SIGN_INS_PER_HOUR = 30
 # On shutdown, running surveys get this many seconds to finish before they are stopped and saved as failed.
 SHUTDOWN_GRACE_S = 10
 
@@ -59,13 +62,21 @@ PRESETS = [
      "blurb": "Works beyond the US: Cairo's island district"},
 ]
 
+# Sign in with Google loads its script, button frame and styles from accounts.google.com/gsi
+# (developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy).
+GOOGLE_SIGN_IN = "https://accounts.google.com/gsi/"
+# Paid features: PayPal's JavaScript SDK loads its script, buttons and checkout frames from these hosts
+# (developer.paypal.com/sdk/js/v5/best-practices).
+PAYPAL = " https://*.paypal.com https://*.paypalobjects.com https://*.venmo.com"
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
-    "script-src 'self' https://unpkg.com",
-    "style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com",
+    f"script-src 'self' https://unpkg.com {GOOGLE_SIGN_IN}client{PAYPAL}",
+    f"style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com {GOOGLE_SIGN_IN}style{PAYPAL}",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    "connect-src 'self'",
+    f"connect-src 'self' {GOOGLE_SIGN_IN}{PAYPAL}",
+    f"frame-src {GOOGLE_SIGN_IN}{PAYPAL}",
+    f"child-src 'self'{PAYPAL}",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -94,13 +105,19 @@ class Services:
     images: Images
     geocoder: Geocoder
     answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
+    google: auth.GoogleKeys = field(default_factory=auth.GoogleKeys)
+    paypal: PayPalClient | None = None  # paid features; without it nothing is for sale
 
     async def aclose(self) -> None:
-        for service in (self.qloo, self.walker, self.images, self.geocoder):
-            await service.aclose()
+        for service in (self.qloo, self.walker, self.images, self.geocoder, self.google, self.paypal):
+            if service is not None:
+                await service.aclose()
 
 
 def default_services() -> Services:
+    paypal = None
+    if settings.paypal_enabled:
+        paypal = PayPalClient(settings.paypal_client_id, settings.paypal_client_secret, settings.paypal_api_base)
     return Services(
         qloo=QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir),
         walker=CatchmentService(settings.walk_cache_dir),
@@ -108,6 +125,7 @@ def default_services() -> Services:
         images=build_images(settings),
         geocoder=Geocoder(),
         answers=AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache),
+        paypal=paypal,
     )
 
 
@@ -187,6 +205,12 @@ async def run(
     services: Services = request.app.state.services
     runs: RunStore = request.app.state.runs
     surveys: SurveyStore = request.app.state.surveys
+    try:
+        user = await auth.current_user(request)
+    except Exception:  # the database is down: the survey still runs, unsaved, as it always could
+        log.warning("Could not check the session; running the survey signed out", exc_info=True)
+        user = None
+    device = auth.device_id(request)  # the survey is this browser's, and its user's once they sign in
     site = Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
         size_m2=size_m2, kitchen=kitchen, outdoor=outdoor, intent=intent, business=business.strip(), place_id=place_id,
@@ -202,7 +226,9 @@ async def run(
     async def produce() -> None:
         """Runs the survey to its end and saves it, whether or not anyone is still listening."""
         try:
-            await surveys.start(survey.run_id, asdict(site), survey.created_at)
+            await surveys.start(
+                survey.run_id, asdict(site), survey.created_at, user_id=user["id"] if user else None, device_id=device,
+            )
         except Exception:
             log.warning("Could not save survey %s", survey.run_id, exc_info=True)
         tasks = [pipeline.analyze_site(
@@ -225,8 +251,11 @@ async def run(
             failed = bool(errors) or any(event == "error" for event, *_ in survey.events)
         finally:
             survey.status = "failed" if failed else "complete"
-            await queue.put(None)
-            await save_survey(surveys, survey, runs.get(survey.run_id))
+            # The stream ends once the survey is saved, so a page reloaded at its end finds it finished.
+            try:
+                await save_survey(surveys, survey, runs.get(survey.run_id))
+            finally:
+                await queue.put(None)
 
     async def stream():
         # The survey starts once the response does, and is not tied to it: a client that refreshes or leaves does not
@@ -257,9 +286,22 @@ async def save_survey(surveys: SurveyStore, survey: EventLog, run: RunState | No
     except TypeError:
         log.warning("Survey %s is saved without its state", survey.run_id, exc_info=True)
     try:
-        await surveys.finish(survey.run_id, survey.status, survey.events, state)
+        await surveys.finish(survey.run_id, survey.status, survey.events, state, headline(run))
     except Exception:
         log.warning("Could not save survey %s", survey.run_id, exc_info=True)
+
+
+def headline(run: RunState | None) -> str | None:
+    """What My places shows for a survey: its top concept's name, or its top gap."""
+    if run is None:
+        return None
+    if run.concepts:
+        name = run.concepts[0].get("name")
+    elif run.gaps:
+        name = run.gaps[0].get("genre")
+    else:
+        return None
+    return name.strip() if isinstance(name, str) and name.strip() else None
 
 
 @router.get("/runs/{run_id}", response_model=RunRecord)
@@ -271,9 +313,7 @@ async def run_record(request: Request, run_id: str) -> dict:
     row = await request.app.state.surveys.get(run_id)
     if not row:
         raise HTTPException(404, "Survey not found.")
-    status = row["status"]
-    if status == "running" and datetime.now(UTC) - row["created_at"] > STALE_AFTER:
-        status = "failed"  # the server restarted while it ran
+    status = survey_status(row["status"], row["created_at"], datetime.now(UTC))  # failed when a restart cut it off
     return {"id": row["id"], "status": status, "created_at": row["created_at"], "events": row["events"]}
 
 
@@ -426,8 +466,10 @@ def web_root() -> Path:
 
 def create_app(
     services_factory: Callable[[], Services] = default_services, database_url: str | None = None,
+    settle_every: float | None = sales.SETTLE_EVERY_S,
 ) -> FastAPI:
-    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own."""
+    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own. `settle_every`
+    (paid features) is the settlement loop's period in seconds; None turns the loop off."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -435,10 +477,13 @@ def create_app(
         await database.migrate()
         surveys = SurveyStore(database)
         await surveys.purge(settings.survey_retention_days)
+        accounts = AccountStore(database)
+        await accounts.purge_sessions(utcnow())
         services = services_factory()
         app.state.services = services
         app.state.db = database
         app.state.surveys = surveys
+        app.state.accounts = accounts
         app.state.runs = RunStore(load=partial(snapshot.restore, surveys))
         app.state.live = LiveRuns()
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
@@ -446,8 +491,10 @@ def create_app(
         app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)
         app.state.render_budget = DailyBudget(settings.image_daily_limit)
         app.state.map_limiter = RateLimiter(MAP_REQUESTS_PER_HOUR, 3600)
+        app.state.auth_limiter = RateLimiter(SIGN_INS_PER_HOUR, 3600)
         try:
-            yield
+            async with sales.running(app, settle_every):
+                yield
         finally:
             await app.state.live.stop(SHUTDOWN_GRACE_S)
             await services.aclose()
@@ -459,30 +506,42 @@ def create_app(
         description=(
             "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "
             "business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} returns its events "
-            "again; the other endpoints are JSON."
+            "again; the other endpoints are JSON. Signing in with Google keeps surveys in My places."
         ),
         lifespan=lifespan,
     )
+    app.state.now = utcnow  # the app's clock; tests move it
+    # What other parts of the app add to /api/config and My places, and API paths they call from elsewhere.
+    app.state.config_parts, app.state.places_parts, app.state.origin_exempt = [], [], set()
 
     @app.middleware("http")
-    async def security_headers(request: Request, call_next):
-        response = await call_next(request)
+    async def security(request: Request, call_next):
+        """Turns away unsafe API calls from other sites' pages, sets the cookies endpoints queued, and the headers."""
+        if auth.origin_allowed(request, app.state.origin_exempt):
+            response = await call_next(request)
+            auth.apply_cookies(request, response)
+        else:
+            response = JSONResponse({"detail": "This request came from a page that may not use this API."}, 403)
         docs = request.url.path in ("/docs", "/redoc")
         response.headers.setdefault("Content-Security-Policy", DOCS_POLICY if docs else CONTENT_SECURITY_POLICY)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # Google's sign-in (and PayPal's checkout) open popups that must be able to answer this page.
+        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
         return response
 
     app.include_router(router)
+    app.include_router(account.router)
     root = web_root()
 
-    # Shared links to a survey (/s), a launch kit (/k) and a pledge page (/p) are pages of the web app.
+    # Shared links to a survey (/s), My places (/me) and the privacy note (/privacy) are pages of the web app.
     @app.get("/s/{key}", include_in_schema=False)
-    @app.get("/k/{key}", include_in_schema=False)
-    @app.get("/p/{key}", include_in_schema=False)
+    @app.get("/me", include_in_schema=False)
+    @app.get("/privacy", include_in_schema=False)
     async def shared_page() -> FileResponse:
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
+    sales.install(app, shared_page)
     app.mount("/", RevalidatingStaticFiles(directory=root, html=True), name="web")
     return app
 

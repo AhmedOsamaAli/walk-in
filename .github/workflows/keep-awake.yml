@@ -1,12 +1,12 @@
 name: Keep the demo awake while judges test it
 
-# The free Render instance sleeps after 15 idle minutes and takes about a minute to wake. During the two judging
-# windows (dates in UTC) a ping every 10 minutes keeps it awake; outside them it sleeps, saving the account's 750 free
-# hours a month. Scheduled runs are free for public repositories.
+# The free Render instance sleeps after 15 idle minutes and takes about a minute to wake (the Cloudflare front door
+# shows a note meanwhile). From submission (Oct 29) to the end of judging (Nov 5, 11:45 pm ET) a ping every 10 minutes
+# keeps it awake; outside that window it sleeps. Dates are UTC. Scheduled runs are free for public repositories.
 on:
   schedule:
-    - cron: "*/10 * 2-16 11 *"  # Qloo hackathon judging, November 2-16
-    - cron: "*/10 * 1-15 12 *"  # PayPal hackathon judging, December 1-15
+    - cron: "*/10 * 29-31 10 *"  # submitted, Devpost's eligibility check
+    - cron: "*/10 * 1-6 11 *"  # Qloo hackathon judging, November 2-5 (ET)
   workflow_dispatch:
 
 permissions: {}

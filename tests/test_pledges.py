@@ -9,8 +9,10 @@ import pytest
 
 from app.answers import AnswerCache
 from app.llm import LLM
-from app.payments.paypal import PayPalClient, request_key
+from app.payments.paypal import AUTHORIZATION_PERIOD, PayPalClient, request_key
 from app.payments.pledges import (
+    LONGEST_CAMPAIGN,
+    SETTLEMENT_MARGIN,
     Campaign,
     CampaignError,
     CampaignStatus,
@@ -18,9 +20,14 @@ from app.payments.pledges import (
     PledgeStatus,
     accepting,
     decide,
+    decide_funding,
     draft_offer,
+    funded_at_close,
+    lapsed,
+    named,
     needs_reauthorization,
     new_campaign,
+    offer_problems,
     pledge_from_order,
     progress,
     settle,
@@ -56,9 +63,9 @@ def kinds(actions) -> list[tuple]:
 def test_new_campaigns_keep_to_the_allowed_terms():
     assert validate_campaign("25", 50, NOW + timedelta(days=21), NOW) == []
     assert validate_campaign("5.00", 3, NOW + timedelta(days=1), NOW) == []
-    assert validate_campaign("200", 500, NOW + timedelta(days=29), NOW, "usd") == []
+    assert validate_campaign("200", 500, NOW + timedelta(days=27), NOW, "usd") == []
     made = new_campaign("c9", "25", 50, NOW + timedelta(days=21), NOW, "usd")
-    assert (made.amount, made.currency, made.status, made.goal) == ("25.00", "USD", "open", 50)
+    assert (made.amount, made.currency, made.status, made.goal, made.funded) == ("25.00", "USD", "open", 50, None)
 
     def problems(**changes) -> list[str]:
         terms = {"amount": "25", "goal": 50, "deadline": NOW + timedelta(days=21), "now": NOW, **changes}
@@ -70,14 +77,28 @@ def test_new_campaigns_keep_to_the_allowed_terms():
     assert problems(amount="twenty") == ["The pledge must be from 5.00 to 200.00."]
     assert problems(amount="25.005") == ["The pledge has more decimals than USD allows."]
     assert problems(goal=2) == problems(goal=501) == problems(goal=True) == ["The goal must be 3 to 500 supporters."]
-    deadline = "The deadline must be 1 to 29 days away: PayPal holds a pledge for 29 days at most."
+    deadline = ("The deadline must be 1 to 27 days away: PayPal holds a pledge for 29 days, and the last 2 are kept "
+                "for collecting it.")
     assert problems(deadline=NOW + timedelta(hours=23)) == [deadline]
-    assert problems(deadline=NOW + timedelta(days=29, minutes=1)) == [deadline]
+    assert problems(deadline=NOW + timedelta(days=27, minutes=1)) == [deadline]
     assert problems(deadline=datetime(2026, 12, 1)) == ["The deadline needs a date, a time and a time zone."]
     assert problems(currency="US") == ["The currency must be a three-letter code, such as USD."]
     with pytest.raises(CampaignError) as error:
         new_campaign("c9", "1", 1, NOW + timedelta(days=40), NOW)
     assert len(error.value.problems) == 3
+
+
+def test_the_longest_campaign_leaves_time_to_collect_its_first_pledges():
+    # A hold lasts 29 days, so a 29-day campaign let its first holds run out before they could be collected.
+    assert LONGEST_CAMPAIGN == AUTHORIZATION_PERIOD - SETTLEMENT_MARGIN == timedelta(days=27)
+    with pytest.raises(CampaignError):
+        new_campaign("c9", "25", 3, NOW + timedelta(days=29), NOW)
+    longest = new_campaign("c9", "25", 3, NOW + LONGEST_CAMPAIGN, NOW)
+    first = [pledge(n, days_ago=-10 / 1440) for n in (1, 2, 3)]  # held ten minutes after the launch
+    # Settled when it closes, or after a retry within the margin, every hold is still live.
+    assert not any(lapsed(p, longest.deadline + SETTLEMENT_MARGIN) for p in first)
+    assert kinds(decide(longest, first, longest.deadline + timedelta(hours=1))) == [
+        ("capture", "p1", True), ("capture", "p2", True), ("capture", "p3", True)]
 
 
 def test_progress_counts_supporters_once_and_the_money_held_or_collected():
@@ -154,8 +175,74 @@ def test_late_lapsed_and_leftover_holds():
     assert kinds(decide(campaign(status=CampaignStatus.COLLECTED), [pledge(1)], NOW)) == [("void", "p1", False)]
     assert kinds(decide(campaign(status=CampaignStatus.EXPIRED), [pledge(1)], NOW)) == [("void", "p1", False)]
     assert kinds(decide(campaign(status=CampaignStatus.PARTIAL), [pledge(1)], NOW)) == [("capture", "p1", False)]
-    # Money already collected means the campaign collects, even if the goal now looks out of reach.
-    assert kinds(decide(campaign(), [pledge(1, status=CAPTURED), pledge(2)], NOW)) == [("capture", "p2", False)]
+    # Money collected outside settlement is no leave to collect the rest: short of its goal at the close, the campaign
+    # releases every hold (and settle() flags the collected pledge for refund).
+    assert kinds(decide(campaign(), [pledge(1, status=CAPTURED), pledge(2)], NOW)) == [("void", "p2", False)]
+
+
+def test_a_capture_made_outside_settlement_never_funds_a_campaign():
+    # Goal 10: three live holds, and one pledge the owner captured in PayPal's dashboard.
+    stray = pledge(0, status=CAPTURED, capture_id="CAP-DASHBOARD")
+    pledges = [stray, pledge(1), pledge(2), pledge(3)]
+    assert not funded_at_close(campaign(goal=10), pledges)
+    assert kinds(decide(campaign(goal=10), pledges, NOW)) == [("void", f"p{n}", False) for n in (1, 2, 3)]
+    fake = FakePayPal()
+    result = settle_with(fake, campaign(goal=10), pledges)
+    assert fake.calls() == ["void AUTH1", "void AUTH2", "void AUTH3"]
+    assert (result.campaign.status, result.campaign.funded) == (CampaignStatus.EXPIRED, False)
+    assert result.reasons == [
+        "1 pledge was collected although the campaign fell short of its goal: refund it (CAP-DASHBOARD)."]
+
+
+def test_the_funded_decision_counts_the_holds_valid_at_the_close_and_is_taken_once():
+    pledges = [pledge(1), pledge(2), pledge(3)]
+    decided = decide_funding(campaign(), pledges, NOW)
+    assert (decided.funded, decided.status) == (True, CampaignStatus.FUNDED)
+    assert decide_funding(decided, [], NOW) is decided  # taken once, whatever the pledges say later
+    short = decide_funding(campaign(), pledges[:2], NOW)
+    assert (short.funded, short.status) == (False, CampaignStatus.OPEN)
+    running = campaign(deadline=NOW + timedelta(days=2))
+    assert decide_funding(running, pledges, NOW) is running  # still taking pledges: nothing to decide
+    # Holds that were not valid at the close never count: placed after it, run out before it, released, declined.
+    invalid = [pledge(4, days_ago=0.001), pledge(5, days_ago=20, expires_at=NOW - timedelta(days=1)),
+               pledge(6, status=VOIDED), pledge(7, status=PledgeStatus.DECLINED)]
+    assert not funded_at_close(campaign(), [pledge(1), pledge(2), *invalid])
+    # Collected and refused pledges were valid holds at the close: a settlement cut short resumes collecting...
+    halfway = [pledge(1, status=CAPTURED, capture_id="CAP-AUTH1"), pledge(2, status=FAILED, error="INSTRUMENT_DECLINED"),
+               pledge(3)]
+    assert funded_at_close(campaign(), halfway)
+    assert kinds(decide(campaign(), halfway, NOW)) == [("capture", "p3", False)]
+    # ...and a stored decision stands whatever happens to the pledges since: collect, or release.
+    withdrawn = [halfway[0], replace(halfway[1], status=VOIDED), halfway[2]]
+    assert not funded_at_close(campaign(), withdrawn)
+    assert kinds(decide(decided, withdrawn, NOW)) == [("capture", "p3", False)]
+    assert kinds(decide(short, pledges, NOW)) == [("void", f"p{n}", False) for n in (1, 2, 3)]
+    stored = settle_with(FakePayPal(), decided, withdrawn)
+    assert (stored.campaign.status, stored.campaign.funded, stored.reasons) == (CampaignStatus.COLLECTED, True, [])
+
+
+def test_settlement_records_the_funded_decision_before_its_first_capture():
+    fake = FakePayPal()
+    recorded: list[tuple] = []
+
+    async def record(decided: Campaign) -> None:
+        recorded.append((decided.status, decided.funded, len(fake.requests)))
+
+    result = settle_with(fake, campaign(), [pledge(1), pledge(2), pledge(3)], record=record)
+    assert recorded == [(CampaignStatus.FUNDED, True, 0)]  # stored before PayPal was called at all
+    assert (result.campaign.status, result.campaign.funded) == (CampaignStatus.COLLECTED, True)
+    assert fake.calls() == ["capture AUTH1", "capture AUTH2", "capture AUTH3"]
+
+    async def broken(decided: Campaign) -> None:
+        raise RuntimeError("the database is down")
+
+    silent = FakePayPal()
+    with pytest.raises(RuntimeError):
+        settle_with(silent, campaign(), [pledge(1), pledge(2), pledge(3)], record=broken)
+    assert silent.requests == []  # nothing is collected unless the decision is stored first
+    # A decision already stored is not recorded again, and an open campaign has none to record.
+    settle_with(FakePayPal(), result.campaign, result.pledges, record=broken)
+    settle_with(FakePayPal(), campaign(deadline=NOW + timedelta(days=2)), [pledge(1)], record=broken)
 
 
 def paypal_error(status: int, issue: str, name: str = "UNPROCESSABLE_ENTITY") -> httpx.Response:
@@ -202,10 +289,10 @@ class FakePayPal:
         return next(r for r in self.requests if r.url.path == f"/v2/payments/authorizations/{authorization}/{operation}")
 
 
-def settle_with(fake: FakePayPal, the_campaign: Campaign, pledges: list[Pledge], now: datetime = NOW):
+def settle_with(fake: FakePayPal, the_campaign: Campaign, pledges: list[Pledge], now: datetime = NOW, **options):
     client = PayPalClient("id", "secret", API, retries=0,
                           http_client=httpx.AsyncClient(transport=httpx.MockTransport(fake)))
-    return asyncio.run(settle(the_campaign, pledges, client, now))
+    return asyncio.run(settle(the_campaign, pledges, client, now, **options))
 
 
 def by_id(result) -> dict:
@@ -507,9 +594,26 @@ def test_the_owner_s_discount_leads_the_perks_and_bounds_the_model():
     }, seen), discount="10% off every visit in the first year")
     assert offer["pitch"] == "Founding supporters get 10% off every visit in the first year."
     assert offer["perks"] == ["10% off every visit in the first year", "A first taste of the rye loaf"]
-    assert offer["rejected"] == [{"field": "perks", "reason": "states 15, a number the inputs do not have"}]
+    assert offer["rejected"] == [
+        {"field": "perks", "reason": "states 15, a number the inputs do not have"},
+        {"field": "perks", "reason": "changes the discount the owner set"},  # 'your first year', not 'every visit in…'
+    ]
     assert json.loads(seen[0]["messages"][1]["content"])["owner_terms"]["discount"] == "10% off every visit in the first year"
     assert draft(None, discount="10% off every visit in the first year")["perks"][0] == "10% off every visit in the first year"
+
+
+def test_the_pitch_states_the_owner_s_discount_word_for_word():
+    discount = "10% off every visit in the first year"
+    for pitch in (
+        "Founding supporters get half off every visit.",
+        "Founding supporters get $10 off every visit.",  # 10 is also the walk's minutes
+        "Founding supporters get 10% off every visit, for life.",
+        "Founding supporters get 10% off every visit in the first year, and free coffee for life.",
+    ):
+        offer = draft(llm_answering({**GOOD, "pitch": pitch}, []), discount=discount)
+        assert offer["rejected"] == [{"field": "pitch", "reason": "changes the discount the owner set"}], pitch
+    kept = draft(llm_answering({**GOOD, "pitch": "Pledge now: 10% Off Every Visit in the first year."}, []), discount=discount)
+    assert kept["rejected"] == [] and kept["pitch"] == "Pledge now: 10% Off Every Visit in the first year."
 
 
 def test_a_long_pitch_keeps_its_first_whole_sentences_and_avoid_adds_names():
@@ -529,3 +633,38 @@ def test_drafts_for_the_same_evidence_are_replayed(tmp_path):
     first = asyncio.run(draft_offer(llm, DESIGN, answers=answers, **TERMS))
     again = asyncio.run(draft_offer(llm, DESIGN, answers=answers, **TERMS))
     assert first == again and len(seen) == 1
+
+
+def test_a_real_name_around_an_allowed_word_is_still_a_name():
+    allowed = ["Golden Hour", "Holly"]  # the business and its neighborhood
+    assert named("Next to Holly Hardware, a short walk away", ["Holly Hardware"], allowed) == "Holly Hardware"
+    assert named("Golden Hour opens in Holly", ["Holly Hardware", "Golden"], allowed) is None
+    seen: list[dict] = []
+    concept = {**CONCEPT, "inspired_by": ["Holly Bakehouse"],
+               "why_here": ["Locals travel a median 2.1 km to bakeries such as Holly Bakehouse."]}
+    offer = draft(llm_answering({**GOOD, "title": "Golden Hour, closer than Holly Bakehouse"}, seen), concept=concept)
+    assert offer["rejected"] == [{"field": "title", "reason": "names Holly Bakehouse"}]
+    assert "Holly Bakehouse" not in seen[0]["messages"][1]["content"]  # nor did the model see it
+
+
+def test_the_owner_s_edits_are_checked_by_the_draft_s_rules():
+    discount = "10% off every visit in the first year"
+
+    def problems(title: str = GOOD["title"], pitch: str = GOOD["pitch"], perks=GOOD["perks"], **terms) -> list[str]:
+        return offer_problems(DESIGN, title=title, pitch=pitch, perks=perks, concept=CONCEPT, **{**TERMS, **terms})
+
+    assert problems() == []
+    assert problems(perks=[discount, *GOOD["perks"]], discount=discount) == []  # the discount leads, as drafted
+    assert problems(perks=[f"{discount}, and a free coffee every week"], discount=discount) == [
+        "Perk 1 changes the discount the owner set."]
+    assert problems(title="Closer than Crumb Bakehouse", pitch="Mornings matter. " * 20,
+                    perks=["A free coffee every week", 7, "Your name on the founders' wall"]) == [
+        "The title names Crumb Bakehouse.",
+        "The pitch is longer than 300 characters.",
+        "Perk 1 promises a discount the owner did not set.",
+        "Perk 2 is empty.",
+    ]
+    assert problems(pitch="Join 99 neighbors at Golden Hour.") == ["The pitch states 99, a number the inputs do not have."]
+    assert problems(perks=[]) == problems(perks="A free coffee") == ["Add 1 to 4 perks."]
+    five = ["Your name on the wall", "An invitation to the opening", "A first taste", "A tour of the kitchen", "A tote bag"]
+    assert problems(perks=five) == ["Keep at most 4 perks."]

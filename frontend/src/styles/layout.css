@@ -1,6 +1,7 @@
 /* ---------- Top bar ---------- */
+/* Above Leaflet's controls (z-index 1000), so what drops from the bar, such as the account menu, covers the map. */
 .bar {
-  position: sticky; top: 0; z-index: 1000;
+  position: sticky; top: 0; z-index: 1001;
   height: var(--bar-h);
   display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 24px;
   padding: 0 var(--pad);

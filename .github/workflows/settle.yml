@@ -1,0 +1,28 @@
+name: Settle pledge campaigns
+
+# The app settles campaigns past their close every minute while it runs, but a free Render instance sleeps when idle.
+# This wakes it every 6 hours and runs one settlement pass; campaigns keep a 2-day margin before their holds run out.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run one settlement pass
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::notice::The CRON_SECRET repository secret is not set, so there is nothing to call."
+            exit 0
+          fi
+          # A sleeping instance takes about a minute to wake, so the first attempts may time out.
+          curl --fail-with-body --silent --show-error --max-time 180 --retry 3 --retry-delay 30 --retry-all-errors \
+            --request POST --header "X-Cron-Secret: $CRON_SECRET" \
+            https://walk-in-aoa2.onrender.com/api/cron/settle

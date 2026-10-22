@@ -4,8 +4,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
+# The Vite dev server, which may call the API from another port in development.
+DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
 
 
 def _load_dotenv(path: Path) -> None:
@@ -41,6 +44,18 @@ def _env_list(name: str, default: str = "") -> tuple[str, ...]:
 def _env_or(name: str, default: float) -> float:
     value = _env_float(name)
     return default if value is None else value
+
+
+def _env_flag(name: str) -> bool:
+    return _env(name).lower() in ("1", "true", "yes", "on")
+
+
+def origin_of(url: str) -> str | None:
+    """'https://Example.com/path' -> 'https://example.com'; None when the URL has no scheme and host."""
+    parts = urlsplit(url.strip())
+    if not parts.scheme or not parts.netloc:
+        return None
+    return f"{parts.scheme}://{parts.netloc}".lower()
 
 
 @dataclass(frozen=True)
@@ -107,6 +122,38 @@ class Settings:
     kit_currency: str = field(default_factory=lambda: _env("KIT_CURRENCY", "USD"))
     # The app's public address (https://...), for links inside kits, posters and pledge pages.
     public_url: str = field(default_factory=lambda: _env("PUBLIC_URL").rstrip("/"))
+    # Sign in with Google (console.cloud.google.com, Google Auth Platform > Clients): the web client's ID. Without it
+    # nobody can sign in, so the kit and pledge campaigns stay closed; surveys work as before.
+    google_client_id: str = field(default_factory=lambda: _env("GOOGLE_CLIENT_ID"))
+    # Days a sign-in lasts; using the app renews it, at most once a day.
+    session_days: int = field(default_factory=lambda: int(_env_or("SESSION_DAYS", 30)))
+    # Development only: POST /api/auth/dev signs in with any email. Ignored when PUBLIC_URL is https.
+    auth_dev_login: bool = field(default_factory=lambda: _env_flag("AUTH_DEV_LOGIN"))
+    # Other origins whose pages may POST to the API (comma-separated), besides PUBLIC_URL's and the server's own.
+    allowed_origins: tuple[str, ...] = field(default_factory=lambda: _env_list("ALLOWED_ORIGINS"))
+    # Shared with the Cloudflare front door (frontend/functions): with it, X-Client-IP is the visitor's own address.
+    proxy_secret: str = field(default_factory=lambda: _env("PROXY_SECRET"))
+    # The secret a scheduled job sends to POST /api/cron/settle; without it that endpoint does not exist.
+    cron_secret: str = field(default_factory=lambda: _env("CRON_SECRET"))
+    # Days after buying in which the owner can refund a launch kit themselves.
+    kit_refund_days: int = field(default_factory=lambda: int(_env_or("KIT_REFUND_DAYS", 14)))
+
+    @property
+    def hosted(self) -> bool:
+        """Whether this is the hosted site (PUBLIC_URL is https) rather than development."""
+        return self.public_url.startswith("https://")
+
+    @property
+    def dev_login(self) -> bool:
+        return self.auth_dev_login and not self.hosted
+
+    @property
+    def trusted_origins(self) -> frozenset[str]:
+        """Origins whose pages may call the API's unsafe methods, besides the server's own."""
+        origins = {origin_of(url) for url in (self.public_url, *self.allowed_origins)}
+        if not self.hosted:
+            origins.update(DEV_ORIGINS)
+        return frozenset(origin for origin in origins if origin)
 
     @property
     def paypal_enabled(self) -> bool:

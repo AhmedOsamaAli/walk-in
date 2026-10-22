@@ -1,0 +1,110 @@
+/* ---------- Pages beside the survey: My places and the privacy note ---------- */
+.page {
+  container: page / inline-size;
+  min-height: calc(100vh - var(--bar-h));
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+}
+.page-sheet {
+  display: flex; flex-direction: column;
+  max-width: 1180px; min-height: calc(100vh - var(--bar-h)); margin: 0 auto;
+  border-left: var(--rule); border-right: var(--rule);
+}
+@container page (max-width: 1200px) {
+  .page-sheet { border-left: 0; border-right: 0; }
+}
+.page-head { padding: 34px var(--pad) 30px; background: var(--card); border-bottom: var(--rule); animation: fade .5s var(--ease) both; }
+.page-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px 16px; }
+.page-row .eyebrow { margin: 0; }
+.page-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.page-title {
+  margin-top: 14px;
+  font: 400 clamp(40px, 5.6vw, 78px)/.98 var(--f-serif); letter-spacing: -.03em; text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.page-title:focus { outline: none; }
+.page-standfirst { max-width: 50ch; margin-top: 14px; font-size: clamp(18px, 1.6vw, 21px); line-height: 1.38; color: var(--text-2); }
+.page-head .title-block { margin-top: 24px; }
+@container page (max-width: 640px) {
+  .page-head .title-block { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.pg-sec { padding: 52px var(--pad) 60px; border-bottom: var(--rule); }
+.pg-sec .sec-head { margin-bottom: 26px; }
+.pg-sec .sec-note { text-wrap: pretty; }
+.page-foot { margin-top: auto; padding: 26px var(--pad) 34px; font-size: 11px; color: var(--ash); text-transform: none; letter-spacing: .01em; }
+.page-foot a { color: var(--blue); text-decoration: none; }
+.page-foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.sk-row { height: 62px; margin-top: 10px; border-radius: 12px; }
+.places-wait { font: italic 380 19px/1.35 var(--f-serif); color: var(--text-4); }
+
+/* ---------- My places: one ruled list per kind, each row a link ---------- */
+.place-list { border-top: var(--rule); border-bottom: var(--rule); }
+.place-list li + li { border-top: var(--hair); }
+.place-row {
+  --sub: var(--text-4);
+  --meta: var(--text-5);
+  position: relative; isolation: isolate;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 22px; gap: 6px 18px; align-items: center;
+  padding: 16px 8px; text-decoration: none;
+  transition: color .6s var(--ease);
+}
+.place-row::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; background: var(--yellow);
+  transform: scaleX(0); transform-origin: left center; transition: transform .6s var(--ease);
+}
+.place-row:hover, .place-row:focus-visible { --sub: var(--on-yellow-2); --meta: var(--on-yellow-3); color: var(--on-yellow); }
+.place-row:hover::before, .place-row:focus-visible::before { transform: scaleX(1); }
+.place-main { min-width: 0; }
+.place-name { display: block; font: 400 22px/1.2 var(--f-serif); letter-spacing: -.01em; overflow-wrap: anywhere; }
+.place-sub { display: block; margin-top: 4px; font-size: 14px; line-height: 1.4; color: var(--sub); transition: color .6s var(--ease); }
+.place-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; font-size: 10.5px; color: var(--meta); white-space: nowrap; transition: color .6s var(--ease); }
+.place-arrow { font-size: 17px; transition: transform .5s var(--ease); }
+.place-row:hover .place-arrow { transform: translateX(5px); }
+.state { padding: 3px 9px 2px; border: 1px solid var(--edge); border-radius: 999px; color: var(--text-3); }
+.state[data-state="complete"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.state[data-state="running"] { background: var(--blue-wash); border-color: var(--blue); color: var(--blue); }
+.state[data-state="failed"] { border-color: var(--red); color: var(--red); }
+.place-row:is(:hover, :focus-visible) .state { border-color: var(--on-yellow); }
+.places-empty {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px;
+  padding: 20px 22px; border: 1px dashed var(--edge); border-radius: var(--r-l);
+  font: italic 380 19px/1.35 var(--f-serif); color: var(--text-4);
+}
+.places-empty .text-link { font: 500 14px/1.4 var(--f-sans); }
+.prompt-card {
+  display: grid; gap: 14px; max-width: 560px; padding: 26px;
+  background: var(--card); border: var(--rule); border-radius: var(--r-l); box-shadow: var(--shadow-s);
+}
+.prompt-title { font: 400 32px/1.05 var(--f-serif); letter-spacing: -.02em; }
+.prompt-text { font-size: 16px; line-height: 1.5; color: var(--text-2); }
+@container page (max-width: 560px) {
+  .place-row { grid-template-columns: minmax(0, 1fr) 18px; }
+  .place-meta { grid-column: 1; grid-row: 2; flex-direction: row; align-items: center; }
+  .place-arrow { grid-column: 2; grid-row: 1 / span 2; }
+}
+
+/* ---------- A page on paper: ink on white whatever the theme, without the bar and the controls ---------- */
+@media print {
+  :root, :root[data-theme="dark"] {
+    color-scheme: light;
+    --paper: #ffffff; --card: #ffffff; --ink: #111111; --on-ink: #ffffff; --ash: #55554f;
+    --smoke: #d9d8d0; --edge: #b9b8b0; --blue: #0b59d0; --red: #b3261e;
+    --text-2: #1f1f1d; --text-3: #333330; --text-4: #44443f; --text-5: #50504a;
+    --grid-line: transparent; --marker: rgba(255, 203, 0, .55); --shadow: none; --shadow-s: none;
+  }
+  html, body { background: #ffffff; }
+  .bar, .page-actions, .privacy-back { display: none !important; }
+  .page, .page-sheet { min-height: 0; background: none; border: 0; }
+  .page-head { padding: 0 0 16pt; background: none; animation: none; }
+  .page-title { font-size: 34pt; }
+  .page-head .title-block { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .pg-sec { padding: 16pt 0; }
+  .pg-sec .sec-head { break-after: avoid; }
+  .privacy-list > div { break-inside: avoid; }
+  .page-foot { padding: 12pt 0 0; }
+}
+@page { margin: 18mm 16mm; }

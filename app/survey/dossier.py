@@ -1,21 +1,34 @@
 """A concept's dossier: the case for one storefront business, ready to hand to a landlord, a lender or a partner.
 
-Nothing here comes from a model. Every number is quoted from the survey's evidence and every section carries a basis
-saying where it comes from, so a reader can check it; a section the evidence cannot support is left out, not padded.
-Price levels stay Qloo's levels ($ to $$$$): Qloo gives no amounts, so none are made up.
+Nothing here is computed by a model. Every number is quoted from the survey's evidence, or worked out from it, and
+every section carries a basis saying where it comes from, so a reader can check it; a section the evidence cannot
+support is left out, not padded. The design sheet's own words (its tagline, its interior) are kept only when they state
+no number, so no figure a model wrote stands beside a measured one. Price levels stay Qloo's levels ($ to $$$$): Qloo
+gives no amounts, so none are made up.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
 from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, date, datetime
 
 from .. import scoring, space
 from ..catchment import WALK_M_PER_MIN
 from ..geo import distance_m
 from . import launch
-from .concepts import TOO_BROAD, caution, concept_risk, for_whom, one_liner, place_names, same_business, taken_name
+from .concepts import (
+    COMMON_NAME_WORDS,
+    TOO_BROAD,
+    caution,
+    concept_risk,
+    for_whom,
+    one_liner,
+    place_names,
+    same_business,
+    taken_name,
+)
 from .constraints import ALCOHOL_GENRE, DRY_BY_NATURE
 from .design import CAPACITY_BASIS, sign_text
 from .evidence import (
@@ -49,6 +62,19 @@ SECTIONS = (
 )
 NO_AMOUNTS = "Levels are Qloo's, from $ to $$$$; Qloo gives no amounts, so none are given here."
 ALTERNATIVES_SHOWN = 6
+# Words that say what kind of business a place is rather than which one: a 'Golden Hour Bakery' takes 'Golden Hour'.
+CATEGORY_WORDS = frozenset({
+    "bakery", "bakeshop", "bakehouse", "patisserie", "cafe", "coffee", "espresso", "roasters", "roastery", "tea",
+    "teahouse", "bar", "pub", "tavern", "taproom", "brewery", "brewing", "winery", "wine", "lounge", "kitchen", "grill",
+    "diner", "deli", "bistro", "brasserie", "eatery", "canteen", "cantina", "taqueria", "trattoria", "pizzeria", "pizza",
+    "restaurant", "market", "shop", "store", "boutique", "studio", "gallery", "salon", "spa", "gym", "club", "co",
+    "company", "inc", "llc", "ltd",
+})
+# A wildcard concept combines things locals are shown to love into a business no place nearby offers yet.
+UNTESTED = ("Untested: no place like it exists nearby, so there is no direct proof of demand. It combines things locals "
+            "are shown to love; test demand with a pop-up, a market stall or pre-orders before you sign.")
+UNTESTED_BASIS = ("A wildcard concept: the evidence shows locals love what it combines, but no place like it nearby "
+                  "measures demand for the combination.")
 
 
 def build_dossier(
@@ -87,13 +113,42 @@ def concept_at(run: RunState, index: int) -> dict:
 
 
 def business_name(run: RunState, concept: dict, design: dict) -> str:
-    """The name on the sign: the sheet's own, unless it reuses a real place's name; then the concept's, which was checked."""
-    proposed = design.get("name")
-    if isinstance(proposed, str) and proposed.strip():
-        name = sign_text(proposed)
-        if not taken_name(name, place_names(run)):
-            return name
-    return sign_text(str(concept.get("name") or ""))
+    """The name on the sign: the sheet's own, else the concept's, unless it is a real place's name (taken_by); then
+    the category's, which no one owns."""
+    places = place_names(run)
+    genre = str(concept.get("genre") or "")
+    generic = {word for text in (genre, singular(genre), plural(genre)) for word in scoring.topic_text(text).split()}
+    for proposed in (design.get("name"), concept.get("name")):
+        if isinstance(proposed, str) and proposed.strip():
+            name = sign_text(proposed)
+            if not taken_by(name, places, generic):
+                return name
+    return sign_text(scoring.genre_title(genre))
+
+
+def taken_by(name: str, places: Iterable[str], generic: Iterable[str] = ()) -> str | None:
+    """The real place a business name would pass for, if any: one whose whole name it contains ('Otis & Main' takes
+    'Otis', as concepts.taken_name checks), or the same name give or take the words that only say what kind of business
+    it is ('Golden Hour' is taken by a 'Golden Hour Bakery' or a 'Cafe Golden Hour'). A shorter name is another name
+    ('Golden'), and one with no words but category words ('The Bakery', or `generic`, the concept's own) is anyone's."""
+    names = {place for place in places if isinstance(place, str) and place.strip()}
+    found = taken_name(name, names)
+    if found:
+        return found
+    core = name_core(name)
+    if len("".join(core)) < 3 or set(core) <= COMMON_NAME_WORDS | set(generic):
+        return None
+    return next((place for place in sorted(names) if name_core(place) == core), None)
+
+
+def name_core(name: str) -> list[str]:
+    """A name's own words, without the category words around them: 'The Golden Hour Bakery & Cafe' -> golden, hour."""
+    return [word for word in scoring.topic_text(name).split() if word not in CATEGORY_WORDS and word not in ("the", "and")]
+
+
+def untested(concept: dict) -> str | None:
+    """The plain warning a wildcard concept carries: no place like it nearby, so nothing proves its demand."""
+    return UNTESTED if concept.get("wildcard") else None
 
 
 def walk_outline(run: RunState) -> list[list[float]]:
@@ -164,10 +219,17 @@ def evidence_date(run: RunState) -> str:
     return datetime.fromtimestamp(run.created_at, UTC).date().isoformat()
 
 
+def ranked_gaps(run: RunState, row: dict | None) -> list[dict]:
+    """The site's gaps by gap score, highest first (ties in the gap table's order), with `row` among them: the one order
+    the verdict, the decision's rank and the alternatives table all count by."""
+    rows = [r for r in run.gaps if row is None or r["genre_id"] != row["genre_id"]] + ([row] if row else [])
+    return sorted(rows, key=lambda r: -r["gap_score"])
+
+
 def rank_among_gaps(run: RunState, row: dict) -> tuple[int, int]:
     """Where a category ranks by gap score among the site's gaps, counted the way the verdict counts it."""
-    ranked = sorted([r for r in run.gaps if r["genre_id"] != row["genre_id"]] + [row], key=lambda r: -r["gap_score"])
-    return ranked.index(row) + 1, len(ranked)
+    ranked = ranked_gaps(run, row)
+    return next(index for index, r in enumerate(ranked, 1) if r is row), len(ranked)
 
 
 # ---------- Cover ----------
@@ -243,6 +305,8 @@ def case(run: RunState, concept: dict, design: dict, row: dict, level: int | Non
     warning = caution(run, run.concepts)
     if warning:
         out["caution"] = warning
+    if untested(concept):
+        out["untested"] = {"text": UNTESTED, "basis": UNTESTED_BASIS}
     return out
 
 
@@ -298,14 +362,18 @@ def supply_number(row: dict, minutes: int) -> dict:
 
 
 def pull_number(row: dict) -> dict | None:
-    total, far, km = row.get("favorites_total") or 0, row.get("favorites_far") or 0, row.get("median_favorite_km")
-    if row.get("favorites_kind") != "local" or total < 3 or km is None:
+    """How far locals travel for the places of this kind they love: the median trip to those outside the walk (the
+    trip a place inside it would save them), or no distance at all when it is not known."""
+    total, far, km = row.get("favorites_total") or 0, row.get("favorites_far") or 0, row.get("median_far_km")
+    if row.get("favorites_kind") != "local" or total < 3:
         return None
     return {
-        "label": "Pull", "value": f"{far} of {total} loved places outside the walk; median distance {number(km)} km",
+        "label": "Pull",
+        "value": f"{far} of {total} loved places outside the walk" + (f"; median distance {number(km)} km" if km is not None else ""),
         "data": {"outside": far, "of": total, "median_km": km},
-        "basis": f"Places of this kind that people inside the walk love more than the city does (Qloo), and the median "
-                 f"straight-line distance of all {total} from the site.",
+        "basis": "Places of this kind that people inside the walk love more than the city does (Qloo)"
+                 + (f", and the median straight-line distance from the site of the {far} outside the walk." if km is not None
+                    else "."),
     }
 
 
@@ -368,20 +436,19 @@ def risk_check(run: RunState, row: dict, level: int | None) -> str:
 # ---------- Alternatives ----------
 
 def alternatives(run: RunState, concept: dict, row: dict | None) -> dict | None:
-    """The site's strongest gaps beside the chosen one, and for each that scores higher, why it was not chosen."""
+    """The site's strongest gaps beside the chosen one, by gap score as its rank counts them, and down to the chosen one
+    at least: every category that scores higher is shown, with why it was not chosen."""
     if not run.gaps:
         return None
     chosen = row["genre_id"] if row else concept.get("genre_id")
-    table = {r["genre_id"]: position for position, r in enumerate(run.gaps, 1)}
-    shown = run.gaps[:ALTERNATIVES_SHOWN]
-    if row and all(r["genre_id"] != chosen for r in shown):
-        shown = [*shown, row]
+    ranked = ranked_gaps(run, row)
+    at = next((index for index, r in enumerate(ranked, 1) if r["genre_id"] == chosen), 0)
     score = row["gap_score"] if row else None
     items = []
-    for r in shown:
+    for position, r in enumerate(ranked[:max(ALTERNATIVES_SHOWN, at)], 1):
         item = {
             "genre": r["genre"], "gap_score": r["gap_score"], "reading": r.get("reading") or gap_reading(r),
-            "position": table.get(r["genre_id"]), "why": why_line(run, r), "chosen": r["genre_id"] == chosen,
+            "position": position, "why": why_line(run, r), "chosen": r["genre_id"] == chosen,
         }
         if r.get("source") == "agent":
             item["tested_live"] = True
@@ -390,9 +457,9 @@ def alternatives(run: RunState, concept: dict, row: dict | None) -> dict | None:
         items.append(item)
     return {
         "items": items,
-        "basis": "The site's gap table, 0 to 100: demand against six same-size areas around, supply against what a "
-                 "block this dense holds, and the trips locals make; the unit and your notes decide what fits. "
-                 "Categories the agent tested live are scored on the same scale.",
+        "basis": "The site's gap table, 0 to 100, by gap score: demand against six same-size areas around, supply "
+                 "against what a block this dense holds, and the trips locals make; the unit and your notes decide what "
+                 "fits. Categories the agent tested live are scored on the same scale.",
     }
 
 
@@ -512,12 +579,12 @@ def travel(run: RunState, row: dict) -> dict | None:
         })
     if not places:
         return None
+    km = row.get("median_far_km")
+    median = f"; the median is over the {row['favorites_far']} outside the walk" if km is not None else ""
     return {
-        "places": places, "outside": row["favorites_far"], "of": row["favorites_total"],
-        "median_km": row.get("median_favorite_km"),
+        "places": places, "outside": row["favorites_far"], "of": row["favorites_total"], "median_km": km,
         "basis": f"Places of this kind that people inside the walk love more than the city does (Qloo), outside the walk, "
-                 f"with their straight-line distance from the site; the median is over all {row['favorites_total']} "
-                 f"loved places. Hotels and malls are left out.",
+                 f"with their straight-line distance from the site{median}. Hotels and malls are left out.",
     }
 
 
@@ -558,10 +625,12 @@ def offer(run: RunState, design: dict, row: dict, level: int | None) -> dict | N
 # ---------- The room ----------
 
 def room(design: dict) -> dict | None:
+    """The room as the design sheet draws it. Its interior is a model's words, so any line of it that states a number
+    is left out (as tagline_of leaves out a tagline): only the computed capacity estimate counts guests."""
     out: dict = {}
     interior = design.get("interior")
     if isinstance(interior, dict):
-        kept = {key: value for key, value in interior.items() if value}
+        kept = {key: value for key, value in ((key, unnumbered(value, design.get("capacity"))) for key, value in interior.items()) if value}
         if kept:
             out["interior"] = kept
     if design.get("unit"):
@@ -576,9 +645,24 @@ def room(design: dict) -> dict | None:
     if not out:
         return None
     out["basis"] = ("The interior is the design sheet's, drawn from the design DNA: the decor, ambience, amenity and "
-                    "menu tags most common among the places locals love. Hours are those places' median hours; capacity "
-                    "is a building-code planning estimate.")
+                    "menu tags most common among the places locals love; a line of it stating a number is left out. Hours "
+                    "are those places' median hours; capacity is a building-code planning estimate.")
     return out
+
+
+def unnumbered(value: object, computed: object = None) -> object:
+    """A sheet's words with every line that states a number left out (None for a line, the rest of a list); the
+    `computed` text, the capacity estimate, is not the model's and may stand in a line."""
+    if isinstance(value, list):
+        return [item for item in value if unnumbered(item, computed)]
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return None
+    if isinstance(value, str):
+        rest = value.replace(computed, " ") if isinstance(computed, str) and computed else value
+        return value if not re.search(r"\d", rest) else None
+    return value
 
 
 # ---------- The experience ----------
@@ -777,8 +861,15 @@ def before_you_sign(run: RunState, concept: dict, design: dict, row: dict | None
         "basis": f"What a {kind} needs, by Walk-in's kitchen and capacity rules, against the unit you described; then the "
                  f"main risk the evidence shows.",
     }
+    checks = []
+    if untested(concept):
+        checks.append({"risk": "Untested: no place like it exists nearby, so there is no direct proof of demand.",
+                       "check": "Test demand before you sign, with a pop-up, a market stall or pre-orders.",
+                       "basis": UNTESTED_BASIS})
     if row:
-        out["checks"] = [{"risk": concept_risk(run, row, level), "check": risk_check(run, row, level), "basis": RISK_BASIS}]
+        checks.append({"risk": concept_risk(run, row, level), "check": risk_check(run, row, level), "basis": RISK_BASIS})
+    if checks:
+        out["checks"] = checks
     return out
 
 

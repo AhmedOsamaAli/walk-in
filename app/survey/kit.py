@@ -2,14 +2,17 @@
 walk, tracked links and the decision dossier.
 
 The model writes the copy; deterministic checks read every line against the plan's claims, so an ad never states a
-number the evidence does not give, names a competitor or a place on the block, borrows an artist's, a show's or a
-brand's name, says "only" without the proof, or reaches for a superlative. Rejected lines go back to the model once
-with the reasons; whatever is still missing is written by rules from the claims themselves, so the kit always works
-without a model. The poster is data for vector art (the walk's real outline), never a stock or generated picture.
+number the evidence does not give, a price or an offer, names a competitor or a place on the block (possessive or not),
+borrows an artist's, a show's or a brand's name, says "only" beyond what its claim proves, or reaches for a
+superlative. Menu items a model wrote count as the business's own words only once they pass the same checks. Rejected
+lines go back to the model once with the reasons; whatever is still missing is written by rules from the claims
+themselves, so the kit always works without a model. The poster is data for vector art (the walk's real outline), never
+a stock or generated picture.
 """
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 import logging
 import re
@@ -22,11 +25,21 @@ from urllib.parse import urlencode
 from .. import scoring
 from ..answers import AnswerCache, fingerprint
 from ..llm import LLM
+from ..payments.pledges import DISCOUNT
 from . import launch
 from .concepts import COMMON_NAME_WORDS, place_names
 from .constraints import Constraints
-from .dossier import build_dossier, business_name, campaign, claim_level, concept_at, usable_claims, walk_outline
-from .evidence import NATIONAL, NOT_NATIONAL, PROPER_WORDS, dollars, gap_for, offer_items, plural, singular
+from .dossier import (
+    build_dossier,
+    business_name,
+    campaign,
+    claim_level,
+    concept_at,
+    untested,
+    usable_claims,
+    walk_outline,
+)
+from .evidence import NATIONAL, NOT_NATIONAL, PROPER_WORDS, dollars, gap_for, in_sentence, offer_items, plural, singular
 from .models import RunState
 
 log = logging.getLogger("walkin")
@@ -68,9 +81,30 @@ NUMBER_WORDS = {
     "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
     "nineteen": 19, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
     "ninety": 90, "hundred": 100, "thousand": 1000, "dozen": 12,
+    # Quantities that are no number in particular, and none the evidence gives: 'loved by thousands'.
+    "dozens": 12, "hundreds": 100, "thousands": 1000, "million": 1_000_000, "millions": 1_000_000,
+    "billion": 1_000_000_000, "billions": 1_000_000_000,
 }
 NUMBER_WORD = re.compile(r"\b(" + "|".join(NUMBER_WORDS) + r")\b", re.IGNORECASE)
-ONLY = re.compile(r"\bonly\b", re.IGNORECASE)
+# Numbers in words, for a walk's minutes said in words: 'a ten-minute walk', 'twenty-five minutes'.
+ONES = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+        "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+TENS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+# Money: '$2', '3 dollars', 'two bucks'. A price level ('$$$') is no amount and stays.
+PRICE = re.compile(
+    r"[$€£]\s*\d|\d\s*[$€£¢]|\b\d+(?:[.,]\d+)?\s*(?:dollars?|bucks?|cents?|euros?|usd|eur|gbp)\b|"
+    r"\b(?:a|an|one|" + "|".join(NUMBER_WORDS) + r")\s+(?:dollars?|bucks?|cents?|euros?)\b",
+    re.IGNORECASE,
+)
+# Exclusivity, said with 'only' or in other words: it needs an 'only' claim, and keeps to what the claim proves.
+EXCLUSIVE = re.compile(
+    r"\bonly\b|\bno other\b|\bnowhere else\b|\bno ?one else\b|\bnobody else\b|\b(?:the|our|its|your) sole\b|"
+    r"\bexclusive(?:ly)?\b|\bone[- ]of[- ]a[- ]kind\b|\bthe one (?:and only )?(?:place|spot|stop)\b|"
+    r"\bthe one \w+ (?:in|on|near|nearby|within|around)\b",
+    re.IGNORECASE,
+)
+# Where a clause of a line ends: an 'only' must carry its claim's scope within its own clause.
+CLAUSE = re.compile(r"(?<=[.!?;:,])\s+|\s+[-–—]+\s+|\n+")
 SUPERLATIVE = re.compile(
     r"#\s*1\b|\bno\.?\s*1\b|\bnumber\s+one\b|\b(?:best|cheapest|finest|greatest|tastiest|freshest|fastest|"
     r"(?:top|highest|best)[- ]rated|(?:world[- ])?famous|renowned|legendary|iconic|award[- ]winning|unbeat(?:able|en)|"
@@ -86,12 +120,15 @@ UNSPOKEN = re.compile(r"[$#@*/|·•_<>=~^\[\]{}]")
 # Characters after which a capitalized word starts a sentence rather than naming something.
 SENTENCE_END = set(".!?:;\"“”(–—-•·|")
 MASK = " zzownzz "
+# A possessive ('Corner Loaf's', 'Mobley’s') reads as the name it belongs to; folding leaves its mark.
+POSSESSIVE = re.compile(r"['’`]s\b", re.IGNORECASE)
+OWNS = "’"
 
 
 def fold(text: str) -> str:
-    """Accents and apostrophes dropped, case kept: 'Joe’s Café' -> 'Joes Cafe'."""
+    """Accents and apostrophes dropped, case kept, a possessive's 's marked: 'Joe’s Café' -> 'Joe’ Cafe', 'don't' -> 'dont'."""
     plain = "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch))
-    return re.sub(r"['’`]", "", plain)
+    return POSSESSIVE.sub(OWNS, re.sub(r"['’`](?![sS]\b)", "", plain))
 
 
 def numbers_in(text: str) -> list[str]:
@@ -112,9 +149,24 @@ def canon(token: str) -> str:
         return token
 
 
+def spelled(number: int) -> list[str]:
+    """A whole number from 1 to 99 as copy may write it in words: 'ten', 'twenty-five' or 'twenty five'."""
+    if 1 <= number < 20:
+        return [ONES[number - 1]]
+    if 20 <= number < 100:
+        tens, unit = TENS[number // 10 - 2], number % 10
+        return [f"{tens}-{ONES[unit - 1]}", f"{tens} {ONES[unit - 1]}"] if unit else [tens]
+    return []
+
+
+def name_words(text: str) -> list[str]:
+    """A name's words, plain and without possessives: "Joe's Bakery & Co" -> ['joe', 'bakery', 'and', 'co']."""
+    return scoring.topic_text(POSSESSIVE.sub("", text)).split()
+
+
 def phrase_pattern(phrase: str) -> re.Pattern | None:
-    """A phrase however it is written: 'Tide & Table' also matches 'tide and table'."""
-    words = scoring.topic_text(phrase).split()
+    """A phrase however it is written: 'Tide & Table' also matches 'tide and table', and 'Joe's Bakery' "Joe’s bakery"."""
+    words = name_words(phrase)
     if not words:
         return None
     parts = [r"(?:and|&)" if word == "and" else re.escape(word) for word in words]
@@ -123,22 +175,26 @@ def phrase_pattern(phrase: str) -> re.Pattern | None:
 
 @dataclass(frozen=True)
 class Name:
-    """A name copy must not use. A one-word name that is also a plain word ('Rise', 'Proof') only counts written as a
-    name: capitalized, and not just because it starts a sentence. A match inside the business's own words ('Crumb' in
-    its 'Crumb cake') is the business's; one reaching beyond them ('Joe's Bakery' around 'bakery') is the name."""
+    """A name copy must not use, however it is written: 'Patagonia fans', 'patagonia', 'Mobley's', '- Stassi'. A one-word
+    name that is also a plain word ('Rise', 'Proof', 'Crumb') only counts written as a name: capitalized, and not just
+    because it starts a sentence, unless it is a possessive ('Crumb's kouign amann'). A match inside the business's own
+    words ('Crumb' in its 'Crumb cake') is the business's; one reaching beyond them ('Joe's Bakery' around 'bakery') is
+    the name."""
 
     text: str
     pattern: re.Pattern
-    single: bool
+    plain: bool  # one plain English word (PLAIN_WORDS)
 
     def found(self, folded: str, own: list[tuple[int, int]]) -> bool:
         for match in self.pattern.finditer(folded):
             start, end = match.span()
             if any(low <= start and end <= high for low, high in own):
                 continue
+            if not self.plain:
+                return True
             before = folded[:start].rstrip()
-            named = match.group(0)[:1].isupper() and bool(before) and before[-1] not in SENTENCE_END
-            if not self.single or named:
+            mid_sentence = bool(before) and before[-1] not in SENTENCE_END
+            if match.group(0)[:1].isupper() and (mid_sentence or folded[end:end + 1] == OWNS):
                 return True
         return False
 
@@ -147,26 +203,60 @@ def names_of(texts: Iterable[str], generic: set[str]) -> list[Name]:
     """Names to watch for; names made only of plain category words ('The Bakery', 'Coffee Shop') say nothing."""
     out: dict[str, Name] = {}
     for text in texts:
-        words = [word for word in scoring.topic_text(text).split() if word != "the"]
+        words = [word for word in name_words(text) if word != "the"]
         pattern = phrase_pattern(" ".join(words))
         if not pattern or len("".join(words)) < 3 or set(words) <= generic:
             continue
-        out.setdefault(pattern.pattern, Name(text.strip(), pattern, len(words) == 1))
+        out.setdefault(pattern.pattern, Name(text.strip(), pattern, len(words) == 1 and words[0] in PLAIN_WORDS))
     return list(out.values())
+
+
+@dataclass(frozen=True)
+class Scope:
+    """What an 'only' claim proves: its price level ($$$, or the level in words), its kind of business and its walk. A
+    clause that says 'only', or 'no other', 'nowhere else'…, has to carry all of them."""
+
+    line: str
+    parts: tuple[re.Pattern, ...]
+
+    def carried(self, clause: str) -> bool:
+        return all(part.search(clause) for part in self.parts)
+
+
+def scope_of(claim: dict, genre: str) -> Scope:
+    """The scope of an 'only' claim, read from its line: 'The only $$$ bakery within a 10-minute walk'."""
+    line = fold(claim["line"])
+    parts: list[re.Pattern] = []
+    level = claim_level(claim)
+    if level:
+        said = rf"(?<!\$)\${{{level}}}(?!\$)" + (rf"|\b{re.escape(AD_PRICE[level])}\b" if level in AD_PRICE else "")
+        parts.append(re.compile(said, re.IGNORECASE))
+    kinds = [p for p in map(phrase_pattern, sorted({in_sentence(genre), singular(genre), plural(genre)}, key=len, reverse=True)) if p]
+    if any(pattern.search(line) for pattern in kinds):
+        parts.append(re.compile("|".join(pattern.pattern for pattern in kinds), re.IGNORECASE))
+    walk = re.search(r"(\d+)\s*-?\s*minutes?\s+walk", line, re.IGNORECASE)
+    if walk:
+        minutes = "|".join(re.escape(form) for form in (walk.group(1), *spelled(int(walk.group(1)))))
+        parts.append(re.compile(rf"\bwithin\s+(?:an?\s+)?(?:{minutes})\s*-?\s*minutes?\s+walk\b", re.IGNORECASE))
+    whole = phrase_pattern(claim["line"])
+    return Scope(claim["line"], tuple(parts) if parts or not whole else (whole,))
 
 
 @dataclass
 class Facts:
-    """What the copy may say: the numbers the claims, proofs, hours, walk and name give, whether an 'only' claim exists,
+    """What the copy may say: the numbers the claims, proofs, hours, walk and name give, the scope of each 'only' claim,
     and the names it must never use. The business's own name, menu and neighborhoods are its own words: masked before
-    the number, 'only' and superlative checks, and never mistaken for another business's name."""
+    the number, price, 'only' and superlative checks, and never mistaken for another business's name. A menu item a
+    model wrote counts as the business's own only once it passes every check itself (`menu`); the others are noted."""
 
     numbers: set[str]
-    only: bool
+    only: tuple[Scope, ...]
     places: list[Name]
     audience: list[Name]
     own: list[re.Pattern]
     constraints: Constraints
+    menu: list[str] = dataclasses.field(default_factory=list)  # the model-written menu items the copy may name
+    left_out: list[str] = dataclasses.field(default_factory=list)  # why the others may not, for the owner
 
     def mask(self, folded: str) -> str:
         for pattern in self.own:
@@ -190,14 +280,19 @@ class Facts:
         if listened:
             reasons.append(f"names {listened.text}, from the audience: artists, shows, podcasts and brands are for "
                            f"targeting only")
+        if PRICE.search(masked):
+            reasons.append("states a price: price levels are $ to $$$$, never amounts")
         stray = list(dict.fromkeys(token for token in numbers_in(masked) if canon(token) not in self.numbers))
         if stray:
             reasons.append(f"states {', '.join(stray)}, a number no claim, proof, the hours or the walk gives")
-        if not self.only and ONLY.search(masked):
-            reasons.append('says "only" without an "only" claim')
+        exclusive = self.exclusive(folded)
+        if exclusive:
+            reasons.append(exclusive)
         superlative = SUPERLATIVE.search(masked)
         if superlative:
             reasons.append(f'"{superlative.group(0)}" is a superlative nothing proves')
+        if DISCOUNT.search(masked):
+            reasons.append("promises a discount, a deal or something free: the ads make no offer")
         if WEB.search(text):
             reasons.append("a web address or email: the tracked link carries the website")
         if spoken and UNSPOKEN.search(text):
@@ -205,6 +300,20 @@ class Facts:
         if not self.constraints.allows_item(masked):
             reasons.append("offers something the owner's notes rule out")
         return reasons
+
+    def exclusive(self, folded: str) -> str | None:
+        """Why a line's 'only' (or 'no other', 'nowhere else'…) cannot run: no 'only' claim proves it, or the clause
+        saying it does not keep to the claim's price level, kind of business and walk."""
+        for clause in CLAUSE.split(folded):
+            said = EXCLUSIVE.search(self.mask(clause))
+            if not said:
+                continue
+            word = said.group(0).lower()
+            if not self.only:
+                return f'says "{word}" without an "only" claim'
+            if not any(scope.carried(clause) for scope in self.only):
+                return f'says "{word}" beyond what the "only" claim proves: "{self.only[0].line}"'
+        return None
 
 
 def facts_for(run: RunState, concept: dict, design: dict, name: str, claims: list[dict]) -> Facts:
@@ -217,19 +326,37 @@ def facts_for(run: RunState, concept: dict, design: dict, name: str, claims: lis
     numbers = {canon(token) for text in texts for token in numbers_in(text)} | {canon(str(run.site.minutes))}
     own = [name, str(concept.get("name") or ""), scoring.genre_title(genre), singular(genre), plural(genre)]
     own += neighborhoods_of(run, design)
-    own += [item for item in (concept.get("signature") or []) + (design.get("offer") or []) if isinstance(item, str)]
     own += [item["item"] for item in offer_items(row, run.constraints, limit=8)] if row else []
-    patterns = [p for p in (phrase_pattern(text) for text in sorted(set(own), key=len, reverse=True)) if p]
     generic = {w for text in (*COMMON_NAME_WORDS, genre, singular(genre), plural(genre)) for w in scoring.topic_text(text).split()}
     generic |= {"and", "of", "a", "an", "new", "place", "places", "co"}
-    return Facts(
+    facts = Facts(
         numbers=numbers,
-        only=any(c["kind"] == "only" for c in claims),
+        only=tuple(scope_of(c, genre) for c in claims if c["kind"] == "only"),
         places=names_of(place_texts(run), generic),
         audience=names_of(audience_texts(run, plan), generic),
-        own=patterns,
+        own=own_patterns(own),
         constraints=run.constraints,
     )
+    # The sheet's offer and the concept's signature items are the model's words: the business's own only once they
+    # keep every rule themselves (no other business's name, no number, price or superlative nothing proves).
+    written = [" ".join(item.split()) for item in strings(design.get("offer")) + strings(concept.get("signature"))]
+    for item in dict.fromkeys(item for item in written if item):
+        problems = facts.check(item)
+        if problems:
+            facts.left_out.append(f'Left out the menu item "{item}" ({"; ".join(problems)}).')
+        else:
+            facts.menu.append(item)
+    facts.own = own_patterns(own + facts.menu)
+    return facts
+
+
+def own_patterns(texts: Iterable[str]) -> list[re.Pattern]:
+    """The business's own words as patterns, the longest first so a phrase is masked before the words inside it."""
+    return [p for p in (phrase_pattern(text) for text in sorted(set(texts), key=len, reverse=True)) if p]
+
+
+def strings(value: object) -> list[str]:
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
 def place_texts(run: RunState) -> set[str]:
@@ -274,6 +401,39 @@ SAFE_HEADLINES = ("New on the block", "A short walk away", "Come say hello", "Wa
                   "Made for the neighborhood", "Your new neighborhood spot", "Steps from home")
 SAFE_DESCRIPTIONS = ("New on the block. Walk in and say hello.", "Made for the neighborhood, a short walk from home.",
                      "Steps from home. Come in and say hello.")
+# Plain English words a place, an artist or a brand may be named after ('Rise', 'Proof', 'Crumb'). Copy uses them as
+# words, so a one-word name among them only counts written as a name; any other one-word name ('Patagonia', 'Mobley')
+# counts however it is written. The words the rules' own lines use are among them, so those lines always stay usable.
+PLAIN_TEXT = """
+    morning mornings noon afternoon evening evenings night nights dawn dusk sunrise sunset midday midnight daily weekly
+    weekend weekends today tomorrow sunday monday tuesday wednesday thursday friday saturday spring summer autumn fall
+    winter season seasons hour hours day days week year early late golden
+    bread loaf loaves crumb crumbs crust dough flour rise proof knead yeast butter sugar salt pepper honey jam toast bun
+    buns roll rolls biscuit cookie cookies cake cakes pie tart scone bagel muffin waffle pancake crepe pastry pastries
+    sweet sweets cream milk cheese egg eggs bacon olive olives oil herb herbs sage thyme basil mint rosemary dill fennel
+    ginger garlic onion lemon lime orange apple apples pear peach plum cherry berry berries fig figs grape grapes vine
+    melon mango coconut cocoa cacao chocolate vanilla caramel maple cinnamon clove nutmeg saffron spice chili salsa
+    noodle noodles rice bean beans corn grain grains wheat rye oat oats barley hops malt brew coffee tea juice soda
+    water wine beer cider spirit spirits tonic soup stew broth smoke fire flame ember embers coal ash hearth oven kiln
+    stove pot pan kettle fork spoon knife plate bowl cup mug jar glass bottle barrel cask table tables counter bench
+    supper dinner lunch breakfast brunch feast bite bites taste flavor pantry larder harvest
+    field fields garden gardens orchard grove meadow prairie forest wood woods tree trees oak pine cedar birch willow
+    elm juniper ivy fern moss leaf leaves root roots seed seeds sprout bloom blossom flower flowers petal rose lily
+    daisy poppy clover acorn river lake creek brook stream well pond sea ocean bay harbor harbour coast shore tide tides
+    wave waves sand stone rock hill hills mountain valley canyon sky sun moon star stars cloud rain snow storm wind
+    north south east west island farm ranch barn mill yard court square park lane alley street avenue road path bridge
+    gate door window porch corner block town city village home house nest den hive haven common commons union parish
+    copper iron brass gold silver steel tin paper ink thread anchor compass lantern candle light bright warm cozy fresh
+    simple honest good fine kind true wild little big small grand royal noble humble happy lucky joy bliss grace hope
+    love heart soul friend friends neighbor neighbors family families folk people crowd couples kids local craft
+    ritual habit story fable chapter verse rhythm tempo note melody echo origin element wander roam rest
+    hello hi welcome come say walk walks minute minutes foot short away steps made neighborhood spot open new close near
+    for from with within without which there you your known crossing town only
+"""
+PLAIN_WORDS = frozenset(PLAIN_TEXT.split()) | {
+    word for line in (*SAFE_HEADLINES, *SAFE_DESCRIPTIONS, *launch.PROMISES.values(), *DAY_NAMES, *DAY_NAMES.values())
+    for word in scoring.topic_text(line).split()
+}
 
 
 @dataclass
@@ -488,9 +648,11 @@ Rules for every line:
 - Use no number that is not in the claims, their proofs, the hours, the walk minutes or the business name.
 - Never name another business, nor any artist, podcast, show or brand: platforms reject other businesses' names,
   and naming an artist or a brand implies an endorsement the owner does not have. The neighborhoods given are fine.
-- Write "only" only when a claim of kind "only" is given.
+- Write "only" (or "no other", "nowhere else") only to state a claim of kind "only", with its price level, its kind
+  of business and its walk.
 - No superlatives nothing proves (best, #1, cheapest, famous, award-winning, top-rated, world-class).
-- No web addresses, phone numbers, discounts or prices in money: price levels are $ to $$$$, never amounts.
+- No web addresses, phone numbers, prices in money, discounts, deals or free offers: price levels are $ to $$$$, never
+  amounts.
 - Keep every field within its limit; characters include spaces.
 Each channel says who it reaches: say "close by" or "on your block" only where it reaches neighbors. A script is read
 aloud: no symbols, price levels in words.
@@ -526,12 +688,11 @@ def model_brief(run: RunState, concept: dict, design: dict, name: str, claims: l
     when = plan.get("when") or {}
     tagline = design.get("tagline")
     tagline = " ".join(tagline.split()) if isinstance(tagline, str) and tagline.strip() else None
-    menu = [item for item in (design.get("offer") or []) + (concept.get("signature") or []) if isinstance(item, str)]
     level = design.get("price_level") or concept.get("price_level")
     return {
         "business": {
             "name": name, "kind": singular(concept["genre"]), "price_level": dollars(level) or None,
-            "menu": list(dict.fromkeys(menu))[:6],
+            "menu": facts.menu[:6],
             "tagline": tagline if tagline and not facts.check(tagline, chars=90) else None,
         },
         "where": {"neighborhoods": neighborhoods_of(run, design), "walk_minutes": run.site.minutes},
@@ -636,7 +797,7 @@ def detect(texts: list[str], claims: list[dict]) -> set[str]:
     found = set()
     for claim in claims:
         if claim["kind"] == "only":
-            hit = bool(ONLY.search(said))
+            hit = bool(EXCLUSIVE.search(said))
         else:
             phrase = fold(item_of(claim) if claim["kind"] == "new" else claim["line"]).lower().rstrip(".")
             hit = bool(phrase) and re.search(rf"(?<!\w){re.escape(phrase)}(?!\w)", said) is not None
@@ -731,13 +892,16 @@ async def build_kit(
     llm: LLM | None, run: RunState, index: int, design: dict, answers: AnswerCache | None = None,
 ) -> dict:
     """The launch kit for concept `index` and its design sheet: checked ad copy per channel, the poster, tracked links
-    and the dossier. Works without a model: the rules then write every line."""
+    and the dossier. Works without a model: the rules then write every line. The notes tell the owner what the kit left
+    out and why, led by a plain warning when the concept is an untested wildcard."""
     concept = concept_at(run, index)
     genre = concept["genre"]
     name = business_name(run, concept, design)
     claims, notes = usable_claims(concept, design)
     keys = channel_keys(design)
     facts = facts_for(run, concept, design, name, claims)
+    warning = untested(concept)
+    notes = ([warning] if warning else []) + notes + facts.left_out
     hoods = neighborhoods_of(run, design)
     brief = Brief(name, singular(genre), scoring.genre_title(genre), hoods[0] if hoods else None, run.site.minutes,
                   design.get("hours"), claims)

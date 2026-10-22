@@ -69,7 +69,7 @@ export function PriceLadder({ ladder, level }: { ladder: PriceStep[] | undefined
         </div>
       ))}
       <span className="ladder-key mono" aria-hidden="true">
-        <i className="loved" /> locals love <i className="inside" /> inside the walk
+        <i className="loved" /> people here love <i className="inside" /> inside the walk
       </span>
     </div>
   );

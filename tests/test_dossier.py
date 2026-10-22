@@ -129,12 +129,33 @@ def test_the_offer_marks_what_is_new_and_prices_by_level():
 
 def test_alternatives_mark_the_chosen_gap_and_say_why_not_the_stronger_ones():
     items = dossier_of(world())["alternatives"]["items"]
-    assert [i["genre"] for i in items] == ["Wine Bar", "Bakery", "Coffee shop", "Brunch", "Japanese", "Ramen"]
+    # By gap score, as the rank counts: the thin Yoga studio row (45) comes before Japanese (40).
+    assert [i["genre"] for i in items] == ["Wine Bar", "Bakery", "Coffee shop", "Brunch", "Yoga studio", "Japanese"]
+    assert [i["position"] for i in items] == [1, 2, 3, 4, 5, 6]
     assert [(i["genre"], i["position"]) for i in items if i["chosen"]] == [("Bakery", 2)]
     assert items[0]["why"] == "Your notes rule it out: it serves alcohol."
     assert items[0]["why_not"] == "Scores higher, but your notes rule it out: it serves alcohol."
     assert all("why_not" not in i for i in items[1:])
     assert items[1]["why"].startswith("Bakery close to home")
+
+
+def test_the_rank_and_the_alternatives_count_in_one_order():
+    run = world()
+    run.concepts.append(rule_concept(run, gap_for(run, "Japanese")))
+    dossier = dossier_of(run, index=1)
+    decision = dossier["case"]["decision"]
+    assert (decision["rank"], decision["of"]) == (6, 8)
+    items = dossier["alternatives"]["items"]
+    assert [i["position"] for i in items if i["chosen"]] == [decision["rank"]]
+    # Every category scoring above the chosen one is shown, with why it was not chosen; the thin one too.
+    higher = [r["genre"] for r in sorted(run.gaps, key=lambda r: -r["gap_score"]) if r["gap_score"] > 40]
+    assert [i["genre"] for i in items if "why_not" in i] == higher == [
+        "Wine Bar", "Bakery", "Coffee shop", "Brunch", "Yoga studio"]
+    assert next(i for i in items if i["genre"] == "Yoga studio")["why_not"].startswith("Scores higher on thin data")
+    # A chosen category ranked below the first six still brings every one above it.
+    run.concepts.append(rule_concept(run, gap_for(run, "Gift shop")))
+    items = dossier_of(run, index=2)["alternatives"]["items"]
+    assert [i["position"] for i in items] == list(range(1, 9)) and items[-1]["chosen"] and items[-1]["genre"] == "Gift shop"
 
 
 def test_the_business_the_owner_asked_for_carries_its_verdict():
@@ -202,6 +223,48 @@ def test_landlord_questions_come_from_what_the_business_needs():
     wine = [q["ask"] for q in dossier_of(wine_run, index=1)["before_you_sign"]["questions"]]
     assert wine[0] == "Are the prep sinks, the refrigeration and the electrical capacity part of the lease?"
     assert wine[1] == "Does the lease's permitted use, and the zoning, allow a wine bar, and can the unit get a liquor licence?"
+
+
+def test_the_room_keeps_no_number_the_design_model_wrote():
+    run = world()
+    design = sheet(run)
+    rules_room = dossier_of(run, design)["room"]
+    # The rules sheet's seating carries the computed capacity estimate, which is not the model's: it stays.
+    assert rules_room["interior"]["seating"] == design["interior"]["seating"]
+    assert design["capacity"] in rules_room["interior"]["seating"]
+    written = {**design, "interior": {**design["interior"], "seating": "Communal tables for 40 guests",
+                                      "mood": "Warm and bright", "materials": ["Oak", "2 kinds of tile"], "seats": 40}}
+    room = dossier_of(run, written)["room"]
+    assert "seating" not in room["interior"] and "seats" not in room["interior"]
+    assert room["interior"]["mood"] == "Warm and bright" and room["interior"]["materials"] == ["Oak"]
+    assert room["capacity"] == design["capacity"] == "about 23–27 seated guests at most"
+
+
+def test_the_pull_is_the_trip_to_the_loved_places_outside_the_walk():
+    # Two medians: over every loved place (1.9 km, inside the walk too) and over those outside it (2.8 km).
+    dossier = dossier_of(world(median_favorite_km=1.9, median_far_km=2.8))
+    pull = next(n for n in dossier["case"]["numbers"] if n["label"] == "Pull")
+    assert pull["value"] == "3 of 3 loved places outside the walk; median distance 2.8 km"
+    assert pull["data"]["median_km"] == dossier["travel"]["median_km"] == 2.8
+    assert "of the 3 outside the walk" in pull["basis"] and "over the 3 outside the walk" in dossier["travel"]["basis"]
+    # Without the trip outside the walk, the distance is left out rather than the diluted one put in its place.
+    unknown = dossier_of(world(median_favorite_km=1.9, median_far_km=None))
+    pull = next(n for n in unknown["case"]["numbers"] if n["label"] == "Pull")
+    assert pull["value"] == "3 of 3 loved places outside the walk" and pull["data"]["median_km"] is None
+    assert unknown["travel"]["median_km"] is None and "median" not in unknown["travel"]["basis"]
+    assert "1.9" not in json.dumps({"pull": pull, "travel": unknown["travel"]})
+
+
+def test_a_wildcard_concept_is_untested_and_says_so():
+    run = world()
+    run.concepts[0]["wildcard"] = True
+    dossier = dossier_of(run)
+    assert "no direct proof of demand" in dossier["case"]["untested"]["text"]
+    first = dossier["before_you_sign"]["checks"][0]
+    assert "no place like it exists nearby" in first["risk"] and "no direct proof of demand" in first["risk"]
+    assert first["check"] and first["basis"]
+    plain = dossier_of(world())
+    assert "untested" not in plain["case"] and len(plain["before_you_sign"]["checks"]) == 1
 
 
 def test_a_real_survey_run_yields_a_traceable_dossier():

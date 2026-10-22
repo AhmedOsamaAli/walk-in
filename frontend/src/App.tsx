@@ -7,6 +7,8 @@ import { ConceptsSection } from "./components/ConceptsSection";
 import { DesignSheet, type DesignTarget } from "./components/DesignSheet";
 import { GapsSection } from "./components/GapsSection";
 import { ImproveSection } from "./components/ImproveSection";
+import { KeepSurveys } from "./components/KeepSurveys";
+import { Link } from "./components/Link";
 import { LiveStatus } from "./components/LiveStatus";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { SiteHeader, type TitleField } from "./components/SiteHeader";
@@ -17,15 +19,30 @@ import { VerdictSection } from "./components/VerdictSection";
 import { markState } from "./lib/brand";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
 import { scrollBehavior, Settled, withViewTransition } from "./lib/motion";
-import { BRIEF_URL, currentAddress, currentRoute, onBriefUrl, surveyUrl, type SurveyRoute } from "./lib/routes";
+import { NavigateContext, type Navigate } from "./lib/navigation";
+import {
+  BRIEF_URL,
+  currentAddress,
+  currentRoute,
+  isPage,
+  onBriefUrl,
+  PRIVACY_URL,
+  samePage,
+  surveyUrl,
+  type PageRoute,
+  type SurveyRoute,
+} from "./lib/routes";
 import { posterButtonId, sectionNo, sectionsFor, useSectionSpy, type SectionId } from "./lib/sections";
 import type { MapPoint } from "./map/controller";
 import { SurveyMap } from "./map/SurveyMap";
+import { PageView } from "./pages/PageView";
 import { askedLine, briefOf, initialBrief, missing, runRequest, unitLine, type BriefForm } from "./state/brief";
 import { RUN_GONE } from "./state/record";
+import { engine } from "./state/engine";
+import { session } from "./state/session";
 import { useSiteWalk, type Site } from "./state/site";
 import { surveyProgress, type SurveyState } from "./state/survey";
-import { useTheme } from "./state/theme";
+import { ThemeContext, useTheme } from "./state/theme";
 import { useSurvey, type RestoreResult } from "./state/useSurvey";
 
 /** The site as the survey view names it, fixed when the survey starts. */
@@ -40,8 +57,8 @@ interface Started extends Surveyed {
   site: Site;
 }
 
-/** What the sheet shows: the brief, a survey's link while it loads, or the survey in memory. */
-type Screen = { name: "brief" } | { name: "opening"; id: string } | { name: "survey" };
+/** What the window shows: the brief, a survey's link while it loads, the survey in memory, or another page. */
+type Screen = { name: "brief" } | { name: "opening"; id: string } | { name: "survey" } | { name: "page"; route: PageRoute };
 
 /** The concept whose design sheet is open. */
 interface OpenSheet {
@@ -64,7 +81,7 @@ function briefFields(run: RunRequest, area: number | null, place: PlaceHit | nul
     { label: "Catchment", lines: area == null ? [`${run.minutes}-min walk`] : [`${run.minutes}-min walk`, `${area} km²`] },
     { label: asked.label, lines: [asked.line] },
     run.intent === "improve"
-      ? { label: "Compared with", lines: ["The places locals love in its category"] }
+      ? { label: "Compared with", lines: ["The places people here love in its category"] }
       : { label: "Constraints", lines: unit ? [notes || "None", unit] : [notes || "None"] },
   ];
 }
@@ -105,10 +122,11 @@ function recordedTitle(survey: SurveyState): Surveyed {
   return { label, eyebrow: EYEBROWS[run.intent], fields };
 }
 
-/** A survey's link starts on its loading screen; every other address shows the brief. */
+/** A survey's link starts on its loading screen; the other pages show themselves; every other address shows the brief. */
 function firstScreen(): Screen {
   const route = currentRoute();
-  return route.page === "survey" ? { name: "opening", id: route.id } : { name: "brief" };
+  if (route.page === "survey") return { name: "opening", id: route.id };
+  return isPage(route) ? { name: "page", route } : { name: "brief" };
 }
 
 const linkedSheet = (route: SurveyRoute): OpenSheet | null =>
@@ -117,6 +135,8 @@ const linkedSheet = (route: SurveyRoute): OpenSheet | null =>
 export function App() {
   const { theme, toggleTheme } = useTheme();
   const [screen, setScreen] = useState<Screen>(firstScreen);
+  /** The survey sheet and its map, mounted once first needed and then kept, hidden, while another page shows. */
+  const [stageOn, setStageOn] = useState(() => !isPage(currentRoute()));
   const [started, setStarted] = useState<Started | null>(null);
   const [site, setSite] = useState<Site | null>(null);
   const [form, setForm] = useState<BriefForm>(initialBrief);
@@ -258,8 +278,19 @@ export function App() {
     if (now === address.current) return;
     address.current = now;
     const route = currentRoute();
+    // Another page starts at its top; a page's own query changing (a withdraw link answered) keeps its place.
+    const toTop = isPage(route) ? !(screen.name === "page" && samePage(screen.route, route)) : screen.name === "page";
     flushSync(() => {
       setNotice(null);
+      if (isPage(route)) {
+        // As on the brief, a link still loading is abandoned and a survey stays in memory for Back.
+        if (screen.name === "opening") reset();
+        if (screen.name === "survey") adoptBrief();
+        setScreen({ name: "page", route });
+        setSheet(null);
+        return;
+      }
+      setStageOn(true);
       if (route.page === "brief") {
         // A link still loading is abandoned; a survey stays in memory, still streaming if it was, for Forward.
         if (screen.name === "opening") reset();
@@ -286,7 +317,18 @@ export function App() {
       setScreen({ name: "opening", id: route.id });
       openLink(route);
     });
+    if (toTop) window.scrollTo({ top: 0 });
   });
+
+  /** In-app links and the pages' own moves: the address changes and the app follows it as it follows Back. */
+  const go = useCallback<Navigate>((url, options) => {
+    const next = new URL(url, window.location.href);
+    const target = `${next.pathname}${next.search}${next.hash}`;
+    if (!options?.replace && target === `${currentAddress()}${window.location.hash}`) return;
+    if (options?.replace) window.history.replaceState(null, "", target);
+    else window.history.pushState(null, "", target);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
 
   const openFirstLink = useEffectEvent(() => {
     address.current = currentAddress();
@@ -295,12 +337,23 @@ export function App() {
   });
 
   useEffect(() => {
+    // The engine first: a nap shows its note before any other request starts waiting on it.
+    engine.start();
     openFirstLink();
+    void session.load();
+    // Settings that gave up while the engine would not wake load as soon as it does.
+    let was = engine.get().phase;
+    const unwatch = engine.subscribe(() => {
+      const phase = engine.get().phase;
+      if (phase === "ready" && was !== "ready" && session.get().phase === "failed") void session.load();
+      was = phase;
+    });
     const onPopState = () => {
       followHistory();
     };
     window.addEventListener("popstate", onPopState);
     return () => {
+      unwatch();
       window.removeEventListener("popstate", onPopState);
     };
   }, []);
@@ -343,116 +396,126 @@ export function App() {
     chooseSite({ id: null, label: "Dropped pin", lat, lon });
   }
 
+  const page = screen.name === "page" ? screen.route : null;
+
   return (
-    <>
-      <TopBar
-        mark={markState(surveying, survey.status)}
-        progress={surveyProgress(survey)}
-        sections={sectionsFor(intent)}
-        ready={ready}
-        current={current}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-      />
-      <main className="stage" data-mode={surveying ? "survey" : "brief"}>
-        <article className="sheet" data-settled={surveying && settled ? "" : undefined}>
-          <Brief
-            hidden={surveying || screen.name === "opening"}
-            notice={notice}
-            site={site}
-            walk={briefWalk}
-            form={form}
-            onForm={patchForm}
-            onSite={chooseSite}
-            onPlace={choosePlace}
-            onSurvey={startSurvey}
-          />
-          {screen.name === "opening" ? (
-            <section className="sec opening" aria-busy="true">
-              <p className="mono">Opening survey {screen.id}</p>
-            </section>
-          ) : null}
-          {surveying ? (
-            <Settled value={settled}>
-              <SectionBoundary key={`live-${survey.run}`} label="The survey status">
-                <LiveStatus survey={survey} />
-              </SectionBoundary>
-              <SiteHeader
-                eyebrow={title.eyebrow}
-                label={title.label}
-                fields={withVerdict(withUnderstood(title.fields, survey.understood), survey.verdict)}
-                onNewSurvey={newSurvey}
-                titleRef={titleRef}
-              />
-              <SectionBoundary key={`log-${survey.run}`} label="The survey log">
-                <SurveyLog log={survey.log} summary={survey.summary} />
-              </SectionBoundary>
-              {survey.block ? (
-                <SectionBoundary key={`block-${survey.run}`} label="The block">
-                  <BlockSection block={survey.block} />
-                </SectionBoundary>
-              ) : null}
-              {survey.gaps ? (
-                <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
-                  <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} />
-                </SectionBoundary>
-              ) : null}
-              {survey.verdict ? (
-                <SectionBoundary key={`verdict-${survey.run}`} label="The verdict">
-                  <VerdictSection no={sectionNo(intent, "s-verdict")} verdict={survey.verdict} />
-                </SectionBoundary>
-              ) : null}
-              {survey.improve ? (
-                <SectionBoundary key={`improve-${survey.run}`} label="What to change">
-                  <ImproveSection no={sectionNo(intent, "s-improve")} data={survey.improve} />
-                </SectionBoundary>
-              ) : null}
-              {survey.concepts ? (
-                <SectionBoundary key={`concepts-${survey.run}`} label="The concepts">
-                  <ConceptsSection
-                    no={sectionNo(intent, "s-concepts")}
-                    data={survey.concepts}
-                    baseline={survey.baseline}
-                    onOpen={openDesign}
-                  />
-                </SectionBoundary>
-              ) : null}
-              {survey.taste ? (
-                <SectionBoundary key={`taste-${survey.run}`} label="The wider taste">
-                  <TasteSection no={sectionNo(intent, "s-taste")} taste={survey.taste} cues={survey.cues ?? []} />
-                </SectionBoundary>
-              ) : null}
-            </Settled>
-          ) : null}
-          <footer className="sheet-foot mono">
-            <p>
-              Taste data by{" "}
-              <a href="https://www.qloo.com" target="_blank" rel="noopener">
-                Qloo
-              </a>
-              : aggregated and anonymized, and thinner in less digitally active areas. Read it as evidence for a decision,
-              not a forecast.
-            </p>
-            <p>Built for the Qloo Agentic Hackathon.</p>
-          </footer>
-        </article>
-        <SurveyMap
+    <ThemeContext value={theme}>
+      <NavigateContext value={go}>
+        <TopBar
+          mark={markState(surveying, survey.status)}
+          progress={surveyProgress(survey)}
+          sections={page ? [] : sectionsFor(intent)}
+          ready={ready}
+          current={current}
           theme={theme}
-          site={surveying ? surveySite : site}
-          walk={surveying ? surveyWalk : briefWalk}
-          minutes={surveying ? (survey.site?.minutes ?? form.minutes) : form.minutes}
-          surveying={surveying}
-          run={surveying ? survey.run : 0}
-          streaming={surveying && survey.streaming}
-          places={surveying ? (survey.block?.places ?? null) : null}
-          gap={surveying ? openGap : null}
-          onPick={pickFromMap}
+          onToggleTheme={toggleTheme}
         />
-      </main>
-      <DesignSheet target={design} onClose={closeDesign} />
-      <p className="sr-only" role="status">
-        {announcement}
-      </p>
-    </>
+        {page ? <PageView route={page} /> : null}
+        {stageOn ? (
+          <main className="stage" data-mode={surveying ? "survey" : "brief"} hidden={page !== null}>
+            <article className="sheet" data-settled={surveying && settled ? "" : undefined}>
+              <Brief
+                hidden={surveying || screen.name === "opening"}
+                notice={notice}
+                site={site}
+                walk={briefWalk}
+                form={form}
+                onForm={patchForm}
+                onSite={chooseSite}
+                onPlace={choosePlace}
+                onSurvey={startSurvey}
+              />
+              {screen.name === "opening" ? (
+                <section className="sec opening" aria-busy="true">
+                  <p className="mono">Opening survey {screen.id}</p>
+                </section>
+              ) : null}
+              {surveying ? (
+                <Settled value={settled}>
+                  <SectionBoundary key={`live-${survey.run}`} label="The survey status">
+                    <LiveStatus survey={survey} />
+                  </SectionBoundary>
+                  <SiteHeader
+                    eyebrow={title.eyebrow}
+                    label={title.label}
+                    fields={withVerdict(withUnderstood(title.fields, survey.understood), survey.verdict)}
+                    onNewSurvey={newSurvey}
+                    titleRef={titleRef}
+                  />
+                  <SectionBoundary key={`log-${survey.run}`} label="The survey log">
+                    <SurveyLog log={survey.log} summary={survey.summary} />
+                  </SectionBoundary>
+                  {survey.block ? (
+                    <SectionBoundary key={`block-${survey.run}`} label="The block">
+                      <BlockSection block={survey.block} />
+                    </SectionBoundary>
+                  ) : null}
+                  {survey.gaps ? (
+                    <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
+                      <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} />
+                    </SectionBoundary>
+                  ) : null}
+                  {survey.verdict ? (
+                    <SectionBoundary key={`verdict-${survey.run}`} label="The verdict">
+                      <VerdictSection no={sectionNo(intent, "s-verdict")} verdict={survey.verdict} />
+                    </SectionBoundary>
+                  ) : null}
+                  {survey.improve ? (
+                    <SectionBoundary key={`improve-${survey.run}`} label="What to change">
+                      <ImproveSection no={sectionNo(intent, "s-improve")} data={survey.improve} />
+                    </SectionBoundary>
+                  ) : null}
+                  {survey.concepts ? (
+                    <SectionBoundary key={`concepts-${survey.run}`} label="The concepts">
+                      <ConceptsSection
+                        no={sectionNo(intent, "s-concepts")}
+                        data={survey.concepts}
+                        baseline={survey.baseline}
+                        onOpen={openDesign}
+                      />
+                    </SectionBoundary>
+                  ) : null}
+                  {survey.taste ? (
+                    <SectionBoundary key={`taste-${survey.run}`} label="The wider taste">
+                      <TasteSection no={sectionNo(intent, "s-taste")} taste={survey.taste} cues={survey.cues ?? []} />
+                    </SectionBoundary>
+                  ) : null}
+                </Settled>
+              ) : null}
+              {surveying && started !== null && survey.status === "complete" ? <KeepSurveys /> : null}
+              <footer className="sheet-foot mono">
+                <p>
+                  Taste data by{" "}
+                  <a href="https://www.qloo.com" target="_blank" rel="noopener">
+                    Qloo
+                  </a>
+                  : aggregated and anonymized, and thinner in less digitally active areas. Read it as evidence for a decision,
+                  not a forecast.
+                </p>
+                <p>
+                  Built for the Qloo Agentic Hackathon. <Link href={PRIVACY_URL}>Privacy</Link>
+                </p>
+              </footer>
+            </article>
+            <SurveyMap
+              theme={theme}
+              site={surveying ? surveySite : site}
+              walk={surveying ? surveyWalk : briefWalk}
+              minutes={surveying ? (survey.site?.minutes ?? form.minutes) : form.minutes}
+              surveying={surveying}
+              run={surveying ? survey.run : 0}
+              streaming={surveying && survey.streaming}
+              places={surveying ? (survey.block?.places ?? null) : null}
+              gap={surveying ? openGap : null}
+              onPick={pickFromMap}
+            />
+          </main>
+        ) : null}
+        <DesignSheet target={design} onClose={closeDesign} />
+        <p className="sr-only" role="status">
+          {announcement}
+        </p>
+      </NavigateContext>
+    </ThemeContext>
   );
 }

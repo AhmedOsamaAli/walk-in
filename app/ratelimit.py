@@ -1,11 +1,14 @@
 """Rate limits for the public demo: per-client sliding windows and a server-wide daily budget."""
 from __future__ import annotations
 
+import hmac
 import time
 from collections import defaultdict, deque
 from datetime import UTC, datetime
 
 from fastapi import Request
+
+from .config import settings
 
 
 class RateLimiter:
@@ -43,6 +46,13 @@ class DailyBudget:
 
 
 def client_ip(request: Request) -> str:
+    # Behind the Cloudflare front door every request arrives from Cloudflare, so the front door sends the visitor's
+    # address in X-Client-IP, trusted only with the secret the two share.
+    secret = settings.proxy_secret
+    if secret and hmac.compare_digest(request.headers.get("x-proxy-secret", "").encode(), secret.encode()):
+        visitor = request.headers.get("x-client-ip", "").strip()
+        if visitor:
+            return visitor
     # The hosting proxy appends the address it saw, so the last entry cannot be forged by the client.
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:

@@ -1,0 +1,73 @@
+/* ---------- The engine's nap: a band hung under the top bar while the backend wakes (EngineNote.tsx) ---------- */
+/* --wake-h is the band's height while it shows (EngineNote measures it): what it hangs over moves down to make room,
+   and back up as it fades, so it covers nothing. */
+:root { --wake-h: 0px; }
+.page, .stage, .sheet { transition: padding-top .6s var(--ease); }
+.page { padding-top: var(--wake-h); }
+@media print {
+  .page { padding-top: 0; }
+}
+@media (max-width: 980px) {
+  .stage { padding-top: var(--wake-h); }
+}
+@media (min-width: 981px) {
+  .sheet { padding-top: var(--wake-h); }
+}
+/* The survey's own status sticks under the band while there is one, rather than sliding beneath it. */
+.live { top: calc(var(--bar-h) + var(--wake-h)); }
+
+.wake {
+  container-type: inline-size;
+  position: absolute; top: calc(100% + 1px); left: 0; right: 0; z-index: 1;
+  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; column-gap: 12px;
+  min-height: var(--wake-h);
+  padding: 11px var(--pad) 12px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: var(--rule);
+  animation: wakeIn .6s var(--ease);
+  transition: opacity .7s var(--ease), transform .7s var(--ease);
+}
+.wake:focus { outline: none; }
+/* Beside the map, the note spans the sheet only, as the survey's own status does, and leaves the map's controls free. */
+@media (min-width: 981px) {
+  :root:has(.stage:not([hidden])) .wake { right: auto; width: max(460px, 46%); border-right: var(--rule); }
+}
+.wake[data-note="leaving"] { opacity: 0; transform: translateY(-6px); pointer-events: none; }
+@keyframes wakeIn { from { opacity: 0; transform: translateY(-8px); } }
+/* The porch light left on while the engine naps: it breathes until the engine answers, and is out if it never does. */
+.wake-mark {
+  display: grid; place-items: center; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--yellow); border: 1px solid var(--ink); color: var(--blue);
+  animation: wakeGlow 2.4s var(--ease-io) infinite;
+}
+@keyframes wakeGlow { 50% { box-shadow: 0 0 0 6px var(--marker); } }
+.wake:is([data-note="ready"], [data-note="leaving"]) .wake-mark {
+  background: none; border: 0; animation: none; font: 600 14px/1 var(--f-mono);
+}
+.wake[data-note="asleep"] .wake-mark { background: none; animation: none; }
+.wake-text { min-width: 0; font-size: 14px; line-height: 1.35; text-wrap: pretty; }
+.wake-text b { font-weight: 500; }
+.wake-sep, .wake-more { color: var(--text-3); }
+/* Too narrow for one line (the query measures the band's content box): the headline, then the rest of the sentence
+   on a line of its own. */
+@container (max-width: 540px) {
+  .wake-sep { display: none; }
+  .wake-more { display: block; margin-top: 1px; font-size: 13.5px; }
+}
+.wake-time { font-size: 11px; color: var(--ash); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wake-retry {
+  height: 30px; padding: 0 13px; white-space: nowrap;
+  border: 1px solid var(--ink); border-radius: 999px; font-size: 10.5px;
+  transition: background .35s var(--ease), color .35s;
+}
+.wake-retry:hover { background: var(--ink); color: var(--on-ink); }
+.wake-track { position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; background: var(--smoke); overflow: hidden; }
+.wake-track i {
+  position: absolute; inset: 0; background: var(--yellow);
+  transform: scaleX(var(--p, 0)); transform-origin: left; transition: transform 1s linear;
+}
+@media (max-width: 560px) {
+  .wake { padding-block: 9px 10px; }
+}

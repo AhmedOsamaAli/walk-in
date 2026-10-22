@@ -64,7 +64,7 @@ const base: GapRow = {
 describe("gapWhy", () => {
   it("states each signal in one sentence", () => {
     expect(gapWhy({ ...base, lift: 0.7, relative_supply: 0.5, leakage: 0.75 })).toBe(
-      "Loved more here than in the areas around; fewer places than a block this dense usually has; locals travel for their own favorites.",
+      "Loved more here than in the areas around; fewer places than a block this dense usually has; people here travel for their own favorites.",
     );
   });
 
@@ -143,7 +143,7 @@ describe("formatting", () => {
       "Agent inspects the Seafood gap — Locals travel 3 km",
     );
     expect(agentText({ tool: "fan_taste", args: { category: "Wine bar" } })).toBe(
-      "Agent asks Qloo what local fans of Wine bar also love",
+      "Agent asks Qloo what fans of Wine bar around here also love",
     );
     expect(agentText({ tool: "something_new", args: null })).toBe("Agent calls something_new");
   });

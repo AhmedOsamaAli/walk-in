@@ -74,6 +74,10 @@ class RunStore:
     def get(self, run_id: str) -> RunState | None:
         return self._runs.get(run_id)
 
+    def forget(self, run_id: str) -> None:
+        """Drops a run from memory, such as one whose survey was deleted with its owner's account."""
+        self._runs.pop(run_id, None)
+
     async def fetch(self, run_id: str) -> RunState | None:
         """A run from memory, else loaded from the database and kept in memory again."""
         run = self._runs.get(run_id)

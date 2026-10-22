@@ -91,7 +91,9 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
     gap.ref_rank == null ? "" : gap.ref_rank >= 51 ? " · 50+ around" : ` · #${gap.ref_rank.toFixed(0)} around`;
   const expected = gap.expected_nearby != null ? ` · ~${gap.expected_nearby.toFixed(1)} typical` : "";
   const median = local && gap.median_favorite_km != null ? ` · median ${gap.median_favorite_km} km` : "";
-  const favoritesTitle = local ? `Places locals love more than the city does${median}` : "Locals' favorites (the city's famous spots)";
+  const favoritesTitle = local
+    ? `Places people here love more than the city does${median}`
+    : "What people here love (the city's famous spots)";
   const competitors = (gap.competitors ?? []).slice(0, 6);
   const favorites = (gap.favorites ?? []).slice(0, 6);
   const why = gap.why ?? [];
@@ -142,7 +144,7 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
             </span>
             <span className="meter">
               <span className="mono">
-                {local ? `Local favorites outside · ${gap.favorites_far}/${gap.favorites_total}` : "Local favorites"}
+                {local ? `Favorites outside · ${gap.favorites_far}/${gap.favorites_total}` : "Favorites of people here"}
               </span>
               <span className="dots">
                 <Dots gap={gap} />
@@ -203,9 +205,12 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
   );
 }
 
+/** The server's badge for a gap whose fans travel for it, as older and newer surveys word it. */
+const TRAVEL_READINGS = new Set(["Locals travel for it", "People here travel for it"]);
+
 /** The badge's tone: a real gap is highlighted, a crowded or uncertain one is muted. */
 function reading(label: string): string {
-  if (label === "Clear gap" || label === "Under-supplied" || label === "Locals travel for it") return "strong";
+  if (label === "Clear gap" || label === "Under-supplied" || TRAVEL_READINGS.has(label)) return "strong";
   if (label === "Crowded" || label === "Thin data" || label === "Atypical") return "weak";
   return "";
 }
@@ -214,13 +219,14 @@ function reading(label: string): string {
 function leadLine(gap: GapRow): string {
   const why = gap.why ?? [];
   const find = (pattern: RegExp) => why.find((line) => pattern.test(line));
+  if (gap.reading && TRAVEL_READINGS.has(gap.reading)) {
+    return find(/outside the walk|already inside the walk/) ?? why[0] ?? gapWhy(gap);
+  }
   switch (gap.reading) {
     case "Clear gap":
     case "Under-supplied":
     case "Crowded":
       return find(/inside the \d+-minute walk/) ?? why[0] ?? gapWhy(gap);
-    case "Locals travel for it":
-      return find(/outside the walk|already inside the walk/) ?? why[0] ?? gapWhy(gap);
     case "Thin data":
     case "Atypical":
       return why.at(-1) ?? gapWhy(gap);

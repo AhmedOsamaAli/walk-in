@@ -7,4 +7,8 @@
 @import "./map.css";
 @import "./design.css";
 @import "./intents.css";
+@import "./pages.css";
+@import "./account.css";
+@import "./wake.css";
+@import "./payments.css";
 @import "./responsive.css";

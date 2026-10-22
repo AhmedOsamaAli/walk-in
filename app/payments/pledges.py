@@ -2,9 +2,13 @@
 only holds each pledge (an AUTHORIZE order); the money is collected if enough neighbors pledge by the deadline and
 released if not.
 
-Pure campaign logic over small dataclasses, with no storage: checks for a new campaign, its progress, what to do with
-each pledge now (decide), doing it through PayPal (settle), and the campaign's pitch drafted by the AI. The owner always
-chooses the amount, the goal and the deadline; the AI only writes words, checked like every model answer in the app.
+Pure campaign logic over small dataclasses, with no storage: checks for a new campaign, its progress, the decision its
+close makes (decide_funding), what to do with each pledge now (decide), doing it through PayPal (settle), and the
+campaign's pitch drafted by the AI. The owner always chooses the amount, the goal and the deadline; the AI only writes
+words, checked like every model answer in the app.
+
+Settle a campaign as soon as it closes: PayPal holds a pledge for 29 days, and the longest campaign keeps the last 2 of
+them for collecting. Store the funded decision before the first capture, so a settlement cut short resumes as it began.
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -40,14 +44,19 @@ from .paypal import (
 
 log = logging.getLogger("walkin")
 
-# What the owner may choose. PayPal holds a pledge for 29 days at most, so no campaign runs longer.
+# What the owner may choose. PayPal holds a pledge for 29 days (AUTHORIZATION_PERIOD) from the moment it is placed, so a
+# pledge made at the launch of the longest campaign must still be held when the campaign closes and settle() collects
+# it, a retry after an outage included: the deadline keeps SETTLEMENT_MARGIN of the 29 days for that.
+SETTLEMENT_MARGIN = timedelta(days=2)
+LONGEST_CAMPAIGN = AUTHORIZATION_PERIOD - SETTLEMENT_MARGIN  # 27 days
 MIN_AMOUNT, MAX_AMOUNT = Decimal("5.00"), Decimal("200.00")
 MIN_GOAL, MAX_GOAL = 3, 500
-MIN_DAYS, MAX_DAYS = 1, 29
+MIN_DAYS, MAX_DAYS = 1, LONGEST_CAMPAIGN.days
 
 
 class CampaignStatus(StrEnum):
     OPEN = "open"  # taking pledges, or closed and not settled yet
+    FUNDED = "funded"  # closed with its goal met: collecting has begun, or is about to
     COLLECTED = "collected"  # funded, and every pledge was collected
     PARTIAL = "partial"  # funded, but some pledges could not be collected (or not yet)
     EXPIRED = "expired"  # the deadline passed short of the goal: every hold released
@@ -64,8 +73,12 @@ class PledgeStatus(StrEnum):
     FAILED = "failed"  # the campaign was funded, but this pledge could not be collected
 
 
-# A settled campaign changes no more; a partial one keeps collecting what it still can.
+# A settled campaign changes no more; a funded or partial one keeps collecting what it still can.
 FINAL = frozenset({CampaignStatus.COLLECTED, CampaignStatus.EXPIRED, CampaignStatus.CANCELLED})
+COLLECTING = frozenset({CampaignStatus.FUNDED, CampaignStatus.PARTIAL})
+# Pledges whose hold counts toward the goal at the close if it was in place then: still held, collected since, or
+# refused when settlement tried to collect it.
+HELD_AT_CLOSE = frozenset({PledgeStatus.AUTHORIZED, PledgeStatus.CAPTURED, PledgeStatus.FAILED})
 # A PayPal authorization's status, as a pledge.
 FROM_AUTHORIZATION = {
     "CREATED": PledgeStatus.AUTHORIZED,
@@ -104,6 +117,9 @@ class Campaign:
     currency: str = "USD"
     status: str = CampaignStatus.OPEN
     closed_at: datetime | None = None  # when the owner closed it before the deadline
+    # The decision its close made (decide_funding): True collects every hold, False releases them all; None until then.
+    # Store it before settle() acts on it, and pass it back every time.
+    funded: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -153,9 +169,10 @@ def validate_campaign(
         problems.append("The currency must be a three-letter code, such as USD.")
     if not isinstance(deadline, datetime) or deadline.tzinfo is None:
         problems.append("The deadline needs a date, a time and a time zone.")
-    elif not timedelta(days=MIN_DAYS) <= deadline - now <= timedelta(days=MAX_DAYS):
+    elif not timedelta(days=MIN_DAYS) <= deadline - now <= LONGEST_CAMPAIGN:
         problems.append(
-            f"The deadline must be {MIN_DAYS} to {MAX_DAYS} days away: PayPal holds a pledge for {MAX_DAYS} days at most."
+            f"The deadline must be {MIN_DAYS} to {MAX_DAYS} days away: PayPal holds a pledge for "
+            f"{AUTHORIZATION_PERIOD.days} days, and the last {SETTLEMENT_MARGIN.days} are kept for collecting it."
         )
     return problems
 
@@ -238,7 +255,7 @@ def progress(campaign: Campaign, pledges: Iterable[Pledge], now: datetime | None
         counts[str(status)] += 1
         if status in (PledgeStatus.AUTHORIZED, PledgeStatus.CAPTURED) and pledge.currency == campaign.currency:
             held.append(pledge)
-    supporters = len({pledge.payer_id or f"pledge:{pledge.id}" for pledge in held})
+    supporters = _supporters(held)
     total = sum((_amount(pledge.amount) for pledge in held), Decimal(0))
     return {
         "counts": {status.value: counts[status.value] for status in PledgeStatus},
@@ -269,7 +286,9 @@ def decide(campaign: Campaign, pledges: Iterable[Pledge], now: datetime) -> list
     While the campaign is open and before its deadline, nothing happens but marking holds that ran out. Once the owner
     closes it or the deadline passes, a campaign funded at that moment captures every hold (renewing those past their
     honor period first) and one short of its goal voids them all; holds that ran out before the close are marked
-    expired, and PayPal has the last word on any that ran out since. A campaign that has collected anything keeps
+    expired, and PayPal has the last word on any that ran out since. Funded means the decision the campaign stores
+    (decide_funding), else the holds that were valid at the close (funded_at_close): money collected outside settlement
+    is no leave to collect the rest, and is flagged for refund when the campaign fell short. A funded campaign keeps
     collecting, holds placed after the close are released, and a settled campaign releases any hold left over.
     """
     pledges = list(pledges)
@@ -293,13 +312,54 @@ def decide(campaign: Campaign, pledges: Iterable[Pledge], now: datetime) -> list
     return actions
 
 
+def funded_at_close(campaign: Campaign, pledges: Iterable[Pledge]) -> bool:
+    """Whether the campaign had met its goal when it closed, counting only the holds that were valid then: placed by
+    the close and not run out at it, whatever became of them since (still held, collected, or refused at collection).
+    Released and declined pledges never count, nor does money collected from a hold that was not valid at the close."""
+    close = closing_time(campaign)
+    valid = [
+        pledge for pledge in pledges
+        if pledge.status in HELD_AT_CLOSE and pledge.currency == campaign.currency
+        and not _late(pledge, close) and not lapsed(pledge, close)
+    ]
+    return _supporters(valid) >= campaign.goal
+
+
+def decide_funding(campaign: Campaign, pledges: Iterable[Pledge], now: datetime) -> Campaign:
+    """The campaign with the decision its close makes, taken once: from the moment it stops taking pledges, `funded` is
+    True (and its status FUNDED) when it met its goal then (funded_at_close), False when it did not. The campaign comes
+    back unchanged while it is still taking pledges, or once the decision is taken.
+
+    For the HTTP routes: call this when a campaign has closed and store what it returns (`funded`, and the status)
+    BEFORE calling settle(), or pass settle() a `record` function that stores it. settle() then acts on the stored
+    decision every time, so a settlement cut short by a crash resumes collecting, and later changes to the pledges
+    (a capture made outside settlement, a hold PayPal voids) never turn a funded campaign into one that releases the
+    holds it has not collected yet, or the reverse. A campaign stored without a decision reads it from its status:
+    funded, partial and collected ones were funded; expired and cancelled ones were not.
+    """
+    if campaign.funded is not None:
+        return campaign
+    if campaign.status in COLLECTING or campaign.status == CampaignStatus.COLLECTED:
+        return replace(campaign, funded=True)
+    if campaign.status in (CampaignStatus.EXPIRED, CampaignStatus.CANCELLED):
+        return replace(campaign, funded=False)
+    if campaign.status != CampaignStatus.OPEN or now < closing_time(campaign):
+        return campaign
+    if funded_at_close(campaign, pledges):
+        return replace(campaign, funded=True, status=CampaignStatus.FUNDED)
+    return replace(campaign, funded=False)
+
+
 def _collecting(campaign: Campaign, pledges: list[Pledge]) -> bool:
-    """Whether a closed campaign collects: it was funded when it closed, or collecting has begun."""
-    return (
-        campaign.status == CampaignStatus.PARTIAL
-        or any(pledge.status == PledgeStatus.CAPTURED for pledge in pledges)
-        or progress(campaign, pledges, closing_time(campaign))["funded"]
-    )
+    """Whether a closed campaign collects: the decision it stores, else whether it was funded when it closed."""
+    if campaign.funded is not None:
+        return campaign.funded
+    return campaign.status in COLLECTING or funded_at_close(campaign, pledges)
+
+
+def _supporters(pledges: Iterable[Pledge]) -> int:
+    """Distinct PayPal payers: a second pledge from one person does not count twice."""
+    return len({pledge.payer_id or f"pledge:{pledge.id}" for pledge in pledges})
 
 
 def _late(pledge: Pledge, close: datetime) -> bool:
@@ -349,16 +409,25 @@ class Settlement:
 
 async def settle(
     campaign: Campaign, pledges: Iterable[Pledge], client: PayPalClient, now: datetime, *, concurrency: int = 4,
+    record: Callable[[Campaign], Awaitable[Any]] | None = None,
 ) -> Settlement:
     """Carries out decide() with PayPal and reports what became of each pledge and of the campaign.
 
-    Requests carry stable PayPal-Request-Ids, so settling again after a crash or a timeout never acts twice, and
-    PayPal's "already captured" and "already voided" answers count as done. A pledge that failed for a passing reason
-    (network, rate limit, PayPal outage) stays authorized, and the next settlement tries it again. Run one settlement
-    per campaign at a time.
+    Run it as soon as the campaign closes, and again while it is not settled: the longest campaign leaves
+    SETTLEMENT_MARGIN between its deadline and the moment its first holds run out. A closed campaign without its
+    funded decision gets it here (decide_funding), and the returned campaign carries it; `record`, when given, is
+    awaited with that campaign before PayPal is called at all, so the caller stores the decision before the first
+    capture (if it raises, nothing is collected). Requests carry stable PayPal-Request-Ids, so settling again after a
+    crash or a timeout never acts twice, and PayPal's "already captured" and "already voided" answers count as done. A
+    pledge that failed for a passing reason (network, rate limit, PayPal outage) stays authorized, and the next
+    settlement tries it again. Run one settlement per campaign at a time.
     """
     pledges = list(pledges)
     by_id = {pledge.id: pledge for pledge in pledges}
+    decided = decide_funding(campaign, pledges, now)
+    if decided is not campaign and record is not None:
+        await record(decided)
+    campaign = decided
     collecting = _collecting(campaign, pledges)
     gate = asyncio.Semaphore(max(1, concurrency))
 
@@ -511,7 +580,7 @@ def _reasons(campaign: Campaign, pledges: list[Pledge], outcomes: list[Outcome])
         return []
     close = closing_time(campaign)
     lines: list[str] = []
-    if campaign.status in (CampaignStatus.COLLECTED, CampaignStatus.PARTIAL):
+    if campaign.status in (CampaignStatus.COLLECTED, *COLLECTING):
         failed = Counter(pledge.error or "FAILED" for pledge in pledges if pledge.status == PledgeStatus.FAILED)
         for code, count in sorted(failed.items()):
             lines.append(f"{_count(count, 'pledge')} could not be collected: {_issue(code)}.")
@@ -586,7 +655,6 @@ founders' wall, an invitation to the opening or the first taste of a signature i
 
 # Numbers in digits ("1,200", "2.5") and in words that state a quantity. "One" alone is left out ("the one place").
 DIGITS = re.compile(r"\d[\d,]*(?:\.\d+)?")
-PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*(?:%|percent\b|per cent\b)", re.IGNORECASE)
 UNITS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9}
 TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
 NUMBER_WORDS = {
@@ -604,8 +672,8 @@ DISCOUNT = re.compile(
     r"\bcheaper\b|\b(?:half|reduced|special|lower|best|members?|founders?'?|founding|early[- ]bird)[- ]prices?\b|"
     r"\bearly[- ]bird\b|(?<![-\w])free\b(?!-)|\bcomplimentary\b|\bon the house\b|\bgratis\b|\bbogo\b|"
     r"\b(?:2|two)[- ]for[- ](?:1|one)\b|\bbuy one\b|\bcash ?back\b|\brebates?\b|\bcredits?\b(?!\s*cards?)|"
-    r"\bsav(?:e|es|ing)\s+(?:\$|€|£|\d|up\s+to|money|on)|\bsavings\b|\$\s?\d[\d.,]*\s+off\b|\d\s*%\s*off\b|"
-    r"\boff\s+(?:your|every|each|all|any|the\s+(?:first|bill|menu|price))\b|\blifetime\b|\bfor life\b",
+    r"\bsav(?:e|es|ing)\s+(?:\$|€|£|\d|up\s+to|money|on)|\bsavings\b|\$\s?\d[\d.,]*\s+off\b|\d\s*%\s*off\b|\bhalf[- ]off\b|"
+    r"\bon sale\b|\boff\s+(?:your|every|each|all|any|the\s+(?:first|bill|menu|price))\b|\blifetime\b|\bfor life\b",
     re.IGNORECASE,
 )
 LINK = re.compile(r"https?://|\bwww\.|@\w|\b[\w-]+\.(?:com|org|net|io|co|app|shop)\b", re.IGNORECASE)
@@ -623,12 +691,13 @@ class OfferRules:
 
 
 def offer_problem(text: object, limit: int, rules: OfferRules) -> str | None:
-    """Why a line of the pitch cannot be used, or None when it can."""
+    """Why a line of the pitch cannot be used, or None when it can. A line that mentions a discount must state the
+    owner's, word for word, and add none of its own."""
     if not isinstance(text, str) or not text.strip():
-        return "empty"
+        return "is empty"
     text = " ".join(text.split())
     if len(text) > limit:
-        return f"longer than {limit} characters"
+        return f"is longer than {limit} characters"
     name = named(text, rules.names, rules.allowed)
     if name:
         return f"names {name}"
@@ -640,9 +709,21 @@ def offer_problem(text: object, limit: int, rules: OfferRules) -> str | None:
     if DISCOUNT.search(text):
         if not rules.discount:
             return "promises a discount the owner did not set"
-        if not _percentages(text) <= _percentages(rules.discount):
+        if _changes_discount(text, rules.discount):
             return "changes the discount the owner set"
     return None
+
+
+def _changes_discount(text: str, discount: str) -> bool:
+    """Whether a line that mentions a discount says anything but the owner's own, word for word: a line without it
+    ('half off', '$10 off') changes it, and so does one that adds to it ('…, for life')."""
+    said, own = _wording(text), _wording(discount).rstrip(".!?,;: ")
+    found = re.search(rf"(?<!\w){re.escape(own)}(?!\w)", said) if own else None
+    return found is None or bool(DISCOUNT.search(f"{said[:found.start()]} {said[found.end():]}"))
+
+
+def _wording(text: str) -> str:
+    return " ".join(text.lower().replace("’", "'").split())
 
 
 def numbers_in(text: str) -> list[str]:
@@ -656,19 +737,24 @@ def numbers_in(text: str) -> list[str]:
 
 
 def named(text: str, names: Iterable[str], allowed: Iterable[str] = ()) -> str | None:
-    """The first of `names` that `text` mentions as a whole phrase, once the `allowed` phrases are taken out. Names that
-    are one common word ("Bakery") are anyone's to use."""
+    """The first of `names` that `text` mentions as a whole phrase. A mention inside one of the `allowed` phrases (the
+    business's own name, its neighborhoods) is theirs, but one reaching beyond them is the name: 'Holly' is a
+    neighborhood, 'Holly Hardware' a store. Names that are one common word ("Bakery") are anyone's to use."""
     words = _phrase(text)
-    for phrase in sorted({_phrase(item) for item in allowed if item}, key=len, reverse=True):
-        if phrase.strip():
-            words = words.replace(phrase, " ")
+    own = [span for phrase in {_phrase(item).strip() for item in allowed if item} if phrase for span in _spans(phrase, words)]
     for name in names:
         tokens = _phrase(name).split()
         if not tokens or len("".join(tokens)) < 3 or (len(tokens) == 1 and tokens[0] in COMMON_NAME_WORDS):
             continue
-        if f" {' '.join(tokens)} " in words:
-            return name
+        for start, end in _spans(" ".join(tokens), words):
+            if not any(low <= start and end <= high for low, high in own):
+                return name
     return None
+
+
+def _spans(phrase: str, words: str) -> list[tuple[int, int]]:
+    """Where a phrase stands, whole, among _phrase's words."""
+    return [match.span() for match in re.finditer(rf"(?<= ){re.escape(phrase)}(?= )", words)]
 
 
 def _phrase(text: str) -> str:
@@ -682,10 +768,6 @@ def _plain(raw: str) -> str:
         return format(Decimal(raw).normalize(), "f")
     except InvalidOperation:
         return ""
-
-
-def _percentages(text: str) -> set[str]:
-    return {_plain(match.group(1)) for match in PERCENT.finditer(text)}
 
 
 async def draft_offer(
@@ -710,6 +792,103 @@ async def draft_offer(
     leads the perks in the owner's own words. `avoid` adds names the pitch must not use, such as every place the survey
     found. how_it_works explains the hold in fixed words, never the model's.
     """
+    brief = _offer_brief(design, amount, goal, deadline, currency, discount, launch, concept, avoid)
+    payload, rules, discount = brief.payload, brief.rules, brief.discount
+
+    draft: dict = {}
+    model = None
+    if llm is not None and llm.enabled:
+        key = fingerprint("offer", OFFER_SYSTEM, payload)
+        saved = answers.get("offer", key) if answers else None
+        try:
+            if saved:
+                draft, model = saved.get("offer") or {}, saved.get("model")
+            else:
+                draft, model = await llm.complete_json(OFFER_SYSTEM, payload)
+                if draft and answers:
+                    answers.put("offer", key, {"offer": draft, "model": model})
+            draft = copy.deepcopy(draft) if isinstance(draft, dict) else {}
+        except Exception:  # an AI outage must not keep the owner from launching a campaign
+            log.warning("Offer LLM call failed; using evidence rules", exc_info=True)
+            draft = {}
+
+    kept, rejected = _checked(draft, rules, discount)
+    fallback = _rule_offer(brief.name, brief.business, brief.evidence, brief.neighborhoods, goal, brief.when, discount, rules)
+    return {
+        "title": kept.get("title") or fallback["title"],
+        "pitch": kept.get("pitch") or fallback["pitch"],
+        "perks": (kept.get("perks") or fallback["perks"])[:MAX_PERKS],
+        "how_it_works": (
+            f"Pledge {brief.amount_text}. PayPal only holds it: it is collected if {goal} supporters pledge by "
+            f"{brief.when}, and released if not, so nobody pays unless the goal is met."
+        ),
+        "mode": "agent" if kept else "rules",
+        "model": model if kept else None,
+        "rejected": rejected,
+    }
+
+
+def offer_problems(
+    design: Mapping[str, Any],
+    *,
+    title: object,
+    pitch: object,
+    perks: object,
+    amount: str | Decimal,
+    goal: int,
+    deadline: datetime,
+    currency: str = "USD",
+    discount: str | None = None,
+    launch: Mapping[str, Any] | None = None,
+    concept: Mapping[str, Any] | None = None,
+    avoid: Iterable[str] = (),
+) -> list[str]:
+    """What is wrong with the owner's own title, pitch and perks for the campaign page, in plain words; an empty list
+    when nothing is. They are checked by the rules draft_offer checks the model's words by, built from the same inputs
+    (pass draft_offer's): no real name but the business's own and its neighborhoods, no number the inputs do not give,
+    no link, a discount only as the owner set it, and the same lengths. The owner's discount may stand as a perk word
+    for word, as draft_offer puts it first. For the HTTP route that saves an edited campaign page.
+    """
+    brief = _offer_brief(design, amount, goal, deadline, currency, discount, launch, concept, avoid)
+    problems = []
+    for label, text, limit in (("The title", title, TITLE_LIMIT), ("The pitch", pitch, PITCH_LIMIT)):
+        problem = offer_problem(text, limit, brief.rules)
+        if problem:
+            problems.append(f"{label} {problem}.")
+    if not isinstance(perks, list) or not perks:
+        return [*problems, f"Add 1 to {MAX_PERKS} perks."]
+    for number, perk in enumerate(perks, 1):
+        if brief.discount and isinstance(perk, str) and " ".join(perk.split()) == brief.discount:
+            continue
+        problem = offer_problem(perk, PERK_LIMIT, brief.rules)
+        if problem:
+            problems.append(f"Perk {number} {problem}.")
+    if len(perks) > MAX_PERKS:
+        problems.append(f"Keep at most {MAX_PERKS} perks.")
+    return problems
+
+
+@dataclass(frozen=True)
+class _Brief:
+    """What the pitch is written from, and the rules its words keep."""
+
+    name: str
+    amount_text: str
+    when: str
+    discount: str | None
+    neighborhoods: list[str]
+    business: dict
+    evidence: list[dict]
+    payload: str
+    rules: OfferRules
+
+
+def _offer_brief(
+    design: Mapping[str, Any], amount: str | Decimal, goal: int, deadline: datetime, currency: str,
+    discount: str | None, launch: Mapping[str, Any] | None, concept: Mapping[str, Any] | None, avoid: Iterable[str],
+) -> _Brief:
+    """The model's brief, from the design sheet, the launch plan's evidence and the owner's terms, without any real
+    name but the business's own; the numbers it gives are the only ones the pitch may state."""
     code = currency.upper()
     amount_text = _amount_text(money(amount, code), code)
     when = _date_text(deadline)
@@ -758,38 +937,7 @@ async def draft_offer(
     })
     payload = json.dumps(brief, ensure_ascii=False)
     rules = OfferRules(frozenset(numbers_in(payload)), names, allowed, discount)
-
-    draft: dict = {}
-    model = None
-    if llm is not None and llm.enabled:
-        key = fingerprint("offer", OFFER_SYSTEM, payload)
-        saved = answers.get("offer", key) if answers else None
-        try:
-            if saved:
-                draft, model = saved.get("offer") or {}, saved.get("model")
-            else:
-                draft, model = await llm.complete_json(OFFER_SYSTEM, payload)
-                if draft and answers:
-                    answers.put("offer", key, {"offer": draft, "model": model})
-            draft = copy.deepcopy(draft) if isinstance(draft, dict) else {}
-        except Exception:  # an AI outage must not keep the owner from launching a campaign
-            log.warning("Offer LLM call failed; using evidence rules", exc_info=True)
-            draft = {}
-
-    kept, rejected = _checked(draft, rules, discount)
-    fallback = _rule_offer(name, business, evidence, neighborhoods, goal, when, discount, rules)
-    return {
-        "title": kept.get("title") or fallback["title"],
-        "pitch": kept.get("pitch") or fallback["pitch"],
-        "perks": (kept.get("perks") or fallback["perks"])[:MAX_PERKS],
-        "how_it_works": (
-            f"Pledge {amount_text}. PayPal only holds it: it is collected if {goal} supporters pledge by {when}, and "
-            "released if not, so nobody pays unless the goal is met."
-        ),
-        "mode": "agent" if kept else "rules",
-        "model": model if kept else None,
-        "rejected": rejected,
-    }
+    return _Brief(name, amount_text, when, discount, neighborhoods, business, evidence, payload, rules)
 
 
 def _checked(draft: Mapping[str, Any], rules: OfferRules, discount: str | None) -> tuple[dict, list[dict]]:

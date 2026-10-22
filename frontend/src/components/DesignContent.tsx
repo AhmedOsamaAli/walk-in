@@ -7,6 +7,7 @@ import { loadDesign, shotsOf } from "../state/designs";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { HoursText } from "./Hours";
+import { KitOffer } from "./KitOffer";
 import { LaunchPlanView } from "./LaunchPlan";
 import { Plate } from "./Plate";
 import { PriceAnchors } from "./Price";
@@ -166,6 +167,8 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
             <LaunchPlanView plan={design.launch} />
           </>
         ) : null}
+        <h3 className="d-h">Launch kit</h3>
+        <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
         {concept.risk ? (
           <>
             <h3 className="d-h">Risk</h3>
@@ -184,7 +187,7 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
           ) : null}
           <Plate dna={design.dna ?? {}} />
           <p className="d-source mono">
-            Design DNA read from the locals&apos; favorite {concept.genre} places
+            Design DNA read from the {concept.genre} places people here love most
             {inspired.length ? `: ${inspired.join(", ")}` : ""}.
           </p>
         </div>
