@@ -37,9 +37,9 @@ def read_notes(site: Site) -> constraints.Constraints:
 
 async def analyze_site(
     q: QlooClient, walker: CatchmentService, llm: LLM, store: RunStore, site: Site, emit: Emit,
-    answers: AnswerCache | None = None,
+    answers: AnswerCache | None = None, run_id: str | None = None,
 ) -> RunState:
-    run = RunState(id=uuid.uuid4().hex[:12], site=site, constraints=read_notes(site))
+    run = RunState(id=run_id or uuid.uuid4().hex[:12], site=site, constraints=read_notes(site))
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
     await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood})
 

@@ -74,6 +74,7 @@ flowchart LR
   end
   subgraph API["FastAPI"]
     Run["GET /api/run (SSE)"] --> Pipeline
+    Record["GET /api/runs/{id}"] --> Store
     Design["POST /api/design"] --> Sheets
     Render["POST /api/render"] --> Images
   end
@@ -89,12 +90,16 @@ flowchart LR
   Engine --> Qloo[("Qloo Insights API")]
   Pipeline --> Walk[("Valhalla walk isochrones")]
   Images --> Gen[("Cloudflare FLUX.2 / AI Horde")]
+  Run --> Store["db: surveys + design sheets"]
+  Design --> Store
+  Store --> Database[("SQLite or Postgres")]
   Stream -.-> Run
 ```
 
 - `app/engine.py` asks Qloo one question per function; `app/scoring.py` and `app/space.py` are pure functions over the answers (gap scores, classics, hours, capacity), unit-tested without a network.
 - `app/survey/` is the application layer: `pipeline` streams a run, `evidence` is what the agent sees, `concepts` is the tool-using agent and its grounding, `intents` judges a requested business or compares an existing place, `design` and `experience` build the sheets.
 - `app/llm.py` chains free models across providers (Gemini, then Groq) with rate-limit-aware rests; `app/answers.py` replays an investigation when the evidence is unchanged.
+- `app/db/` keeps surveys and design sheets (and the tables for PayPal orders, kits, campaigns and pledges) in SQLite or Postgres through SQLAlchemy; `migrations/` is the Alembic schema, applied on startup. `app/survey/snapshot.py` turns a finished run into JSON and back.
 - `app/schemas.py` types the JSON API (interactive docs at `/docs`). `GET /api/run` streams these events: `run`, `status`, `place`, `catchment`, `block`, `demand`, `taste`, `gaps`, `agent`, `finding`, `explored`, `verdict`, `improve`, `concepts`, `baseline`, `notice`, `error`, `done`.
 - `frontend/` is the React app; FastAPI serves its build. Tests: `pytest` drives the real HTTP app and pipeline against a synthetic Qloo world, mocked models and image services; Vitest covers the stream parser and state. GitHub Actions runs lint, type checks, both test suites and the Docker build.
 
@@ -153,6 +158,15 @@ Checks: `ruff check app tests scripts` and `pytest` for the backend; `npm run ty
 ## Deploy
 
 The `Dockerfile` builds the React app with Node, then serves it and the API from a slim Python image. `render.yaml` is a blueprint for Render's free web service: create a Blueprint from the repository and fill in the secret variables. Any Docker host works the same way: `docker build -t walk-in . && docker run -p 8000:8000 --env-file .env walk-in`.
+
+## Data and state
+
+- Surveys and design sheets are kept in a database: a SQLite file by default (`.data/walkin.db`, ignored by git), or Postgres when `DATABASE_URL` is set. A host whose disk is wiped on restart, like Render's free plan, needs Postgres; Neon's free tier works with its direct or pooled connection string as copied. Like the Qloo cache, the database stays on the server. The app applies the Alembic migrations in `migrations/` on startup; `alembic upgrade head` does the same from the command line.
+- A survey keeps running when its page is closed or refreshed. Its events are kept as they were streamed, each with the seconds since the start, and `GET /api/runs/{id}` returns `{id, status, created_at, events}`: from memory while the survey runs, from the database once it has ended. `status` is `running`, `complete` or `failed`. A survey failed when it stopped on an error, which its events explain, or when a restart cut it off: one still marked running 15 minutes after it started is reported as failed. On shutdown, running surveys get 10 seconds to finish.
+- A finished survey is saved with its state, and each design sheet once it is made. After a restart a sheet opens without calling the model again, and the other concepts can still be designed and rendered.
+- On startup, surveys older than `SURVEY_RETENTION_DAYS` (default 60) are deleted with their design sheets, unless an order or a campaign refers to them.
+- The same database holds the tables for launch kits and pledges paid with PayPal: orders, kits, campaigns, pledges and webhook events.
+- Tests never use `DATABASE_URL`, even when `.env` names a production database: `tests/conftest.py` gives each test a SQLite file of its own, and a test that opens a Postgres engine or connection fails instead.
 
 ## Data and privacy
 

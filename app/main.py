@@ -4,31 +4,35 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import engine, schemas, scoring
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
+from .db import Database, SurveyStore
 from .geocode import Geocoder
 from .images import Images, explain_failure
 from .llm import LLM
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
-from .survey import concepts, pipeline
+from .survey import concepts, pipeline, snapshot
 from .survey import design as designs
-from .survey.models import RunStore, Site
+from .survey.models import EventLog, LiveRuns, RunState, RunStore, Site
 
 log = logging.getLogger("walkin")
 
@@ -37,6 +41,10 @@ RUNS_PER_HOUR = 20
 DESIGNS_PER_HOUR = 40
 RENDERS_PER_HOUR = 24
 MAP_REQUESTS_PER_HOUR = 200
+# A survey takes a minute or two; one still marked running long after it started was cut off by a restart.
+STALE_AFTER = timedelta(minutes=15)
+# On shutdown, running surveys get this many seconds to finish before they are stopped and saved as failed.
+SHUTDOWN_GRACE_S = 10
 
 PRESETS = [
     {"id": "ues", "label": "Upper East Side, Manhattan", "lat": 40.7736, "lon": -73.9566,
@@ -114,6 +122,17 @@ class RenderRequest(BaseModel):
     shot: Literal["interior", "exterior"]
 
 
+class RunRecord(BaseModel):
+    """A survey as it was streamed, so a page can be restored after a refresh or a restart."""
+
+    id: str
+    status: Literal["running", "complete", "failed"] = Field(
+        description="'failed' when the survey stopped on an error (its error event says why) or a restart cut it off"
+    )
+    created_at: datetime
+    events: list[list] = Field(description="Every event as streamed: [event, data, seconds since the survey started]")
+
+
 router = APIRouter(prefix="/api")
 
 
@@ -167,17 +186,28 @@ async def run(
 
     services: Services = request.app.state.services
     runs: RunStore = request.app.state.runs
+    surveys: SurveyStore = request.app.state.surveys
     site = Site(
         lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
         size_m2=size_m2, kitchen=kitchen, outdoor=outdoor, intent=intent, business=business.strip(), place_id=place_id,
     )
+    survey = EventLog(uuid.uuid4().hex[:12])
     queue: asyncio.Queue = asyncio.Queue()
 
     async def emit(event: str, data: dict) -> None:
-        await queue.put((event, data))
+        text = json.dumps(data, ensure_ascii=False)
+        survey.record(event, json.loads(text))  # a copy as sent, so later changes to the run cannot rewrite it
+        await queue.put(f"event: {event}\ndata: {text}\n\n")
 
     async def produce() -> None:
-        tasks = [pipeline.analyze_site(services.qloo, services.walker, services.llm, runs, site, emit, services.answers)]
+        """Runs the survey to its end and saves it, whether or not anyone is still listening."""
+        try:
+            await surveys.start(survey.run_id, asdict(site), survey.created_at)
+        except Exception:
+            log.warning("Could not save survey %s", survey.run_id, exc_info=True)
+        tasks = [pipeline.analyze_site(
+            services.qloo, services.walker, services.llm, runs, site, emit, services.answers, run_id=survey.run_id,
+        )]
         # The no-data baseline answers "what should open here?", so it only stands next to concepts.
         if services.llm.enabled and site.intent != "improve":
             async def baseline() -> None:
@@ -186,27 +216,31 @@ async def run(
                 except Exception:
                     log.warning("No-data baseline failed", exc_info=True)
             tasks.append(baseline())
+        failed = True  # unless it runs to its end without an error
         try:
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = [result for result in results if isinstance(result, BaseException)]
+            for error in errors:
+                log.error("Survey %s failed", survey.run_id, exc_info=error)
+            failed = bool(errors) or any(event == "error" for event, *_ in survey.events)
         finally:
+            survey.status = "failed" if failed else "complete"
             await queue.put(None)
+            await save_survey(surveys, survey, runs.get(survey.run_id))
 
     async def stream():
-        producer = asyncio.create_task(produce())
-        try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=15)
-                except TimeoutError:
-                    yield ": keep-alive\n\n"
-                    continue
-                if item is None:
-                    break
-                event, data = item
-                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-        finally:
-            if not producer.done():
-                producer.cancel()
+        # The survey starts once the response does, and is not tied to it: a client that refreshes or leaves does not
+        # stop it.
+        request.app.state.live.start(survey, produce())
+        while True:
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=15)
+            except TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            if chunk is None:
+                break
+            yield chunk
 
     return StreamingResponse(
         stream(),
@@ -215,9 +249,37 @@ async def run(
     )
 
 
+async def save_survey(surveys: SurveyStore, survey: EventLog, run: RunState | None) -> None:
+    """Saves how a survey ended; when its state cannot be stored, its events still are."""
+    state = None
+    try:
+        state = snapshot.dump_run(run) if run else None
+    except TypeError:
+        log.warning("Survey %s is saved without its state", survey.run_id, exc_info=True)
+    try:
+        await surveys.finish(survey.run_id, survey.status, survey.events, state)
+    except Exception:
+        log.warning("Could not save survey %s", survey.run_id, exc_info=True)
+
+
+@router.get("/runs/{run_id}", response_model=RunRecord)
+async def run_record(request: Request, run_id: str) -> dict:
+    """A survey's events as they were streamed: from memory while it runs, from the database afterwards."""
+    live: EventLog | None = request.app.state.live.get(run_id)
+    if live:
+        return {"id": run_id, "status": live.status, "created_at": live.created_at, "events": live.events}
+    row = await request.app.state.surveys.get(run_id)
+    if not row:
+        raise HTTPException(404, "Survey not found.")
+    status = row["status"]
+    if status == "running" and datetime.now(UTC) - row["created_at"] > STALE_AFTER:
+        status = "failed"  # the server restarted while it ran
+    return {"id": row["id"], "status": status, "created_at": row["created_at"], "events": row["events"]}
+
+
 @router.post("/design", response_model=schemas.DesignSheet)
 async def design(request: Request, body: DesignRequest) -> dict:
-    run_state = request.app.state.runs.get(body.run_id)
+    run_state = await request.app.state.runs.fetch(body.run_id)
     if not run_state or not (0 <= body.index < len(run_state.concepts)):
         raise HTTPException(404, "Run or concept not found. Run the site again.")
     if body.index in run_state.designs:
@@ -228,14 +290,19 @@ async def design(request: Request, body: DesignRequest) -> dict:
     result = await designs.design_concept(
         services.llm, services.images, run_state, body.index, services.qloo, services.answers,
     )
-    run_state.designs[body.index] = result
+    # When two requests design the same concept, the first sheet stays, in memory as in the database.
+    result = run_state.designs.setdefault(body.index, result)
+    try:
+        await request.app.state.surveys.save_design(body.run_id, body.index, result)
+    except Exception:
+        log.warning("Could not save design sheet %d of survey %s", body.index, body.run_id, exc_info=True)
     return result
 
 
 @router.post("/render", response_model=schemas.Render, response_model_exclude_unset=True)
 async def render(request: Request, body: RenderRequest) -> dict:
     """One AI render of a design sheet's shot, made once per run and cached across runs."""
-    run_state = request.app.state.runs.get(body.run_id)
+    run_state = await request.app.state.runs.fetch(body.run_id)
     design = run_state.designs.get(body.index) if run_state else None
     shot = next((s for s in (design or {}).get("shots", []) if s["kind"] == body.shot), None)
     if not shot:
@@ -357,12 +424,23 @@ def web_root() -> Path:
     return built if (built / "index.html").exists() else ROOT / "web"
 
 
-def create_app(services_factory: Callable[[], Services] = default_services) -> FastAPI:
+def create_app(
+    services_factory: Callable[[], Services] = default_services, database_url: str | None = None,
+) -> FastAPI:
+    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        database = Database(database_url or settings.database_url)
+        await database.migrate()
+        surveys = SurveyStore(database)
+        await surveys.purge(settings.survey_retention_days)
         services = services_factory()
         app.state.services = services
-        app.state.runs = RunStore()
+        app.state.db = database
+        app.state.surveys = surveys
+        app.state.runs = RunStore(load=partial(snapshot.restore, surveys))
+        app.state.live = LiveRuns()
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
         app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
         app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)
@@ -371,14 +449,17 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
         try:
             yield
         finally:
+            await app.state.live.stop(SHUTDOWN_GRACE_S)
             await services.aclose()
+            await database.dispose()
 
     app = FastAPI(
         title="Walk-in",
         version="1.0.0",
         description=(
             "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "
-            "business. GET /api/run streams a survey as server-sent events; the other endpoints are JSON."
+            "business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} returns its events "
+            "again; the other endpoints are JSON."
         ),
         lifespan=lifespan,
     )
@@ -393,7 +474,16 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
         return response
 
     app.include_router(router)
-    app.mount("/", RevalidatingStaticFiles(directory=web_root(), html=True), name="web")
+    root = web_root()
+
+    # Shared links to a survey (/s), a launch kit (/k) and a pledge page (/p) are pages of the web app.
+    @app.get("/s/{key}", include_in_schema=False)
+    @app.get("/k/{key}", include_in_schema=False)
+    @app.get("/p/{key}", include_in_schema=False)
+    async def shared_page() -> FileResponse:
+        return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
+
+    app.mount("/", RevalidatingStaticFiles(directory=root, html=True), name="web")
     return app
 
 

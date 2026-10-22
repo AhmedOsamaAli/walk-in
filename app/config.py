@@ -89,6 +89,32 @@ class Settings:
     cache_dir: Path = field(default_factory=lambda: Path(_env("CACHE_DIR") or ROOT / ".cache" / "qloo"))
     walk_cache_dir: Path = field(default_factory=lambda: Path(_env("WALK_CACHE_DIR") or ROOT / ".cache" / "walk"))
     agent_cache_dir: Path = field(default_factory=lambda: Path(_env("AGENT_CACHE_DIR") or ROOT / ".cache" / "agent"))
+    # Where surveys, design sheets, orders, kits and pledges live: a local SQLite file by default, or a Postgres URL
+    # (Neon's free tier, for example) on a host whose disk does not survive a restart.
+    database_url: str = field(
+        default_factory=lambda: _env("DATABASE_URL") or f"sqlite:///{(ROOT / '.data' / 'walkin.db').as_posix()}"
+    )
+    # Surveys older than this are deleted on startup, unless an order or a campaign refers to them.
+    survey_retention_days: int = field(default_factory=lambda: int(_env_or("SURVEY_RETENTION_DAYS", 60)))
+    # PayPal (developer.paypal.com, Apps & Credentials): the sandbox until PAYPAL_ENV=live. Without keys nothing is for
+    # sale and the free plan stays as it is.
+    paypal_client_id: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_ID"))
+    paypal_client_secret: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_SECRET"))
+    paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox"))
+    # Set once the app has a public address and a webhook is registered with PayPal; refunds then revoke kits.
+    paypal_webhook_id: str = field(default_factory=lambda: _env("PAYPAL_WEBHOOK_ID"))
+    kit_price: str = field(default_factory=lambda: _env("KIT_PRICE", "19.00"))
+    kit_currency: str = field(default_factory=lambda: _env("KIT_CURRENCY", "USD"))
+    # The app's public address (https://...), for links inside kits, posters and pledge pages.
+    public_url: str = field(default_factory=lambda: _env("PUBLIC_URL").rstrip("/"))
+
+    @property
+    def paypal_enabled(self) -> bool:
+        return bool(self.paypal_client_id and self.paypal_client_secret)
+
+    @property
+    def paypal_api_base(self) -> str:
+        return "https://api-m.paypal.com" if self.paypal_env == "live" else "https://api-m.sandbox.paypal.com"
 
 
 settings = Settings()

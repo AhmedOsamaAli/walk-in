@@ -3,3 +3,7 @@ uvicorn[standard]>=0.30,<1
 httpx>=0.27,<1
 openai>=1.40,<3
 pydantic>=2.7,<3
+sqlalchemy[asyncio]>=2.0.36,<3
+aiosqlite>=0.20,<1
+asyncpg>=0.30,<1
+alembic>=1.14,<2

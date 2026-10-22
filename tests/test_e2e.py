@@ -1,34 +1,48 @@
-"""End-to-end tests: real HTTP app, real pipeline and scoring, fake external services."""
+"""End-to-end tests: real HTTP app, real pipeline and scoring, fake external services.
+
+Each test's apps share the SQLite file from the database_url fixture (tests/conftest.py), like one server restarting.
+"""
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.answers import AnswerCache
+from app.db import Database, SurveyStore
 from app.images import ImageGen
 from app.llm import LLM
-from app.main import Services, create_app
+from app.main import Services, create_app, web_root
 from app.ratelimit import DailyBudget, RateLimiter
 from tests.fakes import SEAFOOD_LOCAL_FAVORITES, SITE, FakeImages, FakeQloo, FakeWalker, StubGeocoder
 
 RUN_PARAMS = {"lat": SITE[0], "lon": SITE[1], "label": "Test Corner, Testville", "focus": "any", "minutes": 10}
 
 
-def make_client(
-    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None,
-) -> TestClient:
-    services = Services(
+def make_services(
+    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None, walker=None,
+) -> Services:
+    return Services(
         qloo=qloo or FakeQloo(),
-        walker=FakeWalker(),
+        walker=walker or FakeWalker(),
         llm=llm or LLM("", None, "test-model"),
         images=images or ImageGen(),
         geocoder=StubGeocoder(),
         answers=answers or AnswerCache(None),
     )
-    return TestClient(create_app(lambda: services))
+
+
+def make_client(
+    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None,
+    database_url: str | None = None,
+) -> TestClient:
+    services = make_services(llm, qloo, answers, images)
+    return TestClient(create_app(lambda: services, database_url))
 
 
 def sse_events(text: str) -> list[tuple[str, dict]]:
@@ -636,3 +650,158 @@ def test_runs_are_rate_limited_per_client():
         client.app.state.run_limiter = RateLimiter(1, 3600)
         assert client.get("/api/run", params=RUN_PARAMS).status_code == 200
         assert client.get("/api/run", params=RUN_PARAMS).status_code == 429
+
+
+def test_a_refreshed_page_gets_back_every_event_the_stream_sent():
+    with make_client() as client:
+        streamed = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
+        run_id = first(streamed, "run")["run_id"]
+        record = client.get(f"/api/runs/{run_id}").json()
+        assert record["id"] == run_id and record["status"] == "complete"
+        assert [(event, data) for event, data, _ in record["events"]] == streamed
+        seconds = [t for *_, t in record["events"]]
+        assert seconds == sorted(seconds) and all(t == round(t, 1) for t in seconds)
+        assert datetime.fromisoformat(record["created_at"]).utcoffset() == timedelta(0)
+        assert client.get("/api/runs/unknown").status_code == 404
+    # After a restart the same record comes from the database.
+    with make_client() as client:
+        assert client.get(f"/api/runs/{run_id}").json() == record
+
+
+def test_a_failed_survey_and_one_cut_off_by_a_restart_say_so(database_url):
+    async def interrupted() -> None:
+        database = Database(database_url)
+        surveys = SurveyStore(database)
+        request = {"lat": SITE[0], "lon": SITE[1], "label": "Test Corner", "intent": "explore"}
+        await surveys.start("cutoff", request, datetime.now(UTC) - timedelta(minutes=20))
+        await surveys.start("recent", request, datetime.now(UTC) - timedelta(minutes=2))
+        await database.dispose()
+
+    with make_client(qloo=FakeQloo(fail=True)) as client:
+        failed = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        assert client.get(f"/api/runs/{failed}").json()["status"] == "failed"  # it stopped on Qloo's error
+        asyncio.run(interrupted())
+        assert client.get("/api/runs/cutoff").json()["status"] == "failed"
+        assert client.get("/api/runs/recent").json()["status"] == "running"  # perhaps on another server
+
+
+def test_a_design_sheet_outlives_a_restart_without_a_new_model_call(database_url):
+    investigate = [tool_call("c1", "fan_taste", {"category": "Seafood", **because("Fit with local taste")})]
+    submit = [tool_call("c2", "submit_concepts", {"concepts": [
+        {"name": "Tide & Table", "genre": "Seafood", "one_liner": "Raw bar", "why_here": [], "signature": []},
+    ]})]
+    requests: list[dict] = []
+    with make_client(llm=scripted_llm([investigate, submit], requests), database_url=database_url) as client:
+        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
+        sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
+    spent = len(requests)
+    assert sheet["mode"] == "agent" and spent == 4  # two agent turns, the baseline and the sheet
+
+    # A new server on the same database: the run is not in memory, so it comes back from the saved survey.
+    with make_client(llm=scripted_llm([], requests), database_url=database_url) as client:
+        assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet
+        assert len(requests) == spent
+        assert render(client, run_id, "interior").json() == {"image": None, "model": None}  # its shots came back too
+        other = client.post("/api/design", json={"run_id": run_id, "index": 1}).json()
+        assert other["mode"] == "agent" and other["dna"] and len(requests) == spent + 1  # the restored run designs on
+
+
+class GatedWalker(FakeWalker):
+    """Holds the walk until the test lets it go, so a visitor can leave mid-survey."""
+
+    def __init__(self) -> None:
+        self.gate = asyncio.Event()
+
+    async def walk(self, lat: float, lon: float, minutes: int = 10):
+        await self.gate.wait()
+        return await super().walk(lat, lon, minutes)
+
+
+async def leave_after_the_first_event(app) -> list[tuple[str, dict]]:
+    """Opens the survey stream like a browser, and closes the tab as soon as the first event arrives."""
+    received: list[bytes] = []
+    left = asyncio.Event()
+    asked = False
+
+    async def receive() -> dict:
+        nonlocal asked
+        if not asked:
+            asked = True
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await left.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        if message["type"] == "http.response.body" and message.get("body"):
+            received.append(message["body"])
+            left.set()
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http",
+        "path": "/api/run", "raw_path": b"/api/run", "root_path": "", "query_string": urlencode(RUN_PARAMS).encode(),
+        "headers": [(b"host", b"testserver")], "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
+    }
+    await app(scope, receive, send)
+    return sse_events(b"".join(received).decode())
+
+
+def test_a_survey_keeps_running_and_is_saved_after_the_visitor_leaves(database_url):
+    walker = GatedWalker()
+    services = make_services(walker=walker)
+    app = create_app(lambda: services, database_url)
+
+    async def visit() -> tuple[list[tuple[str, dict]], dict, dict | None]:
+        async with app.router.lifespan_context(app):
+            streamed = await leave_after_the_first_event(app)
+            run_id = first(streamed, "run")["run_id"]
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
+                while_running = (await api.get(f"/api/runs/{run_id}")).json()
+            walker.gate.set()  # the walk comes back after the visitor has gone
+        # Shutting down waited for the survey to end and save itself.
+        database = Database(database_url)
+        saved = await SurveyStore(database).get(run_id)
+        await database.dispose()
+        return streamed, while_running, saved
+
+    streamed, while_running, saved = asyncio.run(visit())
+    assert streamed[0][0] == "run" and "done" not in [event for event, _ in streamed]
+    assert while_running["status"] == "running"
+    assert [event for event, *_ in while_running["events"]] == ["run", "status"]
+    assert saved["status"] == "complete" and saved["state"]["concepts"]
+    names = [event for event, *_ in saved["events"]]
+    assert {"catchment", "gaps", "concepts"} <= set(names) and names[-1] == "done"
+    assert [(event, data) for event, data, _ in saved["events"][:len(streamed)]] == streamed
+
+
+def test_a_survey_stopped_by_a_shutdown_is_saved_as_failed(database_url):
+    services = make_services(walker=GatedWalker())  # the walk never comes back
+    app = create_app(lambda: services, database_url)
+
+    async def shut_down_mid_survey() -> dict | None:
+        async with app.router.lifespan_context(app):
+            run_id = first(await leave_after_the_first_event(app), "run")["run_id"]
+            await app.state.live.stop(0)  # what shutting down does once the grace period is over
+        database = Database(database_url)
+        saved = await SurveyStore(database).get(run_id)
+        await database.dispose()
+        return saved
+
+    saved = asyncio.run(shut_down_mid_survey())
+    assert saved["status"] == "failed" and saved["state"]["site"]["label"] == RUN_PARAMS["label"]
+    assert [event for event, *_ in saved["events"]] == ["run", "status", "done"]
+
+
+def test_shared_links_open_the_web_app_and_leave_the_api_alone():
+    with make_client() as client:
+        home = client.get("/")
+        for path in ("/s/abc123", "/k/kit-token", "/p/campaign1"):
+            page = client.get(path)
+            assert page.status_code == 200 and page.text == home.text
+            for header in ("content-security-policy", "x-content-type-options", "referrer-policy", "cache-control"):
+                assert page.headers[header] == home.headers[header]
+        missing = client.get("/api/runs/abc123")
+        assert missing.status_code == 404 and missing.json() == {"detail": "Survey not found."}
+        assert client.get("/api/s/abc123").status_code == 404
+        assert client.get("/s/abc123/more").status_code == 404
+        asset = next(path for path in sorted(web_root().iterdir()) if path.is_file() and path.suffix != ".html")
+        assert client.get(f"/{asset.name}").content == asset.read_bytes()

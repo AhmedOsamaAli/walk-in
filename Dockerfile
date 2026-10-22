@@ -19,11 +19,13 @@ RUN pip install -r requirements.txt
 
 COPY app ./app
 COPY web ./web
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY --from=frontend /frontend/dist ./frontend/dist
 
 RUN useradd --create-home --uid 10001 walkin \
-    && mkdir -p /srv/.cache \
-    && chown -R walkin /srv/.cache
+    && mkdir -p /srv/.cache /srv/.data \
+    && chown -R walkin /srv/.cache /srv/.data
 USER walkin
 
 EXPOSE 8000

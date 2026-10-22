@@ -1,11 +1,13 @@
-"""The survey's state: the site and the owner's brief, and everything a run learns about it."""
+"""The survey's state: the site and the owner's brief, everything a run learns about it, and the runs in memory."""
 from __future__ import annotations
 
 import asyncio
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
 
 from ..catchment import Catchment
 from .constraints import Constraints
@@ -57,9 +59,12 @@ class RunState:
 
 
 class RunStore:
-    def __init__(self, capacity: int = 100) -> None:
+    """The latest runs in memory; with a loader, older ones come back from the database when asked for."""
+
+    def __init__(self, capacity: int = 100, load: Callable[[str], Awaitable[RunState | None]] | None = None) -> None:
         self._runs: OrderedDict[str, RunState] = OrderedDict()
         self._capacity = capacity
+        self._load = load
 
     def add(self, run: RunState) -> None:
         self._runs[run.id] = run
@@ -68,3 +73,60 @@ class RunStore:
 
     def get(self, run_id: str) -> RunState | None:
         return self._runs.get(run_id)
+
+    async def fetch(self, run_id: str) -> RunState | None:
+        """A run from memory, else loaded from the database and kept in memory again."""
+        run = self._runs.get(run_id)
+        if run is None and self._load is not None:
+            loaded = await self._load(run_id)
+            # Another request may have loaded the same run meanwhile; everyone keeps working on one copy.
+            run = self._runs.get(run_id) or loaded
+            if run is not None:
+                self.add(run)
+        return run
+
+
+@dataclass
+class EventLog:
+    """What a survey has streamed: [event, data, seconds since it started] for each event, and how it is going."""
+
+    run_id: str
+    status: str = "running"  # running | complete | failed
+    events: list[list] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    started: float = field(default_factory=time.monotonic)
+
+    def record(self, event: str, data: dict) -> None:
+        self.events.append([event, data, round(time.monotonic() - self.started, 1)])
+
+
+class LiveRuns:
+    """Surveys running in this process. Each outlives the request that started it, so a refresh or a closed tab does
+    not stop it, and leaves this list once it has been saved."""
+
+    def __init__(self) -> None:
+        self._logs: dict[str, EventLog] = {}
+        self._tasks: set[asyncio.Task] = set()
+
+    def get(self, run_id: str) -> EventLog | None:
+        return self._logs.get(run_id)
+
+    def start(self, log: EventLog, survey: Coroutine[Any, Any, None]) -> None:
+        self._logs[log.run_id] = log
+        task = asyncio.create_task(survey)
+        self._tasks.add(task)
+
+        def finished(done: asyncio.Task) -> None:
+            self._tasks.discard(done)
+            del self._logs[log.run_id]
+
+        task.add_done_callback(finished)
+
+    async def stop(self, grace: float) -> None:
+        """Gives running surveys `grace` seconds to finish, then stops the rest, which are saved as failed."""
+        if not self._tasks:
+            return
+        _, unfinished = await asyncio.wait(self._tasks, timeout=grace)
+        for task in unfinished:
+            task.cancel()
+        await asyncio.gather(*unfinished, return_exceptions=True)
