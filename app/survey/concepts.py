@@ -26,6 +26,7 @@ from .evidence import (
     inspect_payload,
     offer_items,
     plural,
+    price_anchors,
     price_evidence,
     public_gap,
     risk,
@@ -79,6 +80,7 @@ def clean_concepts(run: RunState, concepts: list[dict]) -> list[dict]:
         concept["name"] = name[:60]
         concept["one_liner"] = grounded_line(str(concept.get("one_liner") or ""), row, run.site)
         concept["price_level"], concept["price_basis"] = grounded_price(run, row, concept.get("price_level"))
+        concept["price_anchors"] = price_anchors(row, concept["price_level"])
         concept["signature"] = signature_of(concept.get("signature"), row, run)
         concept["for_whom"] = for_whom(row, minutes)
         concept["why_here"] = gap_evidence(row, minutes)
@@ -325,6 +327,7 @@ def rule_concept(run: RunState, row: dict) -> dict:
         "for_whom": for_whom(row, minutes),
         "price_level": price["level"],
         "price_basis": price["basis"],
+        "price_anchors": price["anchors"],
         "why_here": gap_evidence(row, minutes),
         "beat_competitors": competition(row, minutes, run.constraints),
         "signature": [i["item"] for i in offer_items(row, run.constraints, limit=3)],

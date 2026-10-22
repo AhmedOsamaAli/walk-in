@@ -53,6 +53,9 @@ export interface PlaceCard {
   name: string | null;
   address?: string | null;
   image?: string | null;
+  /** Its menu page when Qloo has one, else its website: where its real prices can be checked. */
+  url?: string | null;
+  link?: "menu" | "site" | null;
   rating?: number | null;
   price_level?: number | null;
   genres?: string[];
@@ -114,6 +117,22 @@ export interface DemandPayload {
 
 export type Evidence = "ok" | "thin" | "atypical";
 
+/** A real place at a price level, whose own menu or website shows what that level costs here. */
+export interface PriceAnchor {
+  name: string;
+  level: number;
+  url: string | null;
+  link: "menu" | "site" | null;
+  within_walk: boolean;
+}
+
+/** One of Qloo's four price levels: how many places locals love, and how many inside the walk, sit there. */
+export interface PriceStep {
+  level: number;
+  loved: number;
+  inside: number;
+}
+
 export interface PriceEvidence {
   /** The level to charge: what the evidence supports, within the owner's price range. */
   level: number | null;
@@ -122,6 +141,10 @@ export interface PriceEvidence {
   loved: number | null;
   nearby: number | null;
   basis: string;
+  ladder?: PriceStep[];
+  /** "No $$$ cocktail bar inside the walk, while 3 of the 8 cocktail bars locals love are $$$: that price level is open." */
+  open_note?: string | null;
+  anchors?: PriceAnchor[];
 }
 
 export interface UnitFit {
@@ -233,6 +256,8 @@ export interface Comparison {
   /** False when few peers are priced like the place, so their offer and hours are a weak guide. */
   comparable: boolean;
   peer_names: string[];
+  /** The peers' own menus or websites, where their real prices can be checked. */
+  peer_links?: { name: string; price_level: number | null; url: string | null; link: "menu" | "site" | null }[];
   rating: { place: number | null; peers: number | null };
   price: { place: number | null; peers: number | null };
   hours: { place: Record<string, string> | null; peers: Record<string, string> | null };
@@ -276,6 +301,7 @@ export interface Concept {
   /** Null when Qloo lists no prices for the category here. */
   price_level?: number | null;
   price_basis?: string;
+  price_anchors?: PriceAnchor[];
   why_here?: unknown;
   beat_competitors?: string;
   signature?: unknown;
@@ -389,6 +415,7 @@ export interface Design {
   offer?: unknown;
   price_level?: number | null;
   price_basis?: string;
+  price_anchors?: PriceAnchor[];
   hours?: string | null;
   hours_basis?: string | null;
   /** "about 27–32 seated guests at most", when the owner gave the unit's size. */

@@ -145,6 +145,56 @@ def _median_level(places: list[dict]) -> tuple[int | None, int]:
     return (round(median(levels)) if levels else None), len(levels)
 
 
+PRICE_TIERS = (1, 2, 3, 4)
+
+
+def price_ladder(row: dict) -> list[dict]:
+    """How many of the places locals love, and of the places inside the walk, sit at each of Qloo's four price levels."""
+    loved, inside = example_places(row), competitor_places(row)
+    return [
+        {"level": tier, "loved": sum(_price(p) == tier for p in loved), "inside": sum(_price(p) == tier for p in inside)}
+        for tier in PRICE_TIERS
+    ]
+
+
+def open_price_note(row: dict, ladder: list[dict]) -> str | None:
+    """A price level at least two of the places locals love charge that no place inside the walk does; only said when
+    the walk has priced places of the kind, so it is a gap in price and not in the category."""
+    inside = sum(step["inside"] for step in ladder)
+    loved = sum(step["loved"] for step in ladder)
+    open_steps = [step for step in ladder if step["loved"] >= 2 and not step["inside"]]
+    if not inside or not open_steps:
+        return None
+    step = max(open_steps, key=lambda s: (s["loved"], s["level"]))
+    level = dollars(step["level"])
+    priced = "" if loved == len(example_places(row)) else " that list a price"
+    return (f"No {level} {singular(row['genre'])} inside the walk, while {step['loved']} of the {loved} "
+            f"{plural(row['genre'])} locals love{priced} are {level}: that price level is open.")
+
+
+def price_anchors(row: dict, level: int | None, limit: int = 3) -> list[dict]:
+    """Real places at this price level whose menus an owner can check: the places locals love first, then the places
+    inside the walk; places with a menu page or a website first."""
+    if not level:
+        return []
+    inside = competitor_places(row)
+    inside_ids = {scoring.item_id(p) for p in inside}
+    anchors: list[dict] = []
+    seen: set[str] = set()
+    for group in (example_places(row), inside):
+        for place in sorted((p for p in group if _price(p) == level), key=lambda p: scoring.place_link(p)[0] is None):
+            name = place.get("name")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            url, link = scoring.place_link(place)
+            anchors.append({"name": name, "level": level, "url": url, "link": link,
+                            "within_walk": scoring.item_id(place) in inside_ids})
+            if len(anchors) >= limit:
+                return anchors
+    return anchors
+
+
 def price_evidence(row: dict, constraints: Constraints | None = None) -> dict:
     """The price level the evidence supports: what the places locals love charge, against the places inside the walk."""
     loved, loved_n = _median_level(example_places(row))
@@ -164,7 +214,11 @@ def price_evidence(row: dict, constraints: Constraints | None = None) -> dict:
         chosen = constraints.price[0]
     if chosen != level:
         basis += f" Set to {dollars(chosen)} by your notes."
-    return {"level": chosen, "evidence_level": level, "loved": loved, "nearby": nearby, "basis": basis}
+    ladder = price_ladder(row)
+    return {
+        "level": chosen, "evidence_level": level, "loved": loved, "nearby": nearby, "basis": basis,
+        "ladder": ladder, "open_note": open_price_note(row, ladder), "anchors": price_anchors(row, chosen),
+    }
 
 
 # ---------- What to offer ----------

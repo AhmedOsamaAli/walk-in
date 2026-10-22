@@ -802,12 +802,23 @@ def known_for(groups: dict[str, list[dict]], limit: int) -> list[str]:
     return [inline_label(g["label"]) for g in groups["menu"] + groups["experience"]][:limit]
 
 
+def place_link(entity: dict) -> tuple[str | None, str | None]:
+    """Where a place's own prices can be checked: its menu page, else its website, as (url, "menu" | "site")."""
+    props = entity.get("properties") or {}
+    for key, kind in (("menu_url", "menu"), ("website", "site")):
+        url = props.get(key)
+        if isinstance(url, str) and url.startswith(("https://", "http://")):
+            return url, kind
+    return None, None
+
+
 def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
     """Compact, UI-friendly view of a place entity."""
     props = entity.get("properties") or {}
     groups = topic_groups([entity])
     location = place_location(entity)
     rating = props.get("business_rating")
+    url, link = place_link(entity)
     card = {
         "id": item_id(entity),
         "name": entity.get("name"),
@@ -821,6 +832,8 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
         "lat": location[0] if location else None,
         "lon": location[1] if location else None,
         "image": (props.get("image") or {}).get("url"),
+        "url": url,
+        "link": link,
     }
     if site and location:
         card["distance_m"] = round(distance_m(site[0], site[1], *location))

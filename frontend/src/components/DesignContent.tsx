@@ -5,6 +5,7 @@ import { letter, list, priceLabel } from "../lib/format";
 import { loadDesign, shotsOf } from "../state/designs";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { Plate } from "./Plate";
+import { PriceAnchors } from "./Price";
 import { RenderFrame } from "./RenderFrame";
 
 interface SheetProps {
@@ -92,6 +93,7 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
               <dd>
                 {value}
                 {basis ? <small className="spec-basis">{basis}</small> : null}
+                {key === "Price" ? <PriceAnchors anchors={design.price_anchors ?? concept.price_anchors} /> : null}
               </dd>
             </div>
           ))}

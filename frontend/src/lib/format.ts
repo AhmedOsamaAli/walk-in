@@ -117,6 +117,17 @@ export function safeUrl(url: unknown): string | null {
     : null;
 }
 
+/** A link to a place's own website or menu: http or https only, so no script URL can ever be opened. */
+export function safeLink(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 /** "Fort Greene, Brooklyn, Kings County, New York" -> "Fort Greene, Brooklyn". */
 export function shortLabel(label: string | null | undefined): string {
   const parts = (label ?? "").split(",").map((part) => part.trim()).filter(Boolean);

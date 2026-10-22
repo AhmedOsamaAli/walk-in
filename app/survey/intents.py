@@ -183,6 +183,11 @@ def compare(place: dict, row: dict) -> dict:
         # Suggestions only transfer between places at a similar price; otherwise only the position is reported.
         "comparable": "similar price" in peers_label or not props.get("price_level"),
         "peer_names": [p.get("name") for p in peers[:6] if p.get("name")],
+        # Their own menus and websites, where the owner can check real prices and offers.
+        "peer_links": [
+            {"name": p.get("name"), "price_level": (p.get("properties") or {}).get("price_level"), "url": url, "link": link}
+            for p in peers[:6] if p.get("name") for url, link in [scoring.place_link(p)]
+        ],
         "rating": {"place": round(float(rating), 1) if rating else None, "peers": round(median(peer_ratings), 1) if peer_ratings else None},
         "price": {"place": props.get("price_level"), "peers": round(median(peer_prices)) if peer_prices else None},
         "hours": {

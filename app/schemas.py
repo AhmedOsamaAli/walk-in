@@ -92,6 +92,9 @@ class DesignSheet(BaseModel):
     partners: list[dict]
     price_level: int | None = Field(None, description="Price level the evidence supports, within the owner's range")
     price_basis: str | None = Field(None, description="What the places locals love and the places inside the walk charge")
+    price_anchors: list[dict] = Field(
+        default_factory=list, description="Real places at this price level, with their menu page or website to check prices"
+    )
     hours: str | None = Field(description="Typical hours of the places locals love of this type")
     hours_basis: str | None
     capacity: str | None = Field(description="Most guests the unit holds, from building-code load factors")

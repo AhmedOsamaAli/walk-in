@@ -2,6 +2,7 @@ import type { FavoritePlace, GapRow, PlaceCard } from "../api/types";
 import { cssVars, cx } from "../lib/css";
 import { gapWhy, priceLabel, standingText } from "../lib/format";
 import { CountUp } from "./CountUp";
+import { PlaceLink, PriceAnchors, PriceLadder } from "./Price";
 
 const MAX_PIPS = 24;
 
@@ -18,7 +19,9 @@ function Competitor({ place }: { place: PlaceCard }) {
     .join(" · ");
   return (
     <li>
-      <span className="n">{place.name}</span>
+      <span className="n">
+        <PlaceLink name={place.name ?? ""} url={place.url} kind={place.link} />
+      </span>
       {meta ? <span className="s">{meta}</span> : null}
       {complaints ? (
         <span className="s">
@@ -40,7 +43,9 @@ function Favorite({ place }: { place: FavoritePlace }) {
     .join(" · ");
   return (
     <li>
-      <span className="n">{place.name}</span>
+      <span className="n">
+        <PlaceLink name={place.name ?? ""} url={place.url} kind={place.link} />
+      </span>
       {detail ? <span className="s">{detail}</span> : null}
       <span className="km">{where}</span>
     </li>
@@ -160,9 +165,12 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
                     <li key={line}>{line}</li>
                   ))}
                   {gap.price ? (
-                    <li>
+                    <li className="price-line">
                       {priced ? <b className="mono">Price {priced}. </b> : null}
                       {gap.price.basis}
+                      <PriceLadder ladder={gap.price.ladder} level={gap.price.level} />
+                      {gap.price.open_note ? <span className="open-note">{gap.price.open_note}</span> : null}
+                      <PriceAnchors anchors={gap.price.anchors} />
                     </li>
                   ) : null}
                 </ul>

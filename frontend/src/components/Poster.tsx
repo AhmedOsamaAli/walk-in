@@ -3,6 +3,7 @@ import type { Concept } from "../api/types";
 import { cssVars } from "../lib/css";
 import { letter, list, priceLabel } from "../lib/format";
 import { CountUp } from "./CountUp";
+import { PriceAnchors } from "./Price";
 
 interface PosterProps {
   concept: Concept;
@@ -63,10 +64,11 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
         </p>
       ) : null}
       {concept.price_basis ? (
-        <p className="poster-note">
+        <div className="poster-note">
           <b className="mono">Price{priced ? ` ${priced.split(" · ")[0]}` : ""}</b>
           {concept.price_basis}
-        </p>
+          <PriceAnchors anchors={concept.price_anchors} />
+        </div>
       ) : null}
       {concept.risk ? (
         <p className="poster-note">

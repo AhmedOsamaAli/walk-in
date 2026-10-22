@@ -14,7 +14,7 @@ from ..llm import LLM
 from ..qloo import QlooClient, QlooError
 from . import experience
 from .concepts import ground_names, grounded_price
-from .evidence import example_places, gap_for, in_sentence, offer_items
+from .evidence import example_places, gap_for, in_sentence, offer_items, price_anchors
 from .experience import fans_of
 from .models import RunState
 
@@ -104,6 +104,7 @@ async def design_concept(
     design["offer"] = [item for item in design.get("offer") or [] if isinstance(item, str) and run.constraints.allows_item(item)][:6]
     if row:
         design["price_level"], design["price_basis"] = grounded_price(run, row, design.get("price_level", concept.get("price_level")))
+        design["price_anchors"] = price_anchors(row, design["price_level"])
     music = design.get("music") if isinstance(design.get("music"), dict) else {}
     music["artists"] = ground_names(music.get("artists"), set(local_artists))[:6]
     design["music"] = music

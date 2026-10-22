@@ -147,3 +147,35 @@ label.field > span { display: block; }
   .offer-diffs { grid-template-columns: minmax(0, 1fr); }
   .versus tbody th { width: 88px; }
 }
+
+/* ---------- Prices: Qloo's four levels, anchored by real places whose menus show what a level costs ---------- */
+.place-link {
+  color: inherit; text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px;
+  transition: color .3s, text-decoration-color .3s;
+}
+.place-link > span[aria-hidden] { margin-left: 2px; font-size: .8em; color: var(--blue); }
+.place-link:hover { color: var(--blue); text-decoration-color: currentColor; }
+.place-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+.anchors { margin-top: 8px; font-size: 14px; line-height: 1.45; }
+.anchors .mono { font-size: 10.5px; color: var(--text-4); }
+.anchors small, .anchors-hint { color: var(--text-4); }
+.poster.p0 .place-link > span[aria-hidden],
+.poster.p0 .place-link:hover { color: var(--on-yellow); }
+.poster.p0 .place-link { text-decoration-color: var(--on-yellow-3); }
+.poster.p0 .anchors .mono, .poster.p0 .anchors small, .poster.p0 .anchors-hint { color: var(--on-yellow-2); }
+.poster-note .anchors { margin-top: 4px; }
+
+.ladder { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 10px 0 2px; }
+.rung { display: grid; align-content: start; gap: 5px; min-width: 50px; padding: 6px 8px 8px; border: 1px solid var(--smoke); border-radius: 8px; background: var(--card); }
+.rung.chosen { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--yellow); }
+.rung.open { border: 1px dashed var(--blue); }
+.rung-level { font-size: 10.5px; color: var(--text-3); }
+.rung-marks { display: flex; flex-wrap: wrap; gap: 3px; min-height: 7px; max-width: 70px; }
+.ladder i { display: inline-block; width: 7px; height: 7px; }
+.ladder i.loved { border-radius: 50%; background: var(--blue-fill); }
+.ladder i.inside { background: var(--ink); }
+.ladder-key { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; align-self: center; margin-left: 4px; font-size: 10px; color: var(--text-4); }
+.ladder-key i + * { margin-right: 6px; }
+.open-note { display: block; margin-top: 8px; padding: 7px 11px; border-radius: 8px; background: var(--marker); color: var(--ink); }
+.versus td.versus-note { font-weight: 400; color: var(--text-4); }
+.versus small.mono { font-size: 10px; color: var(--text-4); }
