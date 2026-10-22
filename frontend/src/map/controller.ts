@@ -4,7 +4,7 @@ import type { FavoritePlace, GapRow, HeatCell, LatLon, PlaceCard, Walk } from ".
 import { coords } from "../lib/format";
 import { prefersReducedMotion } from "../lib/motion";
 import type { Theme } from "../state/theme";
-import { arc, cellSpan, metersToLat, WALK_M_PER_MIN } from "./geometry";
+import { arc, cellSpan, distanceM, metersToLat, WALK_M_PER_MIN } from "./geometry";
 import { placeTip } from "./tooltip";
 
 export interface MapPoint {
@@ -38,6 +38,8 @@ const BASEMAP_FADE_MS = 600;
 /** How long a theme switch waits for the new tiles before showing them anyway, say on a hidden map. */
 const BASEMAP_SWAP_TIMEOUT_MS = 30_000;
 const TIP: L.TooltipOptions = { className: "tip", direction: "top", offset: [0, -6], opacity: 1 };
+/** Farthest a gap's places may be from the site and still be drawn: favorites are searched within 15 km. */
+const MAX_PLACE_M = 60_000;
 const PIN_HTML = '<div class="site-pin"><span class="sq"></span><span class="tagl">Site</span></div>';
 
 type Located<T extends PlaceCard> = T & { lat: number; lon: number };
@@ -432,13 +434,16 @@ export class BlueprintMap {
     if (!site) return;
     this.clearGap();
     const origin: LatLon = [site.lat, site.lon];
-    for (const place of (gap.competitors ?? []).filter(located)) {
+    // Favorites are searched within 15 km of the site, so anything far beyond is stale or bad data: drawing it once
+    // threw a trip across the Atlantic and pulled the camera out to the whole world.
+    const nearSite = <T extends PlaceCard>(place: Located<T>) => distanceM(origin, [place.lat, place.lon]) <= MAX_PLACE_M;
+    for (const place of (gap.competitors ?? []).filter(located).filter(nearSite)) {
       L.circleMarker([place.lat, place.lon], { radius: 5, weight: 1.5, className: "pdot comp" })
         .bindTooltip(placeTip(place), TIP)
         .addTo(this.layers.gap);
     }
     const local = gap.favorites_kind === "local";
-    const favorites = (gap.favorites ?? []).filter(located);
+    const favorites = (gap.favorites ?? []).filter(located).filter(nearSite);
     for (const place of favorites) {
       const style = local ? { radius: 5.5, className: "pdot fav" } : { radius: 5, className: "pdot famous" };
       L.circleMarker([place.lat, place.lon], { ...style, weight: 1.5 }).bindTooltip(placeTip(place), TIP).addTo(this.layers.gap);

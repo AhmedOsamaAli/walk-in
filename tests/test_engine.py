@@ -34,3 +34,12 @@ def test_a_single_page_query_drops_closed_places_unless_asked_to_keep_them():
     q = PagedQloo([place(1), place(2, closed=True)])
     assert [p["entity_id"] for p in asyncio.run(engine.places_in(q, {}))] == ["p1"]
     assert [p["entity_id"] for p in asyncio.run(engine.places_in(q, {}, include_closed=True))] == ["p1", "p2"]
+
+
+def test_favorites_located_far_outside_the_search_area_are_dropped():
+    # Zamalek's search area is 15 km; a place placed in Austin, Texas is a data error, not a trip people make.
+    here = {"entity_id": "a", "name": "Near", "location": {"lat": 30.07, "lon": 31.23}}
+    austin = {"entity_id": "b", "name": "Far", "location": {"lat": 30.2622, "lon": -97.7247}}
+    unknown = {"entity_id": "c", "name": "Nowhere"}
+    kept = engine.near([here, austin, unknown], 30.0626, 31.2197)
+    assert [p["entity_id"] for p in kept] == ["a", "c"]

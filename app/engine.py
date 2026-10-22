@@ -6,7 +6,7 @@ import math
 
 from . import scoring
 from .catchment import Catchment
-from .geo import point_wkt
+from .geo import distance_m, point_wkt
 from .qloo import QlooClient
 
 TASTE_M = 1500  # neighborhood used for brand and artist taste
@@ -132,6 +132,17 @@ async def demand_genres(q: QlooClient, catchment: Catchment) -> tuple[list[dict]
     return business, cues[:6]
 
 
+def near(entities: list[dict], lat: float, lon: float, limit_m: float = 1.5 * FAVORITES_M) -> list[dict]:
+    """Favorites are searched within FAVORITES_M of the site; a place located far beyond that is a data error, never a
+    trip, so it is dropped. Places without a location are kept: they draw nothing."""
+    out = []
+    for entity in entities:
+        location = scoring.place_location(entity)
+        if location is None or distance_m(lat, lon, *location) <= limit_m:
+            out.append(entity)
+    return out
+
+
 async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> dict:
     lat, lon = catchment.lat, catchment.lon
     favorites_area = circle_filter(lat, lon, FAVORITES_M)
@@ -149,8 +160,8 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
     # Hotels and malls among the favorites make the comparison atypical; places Qloo merely tags with the genre (a
     # museum with a bar for 'Cocktail bar') say nothing about it and are left out of the favorites.
     storefront = scoring.storefront_share(local_favorites[:10])
-    local_favorites = scoring.relevant(local_favorites, genre["id"], genre["name"])
-    city_favorites = scoring.relevant(city_favorites, genre["id"], genre["name"])
+    local_favorites = near(scoring.relevant(local_favorites, genre["id"], genre["name"]), lat, lon)
+    city_favorites = near(scoring.relevant(city_favorites, genre["id"], genre["name"]), lat, lon)
     kind, favorites = scoring.split_favorites(local_favorites, city_favorites)
     row = scoring.gap_signals(
         genre["id"], genre["name"], genre["rank"], genre.get("ref_rank"),

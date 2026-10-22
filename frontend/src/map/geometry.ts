@@ -38,3 +38,12 @@ export function cellSpan(geohash: string | null): [number, number] {
 
 /** Degrees of latitude spanned by a distance in meters. */
 export const metersToLat = (meters: number) => meters / METERS_PER_DEGREE;
+
+/** Great-circle distance in meters between two [lat, lon] points. */
+export function distanceM([lat1, lon1]: LatLon, [lat2, lon2]: LatLon): number {
+  const rad = Math.PI / 180;
+  const h =
+    Math.sin(((lat2 - lat1) * rad) / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(((lon2 - lon1) * rad) / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
