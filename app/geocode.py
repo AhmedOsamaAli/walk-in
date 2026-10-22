@@ -14,7 +14,7 @@ class Geocoder:
         self._last = 0.0
         self._http = http_client or httpx.AsyncClient(
             base_url="https://nominatim.openstreetmap.org",
-            headers={"User-Agent": "BlankSpace/0.2 (Qloo Agentic Hackathon demo)"},
+            headers={"User-Agent": "Walk-in/0.2 (Qloo Agentic Hackathon demo)"},
             timeout=15,
         )
 

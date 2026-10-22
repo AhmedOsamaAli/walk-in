@@ -1,4 +1,4 @@
-/* Payloads of the Blank Space API (app/main.py), limited to the fields this app reads. */
+/* Payloads of the Walk-in API (app/main.py), limited to the fields this app reads. */
 
 export type Focus = "any" | "food_drink" | "retail" | "leisure";
 export type WalkMinutes = 5 | 10 | 15;

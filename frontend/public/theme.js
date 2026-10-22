@@ -3,7 +3,7 @@
 (function () {
   function savedTheme() {
     try {
-      return window.localStorage.getItem("blank-space-theme");
+      return window.localStorage.getItem("walk-in-theme");
     } catch {
       return null;
     }

@@ -20,7 +20,7 @@ from .concepts import caution, concepts_from_agent, rule_concepts
 from .evidence import annotate, public_gap
 from .models import Emit, RunState, RunStore, Site
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 
 def read_notes(site: Site) -> constraints.Constraints:

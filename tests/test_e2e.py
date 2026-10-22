@@ -188,7 +188,7 @@ def scripted_llm(agent_steps: list[list[dict]], requests: list[dict] | None = No
         if system.startswith("You are a retail strategy consultant"):
             return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(
                 {"concepts": [{"name": "Generic Cafe", "genre": "Cafe", "one_liner": "Coffee for everyone"}]})}))
-        if system.startswith("You are Blank Space's concept designer"):
+        if system.startswith("You are a concept designer"):
             return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(DESIGN_REPLY)}))
         return httpx.Response(500, json={"error": {"message": "unexpected request"}})
 
@@ -477,7 +477,7 @@ def test_map_and_lookup_endpoints():
         assert len(cells) == 30 and all(0 <= c["affinity"] <= 1 for c in cells)
         assert client.get("/api/geocode", params={"q": "Main Street"}).json()[0]["lat"] == SITE[0]
         page = client.get("/")
-        assert page.status_code == 200 and "Blank Space" in page.text
+        assert page.status_code == 200 and "Walk-in" in page.text
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
 
 

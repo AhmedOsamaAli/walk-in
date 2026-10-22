@@ -28,10 +28,11 @@ const TILES: Record<Theme, { base: string; labels: string }> = {
   },
 };
 const TILE_OPTIONS: L.TileLayerOptions = { subdomains: ["server", "services"], maxNativeZoom: 16, maxZoom: 19, className: "basemap" };
-const ATTRIBUTION =
-  'Tiles &copy; <a href="https://www.esri.com">Esri</a>, HERE, Garmin &middot; &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-/** Leaflet's credit without the flag it prepends by default. */
-const LEAFLET_CREDIT = '<a href="https://leafletjs.com">Leaflet</a>';
+/** The data credits Esri's and OpenStreetMap's terms require. */
+const CREDITS =
+  'Powered by <a href="https://www.esri.com">Esri</a> &middot; Esri, HERE, Garmin &middot; &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+/** OpenStreetMap's attribution guideline lets the credits collapse after the first pan, zoom or click, or this long. */
+const CREDITS_OPEN_MS = 5000;
 /** Matches the basemap fade in map.css. */
 const BASEMAP_FADE_MS = 600;
 /** How long a theme switch waits for the new tiles before showing them anyway, say on a hidden map. */
@@ -84,10 +85,10 @@ export class BlueprintMap {
 
   constructor(element: HTMLElement, readout: HTMLElement, onPick: (lat: number, lon: number) => void) {
     this.readout = readout;
-    const map = L.map(element, { zoomControl: false, worldCopyJump: true }).setView([40.735, -73.975], 12);
+    const map = L.map(element, { zoomControl: false, worldCopyJump: true, attributionControl: false }).setView([40.735, -73.975], 12);
     this.map = map;
-    map.attributionControl.setPrefix(LEAFLET_CREDIT);
     L.control.zoom({ position: "topright" }).addTo(map);
+    this.addCredits();
     L.control.scale({ position: "bottomright", imperial: false, maxWidth: 120 }).addTo(map);
     for (const [name, zIndex] of [["grid", 350], ["labels", 360], ["radar", 380]] as const) {
       const pane = map.createPane(name);
@@ -286,7 +287,7 @@ export class BlueprintMap {
     const next: Basemap = {
       theme,
       layers: [
-        L.tileLayer(tiles.base, { ...TILE_OPTIONS, opacity, attribution: ATTRIBUTION }),
+        L.tileLayer(tiles.base, { ...TILE_OPTIONS, opacity }),
         L.tileLayer(tiles.labels, { ...TILE_OPTIONS, opacity, pane: "labels" }),
       ],
     };
@@ -320,6 +321,50 @@ export class BlueprintMap {
     if (this.pointerOnMap) return;
     const center = this.map.getCenter();
     this.readout.textContent = coords(center.lat, center.lng);
+  }
+
+  /**
+   * The credits in the map's corner: in full when the map appears, then collapsed into an (i) button after the first
+   * pan, zoom or click, or after five seconds, as OpenStreetMap's guideline allows. The button opens them again.
+   * Leaflet's own control rewrites its contents whenever the tiles change, so this one is separate.
+   */
+  private addCredits(): void {
+    const control = new L.Control({ position: "bottomright" });
+    control.onAdd = () => {
+      const box = L.DomUtil.create("div", "credits open");
+      const button = L.DomUtil.create("button", "credits-toggle", box);
+      button.type = "button";
+      button.textContent = "i";
+      button.setAttribute("aria-label", "Map credits");
+      button.setAttribute("aria-controls", "map-credits");
+      button.setAttribute("aria-expanded", "true");
+      const text = L.DomUtil.create("span", "credits-text", box);
+      text.id = "map-credits";
+      text.innerHTML = CREDITS;
+      L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.disableScrollPropagation(box);
+
+      let settled = false;
+      const show = (open: boolean) => {
+        box.classList.toggle("open", open);
+        button.setAttribute("aria-expanded", String(open));
+      };
+      const collapse = () => {
+        if (settled) return;
+        settled = true;
+        show(false);
+      };
+      button.addEventListener("click", () => {
+        settled = true;
+        show(!box.classList.contains("open"));
+      });
+      this.map.once("movestart", collapse);
+      this.map.once("zoomstart", collapse);
+      this.map.once("click", collapse);
+      this.later(collapse, CREDITS_OPEN_MS);
+      return box;
+    };
+    control.addTo(this.map);
   }
 
   private drawPin(site: MapPoint): void {

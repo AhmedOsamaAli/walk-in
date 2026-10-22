@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: blank-space
+    name: walk-in
     runtime: docker
     plan: free
     healthCheckPath: /api/health

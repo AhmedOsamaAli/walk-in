@@ -1,10 +1,10 @@
-# Blank Space
+# Walk-in
 
-**Drop a pin on an empty storefront. Blank Space reads what the people within a ten-minute walk love, finds what the block is missing, and designs the business that fits. Or tell it what you want to open and it judges that, or point it at the place you run and it shows what to change.**
+**Drop a pin on an empty storefront. Walk-in reads what the people within a ten-minute walk love, finds what the block is missing, and designs the business they would walk in for. Or tell it what you want to open and it judges that, or point it at the place you run and it shows what to change.**
 
 Built for the [Qloo Agentic Hackathon](https://qloo.devpost.com/). Taste data by [Qloo](https://www.qloo.com).
 
-Landlords, brokers and founders decide what goes into a vacant unit by gut feel or by expensive foot-traffic reports. A plain language model answers "what should open here?" with the same café-or-wine-bar list for almost any address. Blank Space answers from evidence: who lives within walking distance, what they engage with more than the neighborhoods around them, how much of it the block already has, which places they love that are not on the block, and whether the unit can host it.
+Landlords, brokers and founders decide what goes into a vacant unit by gut feel or by expensive foot-traffic reports. A plain language model answers "what should open here?" with the same café-or-wine-bar list for almost any address. Walk-in answers from evidence: who lives within walking distance, what they engage with more than the neighborhoods around them, how much of it the block already has, which places they love that are not on the block, and whether the unit can host it.
 
 ## What it does
 
@@ -48,7 +48,7 @@ Without Qloo there is no block, no demand, no pull, no classics and no design DN
 
 We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower East Side, East Austin, Zamalek). Each finding below changed the method; where the data could not support a feature, the feature was removed.
 
-- **Comparing a neighborhood with the whole city is biased by scale.** At walk scale "New American" ranks #2 in both the Upper East Side and Williamsburg, but #17 across New York. Against same-size areas around each site it ranks #3–#4: no real lift. Blank Space compares against six same-size areas; real lifts survive (Upper East Side fine dining #7 here vs #15.5 around; East Austin breweries #2 vs #5.5).
+- **Comparing a neighborhood with the whole city is biased by scale.** At walk scale "New American" ranks #2 in both the Upper East Side and Williamsburg, but #17 across New York. Against same-size areas around each site it ranks #3–#4: no real lift. Walk-in compares against six same-size areas; real lifts survive (Upper East Side fine dining #7 here vs #15.5 around; East Austin breweries #2 vs #5.5).
 - **Locals' favorite places are mostly the city's famous places.** A neighborhood's top-10 favorites overlap the city's top-10 by 6–10 of 10, so "most favorites are outside the walk" was true everywhere. Travel is measured on the places locals love *more than the city does*, and only claimed with at least four of them.
 - **"Fans of a category" are mostly that category's audience at large, and some categories are ignored.** For live music venues, breweries and coffee shops, Qloo returns the area's general ranking whatever the category; for seafood, the fans' artists are nearly the same in Brooklyn, Austin and Cairo (no Egyptian artists at all). So the experience plan comes from the neighborhood's own signature taste (location against location), fan taste is used only as evidence of fit where it is specific, and it is never called local.
 - **Crowd demographics were removed.** Qloo's age and gender skews describe a place's visitors and contradicted each other between neighbouring blocks (Williamsburg read "35–44 and under 25"); categories came back as "45+, leaning female" alike. Concepts describe who they are for through evidence: what neighbours rank and where they go now.
@@ -58,7 +58,7 @@ We evaluated the pipeline on five sites (Upper East Side, Williamsburg, Lower Ea
 - **Search results are thin.** Qloo's `/entities` and `/search` records lack reviews, keywords and Michelin references; the owner's place is read again through insights within 60 m, which returns the full record.
 - **Like with like.** A Michelin-listed $$$ Mexican restaurant was first told to open at 10 am and add vegan meals, because the Mexican places locals love are casual taquerias. Places are compared with favorites at a similar price; when none exist, the place gets its position, not borrowed advice. Building-bound amenities (drive-through, terraces) are never suggested.
 - **Owner notes are rules, not hints.** Told "no alcohol licence", the agent still proposed a wine bar. Notes are now read once into rules (no alcohol, halal, vegetarian, family friendly, a price range, the unit's size and kitchen) and applied to every category, offer, price and verdict; a ruled-out category says why, and the page shows what it read.
-- **Prices are levels, from the places.** Qloo has price levels ($ to $$$$) for about four in five places, but price ranges for under 2% (mostly hotels) and no cost descriptions, so Blank Space never turns a level into a dollar figure. A concept's price is the median level of the places locals love in its category, set against the places inside the walk, with that basis printed; the model may move it one level to position the concept, never more. Each level is made concrete with real places at that level, linked to their own menus or websites (Qloo has a website for most places), and a level that locals love but no place inside the walk charges is called out as open.
+- **Prices are levels, from the places.** Qloo has price levels ($ to $$$$) for about four in five places, but price ranges for under 2% (mostly hotels) and no cost descriptions, so Walk-in never turns a level into a dollar figure. A concept's price is the median level of the places locals love in its category, set against the places inside the walk, with that basis printed; the model may move it one level to position the concept, never more. Each level is made concrete with real places at that level, linked to their own menus or websites (Qloo has a website for most places), and a level that locals love but no place inside the walk charges is called out as open.
 - **The model writes no facts.** Free models misread numbers and invented seat counts ("a warm, 200-seat room") and neighbours ("the bar next door"). The model now only chooses, names and positions; every factual line is rebuilt from the evidence, and a positioning line that states a capacity or floor area the unit does not have gives way to the evidence's own.
 - **Repeated test runs, not one demo.** Twelve unseen sites (Chicago, London, Paris, Los Angeles, Plano, Cairo twice, Mexico City, Berlin, Asheville, Brooklyn, Austin) with owner notes and requests found global stars counted as local taste, retail requests answered with cafés, Paris counts capped at 50 and museums offered as cocktail bars' favorites; each is fixed.
 
@@ -100,7 +100,7 @@ flowchart LR
 
 ## Running on free AI tiers
 
-Free Gemini keys allow about five requests a minute and a few dozen a day per model, and popular models are often overloaded. Groq's free tier allows 1,000 requests a day but only 8,000 tokens a minute per model, about two agent turns. Blank Space is built for that:
+Free Gemini keys allow about five requests a minute and a few dozen a day per model, and popular models are often overloaded. Groq's free tier allows 1,000 requests a day but only 8,000 tokens a minute per model, about two agent turns. Walk-in is built for that:
 
 - **A chain of models across providers.** Every call walks `LLM_FALLBACK_MODELS`, then Groq's `GROQ_MODELS`. A rate-limited model rests for the provider's own retry delay, one out of daily quota for an hour (or until Groq says it is back), an overloaded one for two minutes, a hanging one for five; the next model answers meanwhile.
 - **A short wait instead of giving up.** When every model is resting and one comes back within `LLM_MAX_WAIT` seconds (default 40), the agent waits for it, and the live log says "Free AI quota refills in N s".
@@ -152,12 +152,12 @@ Checks: `ruff check app tests scripts` and `pytest` for the backend; `npm run ty
 
 ## Deploy
 
-The `Dockerfile` builds the React app with Node, then serves it and the API from a slim Python image. `render.yaml` is a blueprint for Render's free web service: create a Blueprint from the repository and fill in the secret variables. Any Docker host works the same way: `docker build -t blank-space . && docker run -p 8000:8000 --env-file .env blank-space`.
+The `Dockerfile` builds the React app with Node, then serves it and the API from a slim Python image. `render.yaml` is a blueprint for Render's free web service: create a Blueprint from the repository and fill in the secret variables. Any Docker host works the same way: `docker build -t walk-in . && docker run -p 8000:8000 --env-file .env walk-in`.
 
 ## Data and privacy
 
 - Qloo responses are cached on the server only (`.cache/`, ignored by git); no Qloo data is stored in this repository.
-- Taste data is aggregated and anonymized; Blank Space never asks for personal data.
+- Taste data is aggregated and anonymized; Walk-in never asks for personal data.
 - Walking catchments come from the public [Valhalla](https://valhalla.github.io/valhalla/) instance run by FOSSGIS on OpenStreetMap data; addresses are geocoded with [Nominatim](https://nominatim.org/). Map tiles © Esri, © OpenStreetMap contributors.
 
 ## License

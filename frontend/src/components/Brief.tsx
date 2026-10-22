@@ -41,10 +41,10 @@ const QUESTIONS: Record<Intent, string> = {
 };
 const LEDES: Record<Intent, string> = {
   explore:
-    "Drop a pin on a vacant unit. Blank Space reads what the people within a ten-minute walk love, what they leave the block for, and designs the business that keeps them here.",
-  open: "Drop a pin where you want to open. Blank Space judges your idea against everything the block is missing, then designs it to win here.",
+    "Drop a pin on a vacant unit. Walk-in reads what the people within a ten-minute walk love, what they leave the block for, and designs the business they would walk in for.",
+  open: "Drop a pin where you want to open. Walk-in judges your idea against everything the block is missing, then designs it to win here.",
   improve:
-    "Drop a pin near the place you run. Blank Space compares it with the places locals love in its category and lists what to change, each move with its evidence.",
+    "Drop a pin near the place you run. Walk-in compares it with the places locals love in its category and lists what to change, each move with its evidence.",
 };
 /** Two columns: the map stays pinned beside the sheet, so scrolling the sheet never hides it. */
 const SIDE_BY_SIDE = "(min-width: 981px)";

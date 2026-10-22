@@ -21,10 +21,10 @@ COPY app ./app
 COPY web ./web
 COPY --from=frontend /frontend/dist ./frontend/dist
 
-RUN useradd --create-home --uid 10001 blankspace \
+RUN useradd --create-home --uid 10001 walkin \
     && mkdir -p /srv/.cache \
-    && chown -R blankspace /srv/.cache
-USER blankspace
+    && chown -R walkin /srv/.cache
+USER walkin
 
 EXPOSE 8000
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

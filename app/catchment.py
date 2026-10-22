@@ -104,7 +104,7 @@ class CatchmentService:
     def __init__(self, cache_dir: Path, url: str = VALHALLA_URL, timeout: float = 12.0) -> None:
         self._cache_dir = cache_dir
         self._url = url
-        self._http = httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "BlankSpace/0.2 (Qloo Agentic Hackathon)"})
+        self._http = httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "Walk-in/0.2 (Qloo Agentic Hackathon)"})
 
     async def aclose(self) -> None:
         await self._http.aclose()

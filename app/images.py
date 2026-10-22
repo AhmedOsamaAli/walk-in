@@ -19,7 +19,7 @@ import time
 
 import httpx
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 FLUX_MODEL = "@cf/black-forest-labs/flux-2-klein-4b"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -28,7 +28,7 @@ HORDE_BASE_URL = "https://aihorde.net/api/v2"
 HORDE_MODEL = "Flux.1-Schnell fp8 (Compact)"
 HORDE_ANONYMOUS_KEY = "0000000000"
 # AI Horde asks every client to identify itself as name:version:contact.
-HORDE_CLIENT_AGENT = "blank-space:1.0:github.com/AhmedOsamaAli"
+HORDE_CLIENT_AGENT = "walk-in:1.0:github.com/AhmedOsamaAli"
 
 
 class ImageGen:

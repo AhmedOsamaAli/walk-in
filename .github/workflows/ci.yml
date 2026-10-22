@@ -51,4 +51,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build the deploy image
-        run: docker build -t blank-space .
+        run: docker build -t walk-in .

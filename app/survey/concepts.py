@@ -39,7 +39,7 @@ from .experience import fans_of
 from .intents import requested_row
 from .models import Emit, RunState, Site
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 
 def ground_names(names: list[str] | None, allowed: set[str]) -> list[str]:
@@ -356,7 +356,7 @@ def requested_first(run: RunState, concepts: list[dict]) -> list[dict]:
     return [mine] + [c for c in concepts if not same_business(c["genre"], wanted["genre"])][:2]
 
 
-CONCEPT_SYSTEM = """You are Blank Space, a retail and hospitality strategist that designs businesses for empty storefronts.
+CONCEPT_SYSTEM = """You are a retail and hospitality strategist who designs businesses for empty storefronts.
 You only reason from Qloo evidence about the people inside the site's walking catchment.
 Demand is compared with six same-size areas around the site, not the whole city; supply is compared with what a block
 this dense would typically hold. Only claim that locals travel for something when the evidence says so; when it says

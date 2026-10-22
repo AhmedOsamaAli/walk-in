@@ -7,14 +7,50 @@
   background: var(--paper);
   border-bottom: var(--rule);
 }
-.mark { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; }
-.mark-square { position: relative; flex: none; width: 18px; height: 18px; border: 1.5px solid var(--ink); border-radius: 3px; overflow: hidden; }
-.mark-square i {
-  position: absolute; inset: 0; background: var(--blue-fill);
-  transform: scaleY(var(--p, .42)); transform-origin: bottom;
-  transition: transform .8s var(--ease);
-}
+.mark { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; }
 .mark-word { font: 560 23px/1 var(--f-serif); letter-spacing: -.02em; white-space: nowrap; }
+
+/* ---------- The mark: footsteps that end at a door, following the survey (BrandMark.tsx) ---------- */
+.brand-mark { flex: none; width: 32px; height: 32px; overflow: visible; }
+.bm-ink { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.bm-step { fill: var(--ink); opacity: .22; transition: opacity .5s var(--ease); }
+.bm-step[data-lit] { opacity: 1; }
+.bm-step[data-next] { animation: bmPulse 1.2s ease-in-out infinite; }
+.bm-light { fill: var(--yellow); opacity: 0; transition: opacity .5s ease; }
+.bm-spill { opacity: 0; transition: opacity .6s ease; }
+.bm-spill-near { stop-color: var(--yellow); stop-opacity: .8; }
+.bm-spill-far { stop-color: var(--yellow); stop-opacity: 0; }
+.bm-leaf { fill: var(--blue-fill); }
+.bm-pane { fill: var(--on-blue); opacity: .4; }
+.bm-knob { fill: var(--yellow); }
+/* Closed, the door fills its frame; open, it folds onto its hinge and swings out to the right in perspective. */
+.bm-shut { transform-box: fill-box; transform-origin: right center; transition: transform .45s var(--ease); }
+.bm-open { transform-box: fill-box; transform-origin: left center; transform: scaleX(0); transition: transform .5s var(--ease); }
+.brand-mark:is([data-state="rest"], [data-state="arrived"]) .bm-shut { transform: scaleX(0); }
+.brand-mark:is([data-state="rest"], [data-state="arrived"]) .bm-open { transform: none; transition-delay: .3s; }
+.brand-mark:is([data-state="rest"], [data-state="arrived"]) .bm-light { opacity: 1; }
+.brand-mark:is([data-state="rest"], [data-state="arrived"]) .bm-spill { opacity: 1; transition-delay: .35s; }
+.brand-mark[data-state="arrived"] .bm-shut { transition-delay: .4s; }
+.brand-mark[data-state="arrived"] .bm-open { transition-delay: .7s; }
+.brand-mark[data-state="arrived"] .bm-light { transition-delay: .5s; }
+.brand-mark[data-state="arrived"] .bm-spill { transition-delay: .8s; }
+/* At the door while the agent works: ajar, the light glowing on and off through the gap. */
+.brand-mark[data-at-door] .bm-shut { transform: scaleX(.62); }
+.brand-mark[data-at-door] .bm-light { opacity: 1; animation: bmGlow 1.6s ease-in-out infinite; }
+/* The opening walk: each step lands in turn, then the door swings open and the light spills out. */
+.brand-mark.intro .bm-step { animation: bmStep .4s var(--ease) backwards; animation-delay: calc(var(--i) * .2s + .2s); }
+.brand-mark.intro .bm-shut { animation: bmShut .45s var(--ease) 1s backwards; }
+.brand-mark.intro .bm-open { animation: bmOpen .5s var(--ease) 1.35s backwards; }
+.brand-mark.intro .bm-light { animation: bmFade .5s ease 1.05s backwards; }
+.brand-mark.intro .bm-spill { animation: bmFade .6s ease 1.45s backwards; }
+@keyframes bmStep { from { opacity: 0; transform: translateX(-3px); } }
+@keyframes bmShut { from { transform: none; } }
+@keyframes bmOpen { from { transform: scaleX(0); } }
+@keyframes bmFade { from { opacity: 0; } }
+@keyframes bmPulse { 0%, 100% { opacity: .22; } 50% { opacity: 1; } }
+/* The light brightens rather than dims: see-through yellow over the dark theme's navy reads as olive, not light. */
+@keyframes bmGlow { 0%, 100% { fill: var(--yellow); } 50% { fill: #fff2b3; } }
+
 .bar-nav { display: flex; justify-content: center; gap: 24px; }
 .bar-nav a { position: relative; text-decoration: none; color: var(--fog); pointer-events: none; transition: color .4s; }
 .bar-nav a.ready { color: var(--ink); pointer-events: auto; }
@@ -25,9 +61,6 @@
 }
 .bar-nav a.current::after { transform: scaleX(1); }
 .bar-end { display: flex; align-items: center; gap: 18px; }
-.bar-meta { white-space: nowrap; }
-.bar-meta a { color: var(--blue); text-decoration: none; }
-.bar-meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .theme-toggle {
   flex: none; display: grid; place-items: center; width: 36px; height: 36px;
   border: 1px solid var(--ink); border-radius: 50%;
@@ -65,6 +98,8 @@
   display: grid; gap: 8px; padding: 30px var(--pad) 44px;
   color: var(--ash); font-size: 11px; text-transform: none; letter-spacing: .01em; line-height: 1.6;
 }
+.sheet-foot a { color: var(--blue); text-decoration: none; }
+.sheet-foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .section-error { color: var(--red); text-transform: none; letter-spacing: .01em; }
 
 /* ---------- View transitions ---------- */

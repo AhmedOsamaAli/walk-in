@@ -1,4 +1,4 @@
-/* Blank Space front end: a plain ES module, no build step. Leaflet is loaded globally first. */
+/* Walk-in front end: a plain ES module, no build step. Leaflet is loaded globally first. */
 
 const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const $ = (selector, root = document) => root.querySelector(selector);

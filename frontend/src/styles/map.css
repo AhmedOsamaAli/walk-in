@@ -66,12 +66,21 @@
 .leaflet-control-zoom.leaflet-bar a:last-child { border-bottom: 0; }
 .leaflet-control-zoom.leaflet-bar a:hover { background: var(--yellow); color: var(--on-yellow); }
 .leaflet-control-zoom.leaflet-bar a.leaflet-disabled { background: var(--bone); color: var(--fog); }
-.leaflet-container .leaflet-control-attribution.leaflet-control {
-  margin: 0; padding: 3px 8px; border-top-left-radius: 8px;
-  font: 10px/1.4 var(--f-sans); background: var(--map-veil); color: var(--text-4);
+/* ---------- Credits: in full when the map appears, then an (i) that opens them again (controller.ts) ---------- */
+.leaflet-control.credits { display: flex; flex-direction: row-reverse; align-items: center; gap: 6px; margin: 0 10px 10px 0; max-width: calc(100vw - 32px); }
+.credits-toggle {
+  flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  background: var(--map-veil); color: var(--ink); border: 1px solid var(--ink); border-radius: 50%;
+  font: italic 600 13px/1 var(--f-serif); cursor: pointer; transition: background .3s, color .3s;
 }
-.leaflet-container .leaflet-control-attribution a { color: var(--blue); text-decoration: none; }
-.leaflet-container .leaflet-control-attribution a:hover { text-decoration: underline; }
+.credits-toggle:hover, .credits.open .credits-toggle { background: var(--ink); color: var(--on-ink); }
+.credits-text {
+  display: none; padding: 3px 10px; border-radius: 11px;
+  background: var(--map-veil); color: var(--text-4); font: 10px/1.4 var(--f-sans);
+}
+.credits.open .credits-text { display: block; animation: fade .3s both; }
+.credits-text a { color: var(--blue); text-decoration: none; }
+.credits-text a:hover { text-decoration: underline; }
 .leaflet-control-scale.leaflet-control { margin: 0 16px 8px 0; }
 .leaflet-control-scale-line {
   border: 1.5px solid var(--ink); border-top: 0; background: var(--map-veil); color: var(--ink);

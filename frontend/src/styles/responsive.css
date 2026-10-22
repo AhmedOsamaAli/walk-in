@@ -20,12 +20,11 @@
   .design { border-radius: 20px; }
   .d-main { padding: 34px 22px 40px; }
   .site-row .ghost { padding: 8px 14px; }
-  /* The map credits run almost the full width here; the legend sits above them. */
-  .legend { bottom: 34px; }
+  /* The open map credits wrap short of the legend in the opposite corner. */
+  .leaflet-control.credits { max-width: calc(100vw - 150px); }
 }
 
 @media (max-width: 420px) {
-  .bar-meta { display: none; }
   .mark-word { font-size: 21px; }
 }
 

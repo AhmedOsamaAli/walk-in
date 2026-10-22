@@ -30,7 +30,7 @@ from .survey import concepts, pipeline
 from .survey import design as designs
 from .survey.models import RunStore, Site
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
 RUNS_PER_HOUR = 20
@@ -374,7 +374,7 @@ def create_app(services_factory: Callable[[], Services] = default_services) -> F
             await services.aclose()
 
     app = FastAPI(
-        title="Blank Space",
+        title="Walk-in",
         version="1.0.0",
         description=(
             "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "

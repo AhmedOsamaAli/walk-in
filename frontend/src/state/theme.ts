@@ -5,7 +5,7 @@ import { withViewTransition } from "../lib/motion";
 export type Theme = "light" | "dark";
 
 /** Shared with public/theme.js, which applies the theme before the first paint. */
-const STORAGE_KEY = "blank-space-theme";
+const STORAGE_KEY = "walk-in-theme";
 const THEME_COLORS: Record<Theme, string> = { light: "#f5f4ef", dark: "#0d111c" };
 
 function savedTheme(): Theme | null {

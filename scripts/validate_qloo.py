@@ -1,4 +1,4 @@
-"""Day-1 validation of Qloo hackathon data for the Blank Space idea.
+"""Day-1 validation of Qloo hackathon data for the Walk-in idea.
 
 Answers five questions before anything gets built:
   1. Supply: does Qloo know the places around a site (Cairo vs Dubai vs NYC), with review keywords?

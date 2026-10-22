@@ -471,7 +471,7 @@ def test_ai_horde_renders_without_a_key():
     method, path, headers, content = seen[0]
     body = json.loads(content)
     assert (method, path) == ("POST", "/api/v2/generate/async")
-    assert headers["apikey"] == "0000000000" and headers["client-agent"].startswith("blank-space:")
+    assert headers["apikey"] == "0000000000" and headers["client-agent"].startswith("walk-in:")
     assert body["models"] == ["Flux.1-Schnell fp8 (Compact)"] and body["censor_nsfw"] is True
     assert (body["params"]["width"], body["params"]["height"]) == (1024, 576)
 

@@ -18,10 +18,10 @@ from .evidence import example_places, gap_for, in_sentence, offer_items, price_a
 from .experience import fans_of
 from .models import RunState
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 
-DESIGN_SYSTEM = """You are Blank Space's concept designer. Turn a business concept into a design brief for an empty storefront.
+DESIGN_SYSTEM = """You are a concept designer. Turn a business concept into a design brief for an empty storefront.
 Ground every choice in the evidence: design DNA of the locals' favorite places, what local fans of this category also
 love, local artists, nearby places and local brands.
 Design for the unit: no patio, terrace or sidewalk seating unless unit.outdoor_space is yes. When a unit is given,

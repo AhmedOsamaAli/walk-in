@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, BadRequestError
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 ToolHandler = Callable[[dict], Awaitable[Any]]
 OnToolCall = Callable[[str, dict, str | None], Awaitable[None]]

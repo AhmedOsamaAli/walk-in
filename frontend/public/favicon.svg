@@ -1,5 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <style>.frame { stroke: #1d1d1f; } @media (prefers-color-scheme: dark) { .frame { stroke: #ecebe6; } }</style>
-  <rect class="frame" x="3" y="3" width="26" height="26" rx="3" fill="none" stroke-width="2.5" />
-  <rect x="4.25" y="17" width="23.5" height="10.75" fill="#0f68ea" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 1 40 39">
+  <style>
+    .ink { stroke: #1d1d1f; } .step { fill: #1d1d1f; } .leaf { fill: #0f68ea; }
+    @media (prefers-color-scheme: dark) { .ink { stroke: #ecebe6; } .step { fill: #ecebe6; } .leaf { fill: #2f6fe0; } }
+  </style>
+  <defs>
+    <linearGradient id="spill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffcb00" stop-opacity=".8" />
+      <stop offset="1" stop-color="#ffcb00" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <polygon points="22.5,33.5 32.5,33.5 36,39 19,39" fill="url(#spill)" />
+  <g class="step">
+    <ellipse cx="4.6" cy="30.8" rx="2" ry="1.5" /><circle cx="1.4" cy="30.8" r="1.15" />
+    <ellipse cx="9.4" cy="34.4" rx="2" ry="1.5" /><circle cx="6.2" cy="34.4" r="1.15" />
+    <ellipse cx="14.2" cy="30.8" rx="2" ry="1.5" /><circle cx="11" cy="30.8" r="1.15" />
+  </g>
+  <rect x="22.5" y="9.5" width="10" height="23" fill="#ffcb00" />
+  <path class="ink" d="M20.5 33.5H39" fill="none" stroke-width="2.6" stroke-linecap="round" />
+  <rect class="ink" x="21.5" y="8.5" width="12" height="25" rx="1" fill="none" stroke-width="2.6" />
+  <polygon class="leaf" points="33.5,9.5 38.6,7.2 38.6,35.2 33.5,32.5" />
+  <polygon points="34.5,11.7 37.6,10.4 37.6,18.6 34.5,19.6" fill="#fff" opacity=".4" />
+  <circle cx="37.7" cy="22.4" r=".8" fill="#ffcb00" />
 </svg>

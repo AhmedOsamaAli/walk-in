@@ -1,11 +1,14 @@
-import { cssVars, cx } from "../lib/css";
+import type { MarkState } from "../lib/brand";
+import { cx } from "../lib/css";
 import type { Section, SectionId } from "../lib/sections";
 import type { Theme } from "../state/theme";
+import { BrandMark } from "./BrandMark";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface TopBarProps {
-  /** How full the mark's square is, from 0 to 1: the survey's progress. */
-  fill: number;
+  /** The mark follows the survey: where it stands, and how far along it is from 0 to 1. */
+  mark: MarkState;
+  progress: number;
   sections: readonly Section[];
   ready: readonly SectionId[];
   current: SectionId | null;
@@ -13,14 +16,12 @@ interface TopBarProps {
   onToggleTheme: () => void;
 }
 
-export function TopBar({ fill, sections, ready, current, theme, onToggleTheme }: TopBarProps) {
+export function TopBar({ mark, progress, sections, ready, current, theme, onToggleTheme }: TopBarProps) {
   return (
     <header className="bar">
-      <a className="mark" href="/" aria-label="Blank Space, start over">
-        <span className="mark-square" aria-hidden="true">
-          <i style={cssVars({ "--p": Math.max(0.04, Math.min(1, fill)) })} />
-        </span>
-        <span className="mark-word">Blank Space</span>
+      <a className="mark" href="/" aria-label="Walk-in, start over">
+        <BrandMark state={mark} progress={progress} />
+        <span className="mark-word">Walk-in</span>
       </a>
       <nav className="bar-nav mono" aria-label="Survey sections">
         {sections.map(({ id, no, label }) => {
@@ -40,12 +41,6 @@ export function TopBar({ fill, sections, ready, current, theme, onToggleTheme }:
         })}
       </nav>
       <div className="bar-end">
-        <span className="bar-meta mono">
-          Taste data{" "}
-          <a href="https://www.qloo.com" target="_blank" rel="noopener">
-            Qloo
-          </a>
-        </span>
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
       </div>
     </header>

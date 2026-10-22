@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("blankspace")
+log = logging.getLogger("walkin")
 
 
 def fingerprint(*parts: Any) -> str:

@@ -14,6 +14,7 @@ import { SurveyLog } from "./components/SurveyLog";
 import { TasteSection } from "./components/TasteSection";
 import { TopBar } from "./components/TopBar";
 import { VerdictSection } from "./components/VerdictSection";
+import { markState } from "./lib/brand";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
 import { scrollBehavior, withViewTransition } from "./lib/motion";
 import { sectionNo, sectionsFor, useSectionSpy, type SectionId } from "./lib/sections";
@@ -74,12 +75,6 @@ function readySections(survey: SurveyState): SectionId[] {
   if (survey.concepts) ready.push("s-concepts");
   if (survey.taste) ready.push("s-taste");
   return ready;
-}
-
-/** The mark's square fills with the survey: a resting level on the brief, then the pipeline's progress. */
-function markFill(survey: SurveyState, surveying: boolean): number {
-  if (!surveying) return 0.42;
-  return survey.status === "complete" ? 1 : Math.max(0.06, surveyProgress(survey));
 }
 
 export function App() {
@@ -149,7 +144,8 @@ export function App() {
   return (
     <>
       <TopBar
-        fill={markFill(survey, surveying)}
+        mark={markState(surveying, survey.status)}
+        progress={surveyProgress(survey)}
         sections={sectionsFor(intent)}
         ready={ready}
         current={current}
@@ -221,8 +217,12 @@ export function App() {
           ) : null}
           <footer className="sheet-foot mono">
             <p>
-              Taste data reflects aggregated, anonymized behaviour and is thinner in less digitally active areas. Read it
-              as evidence for a decision, not a forecast.
+              Taste data by{" "}
+              <a href="https://www.qloo.com" target="_blank" rel="noopener">
+                Qloo
+              </a>
+              : aggregated and anonymized, and thinner in less digitally active areas. Read it as evidence for a decision,
+              not a forecast.
             </p>
             <p>Built for the Qloo Agentic Hackathon.</p>
           </footer>
