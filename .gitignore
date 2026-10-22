@@ -7,6 +7,12 @@
 .cache/
 data/raw/
 
+# The local database (surveys, orders and kits)
+.data/
+
+# Editor settings
+.vscode/
+
 # Python
 __pycache__/
 *.pyc
