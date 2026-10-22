@@ -372,8 +372,13 @@ export interface ReplayPayload {
 export interface DonePayload {
   run_id: string;
   seconds: number;
+  /** Answers fetched from Qloo during this survey; `cache_hits` were Qloo answers already saved. */
   qloo_calls: number;
   cache_hits: number;
+  /** Every Qloo answer the survey read (missing from surveys saved before it was counted). */
+  qloo_queries?: number;
+  /** When the oldest of those answers came from Qloo, ISO 8601. */
+  data_as_of?: string | null;
 }
 
 export type SurveyEvent =

@@ -1,21 +1,68 @@
 """Async Qloo API client with an on-disk response cache.
 
 Qloo's hackathon terms allow private server-side caching; the cache directory is gitignored
-so responses never end up in the public repository.
+so responses never end up in the public repository. A cached answer is used for a week; after that Qloo is asked
+again, and the older answer serves only when Qloo cannot answer (it is unreachable, or the key has expired).
 """
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
+import logging
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+log = logging.getLogger("walkin")
+
+MAX_AGE_S = 7 * 24 * 3600
+
 
 class QlooError(RuntimeError):
     pass
+
+
+@dataclass
+class Reads:
+    """The Qloo answers one survey read: how many, and when the oldest of them came from Qloo."""
+
+    queries: int = 0
+    oldest: float | None = None  # seconds since the epoch
+
+    def add(self, fetched_at: float) -> None:
+        self.queries += 1
+        if self.oldest is None or fetched_at < self.oldest:
+            self.oldest = fetched_at
+
+
+_reads: contextvars.ContextVar[Reads | None] = contextvars.ContextVar("qloo_reads", default=None)
+
+
+def track_reads() -> Reads:
+    """Counts the Qloo answers read from here on by the current task and the tasks it starts, so surveys running at the
+    same time are counted apart."""
+    reads = Reads()
+    _reads.set(reads)
+    return reads
+
+
+def _count(fetched_at: float) -> None:
+    reads = _reads.get()
+    if reads is not None:
+        reads.add(fetched_at)
+
+
+def _saved(cache_file: Path) -> tuple[dict, float] | None:
+    """A cached answer and when it was fetched."""
+    try:
+        return json.loads(cache_file.read_text(encoding="utf-8")), cache_file.stat().st_mtime
+    except (OSError, ValueError):
+        return None
 
 
 class QlooClient:
@@ -26,6 +73,7 @@ class QlooClient:
         cache_dir: Path,
         max_concurrency: int = 6,
         timeout: float = 45.0,
+        max_age_s: float = MAX_AGE_S,
     ) -> None:
         # A missing key only fails live calls; cached responses keep working (useful after the hackathon key expires).
         self.configured = bool(api_key)
@@ -35,6 +83,7 @@ class QlooClient:
             timeout=timeout,
         )
         self._cache_dir = cache_dir
+        self._max_age_s = max_age_s
         self._gate = asyncio.Semaphore(max_concurrency)
         self._inflight: dict[str, asyncio.Future] = {}
         self.calls = 0
@@ -50,19 +99,31 @@ class QlooClient:
     async def get(self, path: str, params: dict[str, Any]) -> dict:
         key = self._cache_key(path, params)
         cache_file = self._cache_dir / f"{key}.json"
-        if cache_file.exists():
+        saved = _saved(cache_file)
+        if saved and time.time() - saved[1] < self._max_age_s:
             self.cache_hits += 1
-            return json.loads(cache_file.read_text(encoding="utf-8"))
+            _count(saved[1])
+            return saved[0]
         if key in self._inflight:
-            return await self._inflight[key]
+            data, fetched_at = await self._inflight[key]
+            _count(fetched_at)
+            return data
 
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._inflight[key] = future
         try:
-            data = await self._fetch(path, params)
-            self._cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            future.set_result(data)
+            try:
+                data, fetched_at = await self._fetch(path, params), time.time()
+                self._cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            except QlooError as exc:
+                if not saved:
+                    raise
+                log.warning("Qloo did not answer (%s); using its answer from %s", exc, time.ctime(saved[1]))
+                data, fetched_at = saved
+                self.cache_hits += 1
+            future.set_result((data, fetched_at))
+            _count(fetched_at)
             return data
         except Exception as exc:
             future.set_exception(exc)

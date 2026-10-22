@@ -1,6 +1,46 @@
 import { describe, expect, it } from "vitest";
 import type { GapRow } from "../api/types";
-import { agentText, coords, gapWhy, list, naturalList, price, priceLabel, safeUrl, shortLabel, standingText, topicForms } from "./format";
+import {
+  agentText,
+  coords,
+  dataAsOfText,
+  gapWhy,
+  list,
+  naturalList,
+  price,
+  priceLabel,
+  queriesText,
+  replayText,
+  safeUrl,
+  shortLabel,
+  standingText,
+  topicForms,
+} from "./format";
+
+describe("survey freshness", () => {
+  const now = new Date(2026, 9, 22, 18, 0);
+
+  it("counts every Qloo answer a survey read, wherever it was kept", () => {
+    expect(queriesText({ run_id: "r", seconds: 9, qloo_calls: 0, cache_hits: 69, qloo_queries: 69 })).toBe("69 Qloo queries");
+    // Surveys saved before every read was counted add the two counters.
+    expect(queriesText({ run_id: "r", seconds: 9, qloo_calls: 50, cache_hits: 7 })).toBe("57 Qloo queries");
+    expect(queriesText({ run_id: "r", seconds: 9, qloo_calls: 1, cache_hits: 0 })).toBe("1 Qloo query");
+  });
+
+  it("dates the data only when it is from an earlier day", () => {
+    expect(dataAsOfText(new Date(2026, 9, 22, 9, 0).toISOString(), now)).toBeNull();
+    expect(dataAsOfText(new Date(2026, 9, 20, 9, 0).toISOString(), now)).toMatch(/^Qloo data as of .*20/);
+    expect(dataAsOfText(null, now)).toBeNull();
+    expect(dataAsOfText("not a date", now)).toBeNull();
+  });
+
+  it("mentions concepts designed earlier only when that was another day, and never the quota", () => {
+    expect(replayText({ saved_at: new Date(2026, 9, 22, 8, 0).getTime() / 1000, model: "m" }, now)).toBeNull();
+    const earlier = replayText({ saved_at: new Date(2026, 9, 19, 8, 0).getTime() / 1000, model: "m" }, now);
+    expect(earlier).toMatch(/^The agent designed these concepts on .* from this same Qloo evidence$/);
+    expect(earlier).not.toMatch(/cache|quota|replay/i);
+  });
+});
 
 const base: GapRow = {
   genre_id: "urn:tag:genre:place:seafood",

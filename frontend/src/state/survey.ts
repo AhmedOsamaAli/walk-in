@@ -209,8 +209,10 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
       return { ...state, catchment: event.data };
     case "agent":
       return note(state, at, "agent", agentText(event.data));
-    case "replay":
-      return note(state, at, "finding", replayText(event.data));
+    case "replay": {
+      const text = replayText(event.data);
+      return text ? note(state, at, "finding", text) : state;
+    }
     case "finding":
       return note(state, at, "finding", event.data.text);
     case "explored": {

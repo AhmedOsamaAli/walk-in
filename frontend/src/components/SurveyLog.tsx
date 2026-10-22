@@ -1,5 +1,5 @@
 import type { DonePayload } from "../api/types";
-import { secondsText } from "../lib/format";
+import { dataAsOfText, queriesText, secondsText } from "../lib/format";
 import type { LogLine } from "../state/survey";
 import { SectionHead } from "./SectionHead";
 
@@ -10,12 +10,14 @@ interface SurveyLogProps {
 
 /** Newest line first; a step's line stays where it started and turns from running to a check mark with its time. */
 export function SurveyLog({ log, summary }: SurveyLogProps) {
+  const asOf = summary ? dataAsOfText(summary.data_as_of) : null;
   return (
     <section id="s-log" className="sec reveal">
       <SectionHead no="01" title="Survey log" />
       {summary ? (
         <p className="log-meta mono">
-          {secondsText(summary.seconds)} · {summary.qloo_calls} Qloo calls · {summary.cache_hits} served from cache
+          {secondsText(summary.seconds)} · {queriesText(summary)}
+          {asOf ? ` · ${asOf}` : ""}
         </p>
       ) : null}
       <ol className="log mono" reversed>

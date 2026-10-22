@@ -1,7 +1,7 @@
 """A survey run: the walk, the block, demand, taste and gaps from Qloo, then what the owner asked for, streamed as events.
 
 Intents: "explore" designs the three strongest concepts; "open" first judges the business the owner wants to open and
-designs it first; "improve" compares the owner's existing place with the places locals love in its category.
+designs it first; "improve" compares the owner's existing place with the places people here love in its category.
 """
 from __future__ import annotations
 
@@ -9,12 +9,13 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import UTC, datetime
 
 from .. import engine, scoring
 from ..answers import AnswerCache
 from ..catchment import CatchmentService
 from ..llm import LLM
-from ..qloo import QlooClient, QlooError
+from ..qloo import QlooClient, QlooError, track_reads
 from . import constraints, intents
 from .concepts import caution, concepts_from_agent, rule_concepts
 from .evidence import annotate, public_gap
@@ -41,6 +42,7 @@ async def analyze_site(
 ) -> RunState:
     run = RunState(id=run_id or uuid.uuid4().hex[:12], site=site, constraints=read_notes(site))
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
+    reads = track_reads()
     await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood})
 
     async def step(name: str, label: str, coro):
@@ -68,7 +70,7 @@ async def analyze_site(
         await emit("catchment", catchment.public())
         block, (genres, cues), taste = await asyncio.gather(
             step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_block(q, catchment)),
-            step("demand", "Ranking what locals engage with against six same-size areas around",
+            step("demand", "Ranking what people here engage with against six same-size areas around",
                  engine.demand_genres(q, catchment)),
             step("taste", "Finding the brands, artists, films, shows and podcasts this area over-indexes on",
                  engine.local_taste(q, site.lat, site.lon)),
@@ -83,14 +85,14 @@ async def analyze_site(
         await emit("taste", taste)
 
         gaps = await step(
-            "gaps", "Comparing supply with the surroundings and finding places locals love more than the city",
+            "gaps", "Comparing supply with the surroundings and finding places people here love more than the rest of the city",
             engine.gap_table(q, catchment, genres, site.focus),
         )
         run.gaps = [annotate(run, row) for row in gaps]
         await emit("gaps", {"rows": [public_gap(g) for g in run.gaps]})
 
         if site.intent == "improve":
-            run.improve = await step("improve", "Comparing your place with the ones locals love", intents.improve(q, run))
+            run.improve = await step("improve", "Comparing your place with the ones people here love", intents.improve(q, run))
             await emit("improve", run.improve or {"note": "Qloo has no category for this place, so there is nothing to compare."})
             return run
         if site.intent == "open" and site.business.strip():
@@ -101,11 +103,16 @@ async def analyze_site(
         await emit("error", {"message": str(exc)})
     finally:
         store.add(run)
+        calls, hits = q.calls - calls_before, q.cache_hits - hits_before
         await emit("done", {
             "run_id": run.id,
             "seconds": round(time.time() - started, 1),
-            "qloo_calls": q.calls - calls_before,
-            "cache_hits": q.cache_hits - hits_before,
+            "qloo_calls": calls,
+            "cache_hits": hits,
+            # Every Qloo answer the survey read, and when the oldest came from Qloo (clients that don't count reads
+            # fall back to the counters above).
+            "qloo_queries": reads.queries or calls + hits,
+            "data_as_of": datetime.fromtimestamp(reads.oldest, UTC).isoformat() if reads.oldest else None,
         })
     return run
 
@@ -114,7 +121,7 @@ async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, an
     if not run.gaps:
         note = (
             "Not enough Qloo data around this site." if run.site.focus == "any" else
-            f"None of the place types Qloo ranks for locals here is {scoring.FOCUS_NAMES[run.site.focus]}, so Qloo points "
+            f"None of the place types Qloo ranks for people here is {scoring.FOCUS_NAMES[run.site.focus]}, so Qloo points "
             "to no gap of that kind. Try any business."
         )
         await emit("concepts", {"concepts": [], "mode": "none", "note": note})

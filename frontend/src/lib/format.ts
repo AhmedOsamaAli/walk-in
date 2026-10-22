@@ -1,5 +1,6 @@
 import type {
   AgentPayload,
+  DonePayload,
   Focus,
   GapRow,
   Intent,
@@ -177,14 +178,28 @@ export function agentText({ tool, args }: AgentPayload): string {
   return `Agent calls ${tool}${reason}`;
 }
 
-export function replayText({ saved_at: savedAt, model }: ReplayPayload): string {
-  const when = savedAt
-    ? new Date(savedAt * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
-    : "earlier";
-  return `Same Qloo evidence as a survey on ${when}: replaying that agent run${model ? ` (${model})` : ""} to save the free AI quota`;
+/** Concepts the agent designed on an earlier day from this same Qloo evidence; a same-day design needs no line. */
+export function replayText({ saved_at: savedAt }: ReplayPayload, now = new Date()): string | null {
+  if (!savedAt) return null;
+  const saved = new Date(savedAt * 1000);
+  if (saved.toDateString() === now.toDateString()) return null;
+  return `The agent designed these concepts on ${saved.toLocaleDateString([], { dateStyle: "medium" })} from this same Qloo evidence`;
 }
 
-export function agentCredit(model: string | null | undefined, replayedFrom: number | null | undefined): string {
-  if (!model) return "the agent";
-  return replayedFrom ? `the agent (${model}, replayed)` : `the agent (${model})`;
+export function agentCredit(model: string | null | undefined): string {
+  return model ? `the agent (${model})` : "the agent";
+}
+
+/** "69 Qloo queries": every Qloo answer the survey read. */
+export function queriesText(summary: DonePayload): string {
+  const count = summary.qloo_queries ?? summary.qloo_calls + summary.cache_hits;
+  return `${count} Qloo ${count === 1 ? "query" : "queries"}`;
+}
+
+/** "Qloo data as of Oct 20" when the oldest Qloo answer the survey read is from an earlier day; nothing for today's. */
+export function dataAsOfText(iso: string | null | undefined, now = new Date()): string | null {
+  if (!iso) return null;
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime()) || when.toDateString() === now.toDateString()) return null;
+  return `Qloo data as of ${when.toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }

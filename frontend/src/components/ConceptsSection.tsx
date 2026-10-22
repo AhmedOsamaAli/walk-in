@@ -3,9 +3,9 @@ import { agentCredit } from "../lib/format";
 import { Poster } from "./Poster";
 import { SectionHead } from "./SectionHead";
 
-function conceptsNote({ mode, model, replayed_from: replayedFrom, note }: ConceptsPayload): string {
+function conceptsNote({ mode, model, note }: ConceptsPayload): string {
   if (mode === "agent") {
-    return `Designed by ${agentCredit(model, replayedFrom)} from the gaps above. Every claim traces back to Qloo evidence.`;
+    return `Designed by ${agentCredit(model)} from the gaps above. Every claim traces back to Qloo evidence.`;
   }
   if (mode === "rules") return "Built from the evidence by deterministic rules (no AI model was available).";
   return note ?? "";

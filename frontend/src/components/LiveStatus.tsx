@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DonePayload } from "../api/types";
 import { cssVars } from "../lib/css";
+import { queriesText } from "../lib/format";
 import { currentStep, surveyProgress, type SurveyState } from "../state/survey";
 
 function useElapsed(startedAt: number, running: boolean): number {
@@ -19,14 +20,12 @@ function useElapsed(startedAt: number, running: boolean): number {
 
 const seconds = (value: number) => (value < 10 ? value.toFixed(1) : Math.round(value).toString());
 
-/** The finished survey in one line; the Qloo call count is the part a narrow screen drops. */
+/** The finished survey in one line; the Qloo query count is the part a narrow screen drops. */
 function Summary({ summary }: { summary: DonePayload | null }) {
   if (!summary) return <>Survey complete</>;
-  const calls = `${summary.qloo_calls} Qloo ${summary.qloo_calls === 1 ? "call" : "calls"}`;
-  const cached = summary.cache_hits ? ` · ${summary.cache_hits} from cache` : "";
   return (
     <>
-      Survey complete · {seconds(summary.seconds)} s<span className="live-extra"> · {calls}{cached}</span>
+      Survey complete · {seconds(summary.seconds)} s<span className="live-extra"> · {queriesText(summary)}</span>
     </>
   );
 }
