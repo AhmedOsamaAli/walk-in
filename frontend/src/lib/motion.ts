@@ -1,3 +1,11 @@
+import { createContext } from "react";
+
+/**
+ * True while the survey on screen was restored from its link, or brought back by Back or Forward, rather than streamed
+ * here: it appears as it ended, so nothing on it counts up or slides in again.
+ */
+export const Settled = createContext(false);
+
 export function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

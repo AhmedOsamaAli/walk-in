@@ -1,4 +1,4 @@
-import type { SurveyEvent } from "./types";
+import type { RecordedEvent, RunRecord, RunStatus, SurveyEvent } from "./types";
 
 /** One server-sent event with its JSON data parsed. */
 export interface ServerEvent {
@@ -79,4 +79,34 @@ const SURVEY_EVENTS: ReadonlySet<string> = new Set<SurveyEvent["event"]>([
 export function toSurveyEvent({ event, data }: ServerEvent): SurveyEvent | null {
   if (!SURVEY_EVENTS.has(event) || typeof data !== "object" || data === null) return null;
   return { event, data } as SurveyEvent;
+}
+
+const RUN_STATUSES: ReadonlySet<string> = new Set<RunStatus>(["running", "complete", "failed"]);
+
+function isRecordedEvent(value: unknown): value is RecordedEvent {
+  return (
+    Array.isArray(value) &&
+    value.length >= 3 &&
+    typeof value[0] === "string" &&
+    typeof value[2] === "number" &&
+    Number.isFinite(value[2])
+  );
+}
+
+/**
+ * A recorded run read from the server's JSON, or null when it is not one. Malformed events are dropped; the server only
+ * appends to the list, so every copy of it drops the same ones and counting events still finds the new ones.
+ */
+export function toRunRecord(value: unknown): RunRecord | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { id, status, created_at: createdAt, events } = value as Partial<Record<keyof RunRecord, unknown>>;
+  if (typeof id !== "string" || typeof status !== "string" || !RUN_STATUSES.has(status) || !Array.isArray(events)) {
+    return null;
+  }
+  return {
+    id,
+    status: status as RunStatus,
+    created_at: typeof createdAt === "string" ? createdAt : "",
+    events: events.filter(isRecordedEvent),
+  };
 }

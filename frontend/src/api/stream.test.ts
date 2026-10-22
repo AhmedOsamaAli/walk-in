@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEventParser, parseEvent, readEvents, toSurveyEvent, type ServerEvent } from "./stream";
+import { createEventParser, parseEvent, readEvents, toRunRecord, toSurveyEvent, type ServerEvent } from "./stream";
 
 function streamOf(chunks: Uint8Array<ArrayBuffer>[]): ReadableStream<Uint8Array<ArrayBuffer>> {
   return new ReadableStream<Uint8Array<ArrayBuffer>>({
@@ -99,5 +99,49 @@ describe("toSurveyEvent", () => {
     expect(toSurveyEvent({ event: "crowd", data: {} })).toBeNull();
     expect(toSurveyEvent({ event: "status", data: "walk" })).toBeNull();
     expect(toSurveyEvent({ event: "done", data: null })).toBeNull();
+  });
+});
+
+describe("toRunRecord", () => {
+  it("reads a recorded run and its timed events", () => {
+    const record = toRunRecord({
+      id: "3f9a0c1b2d4e",
+      status: "running",
+      created_at: "2026-10-22T14:06:56+00:00",
+      events: [
+        ["run", { run_id: "3f9a0c1b2d4e", llm: true }, 0.01],
+        ["status", { step: "walk", state: "running", label: "Tracing" }, 0.2],
+      ],
+    });
+    expect(record).toEqual({
+      id: "3f9a0c1b2d4e",
+      status: "running",
+      created_at: "2026-10-22T14:06:56+00:00",
+      events: [
+        ["run", { run_id: "3f9a0c1b2d4e", llm: true }, 0.01],
+        ["status", { step: "walk", state: "running", label: "Tracing" }, 0.2],
+      ],
+    });
+  });
+
+  it("drops malformed events and keeps the rest in order", () => {
+    const record = toRunRecord({
+      id: "r1",
+      status: "complete",
+      events: [["run", {}, 0], "status", ["status", {}], [7, {}, 1], ["finding", { text: "x" }, "2"], ["done", {}, 3]],
+    });
+    expect(record?.events).toEqual([
+      ["run", {}, 0],
+      ["done", {}, 3],
+    ]);
+    expect(record?.created_at).toBe("");
+  });
+
+  it("is null for anything that is not a recorded run", () => {
+    expect(toRunRecord(null)).toBeNull();
+    expect(toRunRecord("r1")).toBeNull();
+    expect(toRunRecord({ id: "r1", status: "paused", events: [] })).toBeNull();
+    expect(toRunRecord({ id: 1, status: "running", events: [] })).toBeNull();
+    expect(toRunRecord({ id: "r1", status: "running", events: {} })).toBeNull();
   });
 });

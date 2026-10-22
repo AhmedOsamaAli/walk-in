@@ -35,6 +35,9 @@ export function sectionNo(intent: Intent, id: SectionId): string {
   return sectionsFor(intent).find((section) => section.id === id)?.no ?? "";
 }
 
+/** The button that opens a concept's design sheet: focus returns to it when a sheet opened from a link closes. */
+export const posterButtonId = (index: number) => `poster-${index}-open`;
+
 /** The section in the middle of the viewport, among the sections that are on the page. */
 export function useSectionSpy(ready: readonly SectionId[]): SectionId | null {
   const [current, setCurrent] = useState<SectionId | null>(null);

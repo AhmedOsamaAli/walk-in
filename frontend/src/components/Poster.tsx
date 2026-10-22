@@ -2,6 +2,7 @@ import { useRef } from "react";
 import type { Concept } from "../api/types";
 import { cssVars } from "../lib/css";
 import { letter, list, priceLabel } from "../lib/format";
+import { posterButtonId } from "../lib/sections";
 import { CountUp } from "./CountUp";
 import { PriceAnchors } from "./Price";
 
@@ -77,7 +78,13 @@ export function Poster({ concept, index, onOpen }: PosterProps) {
         </p>
       ) : null}
       {inspired ? <p className="poster-insp mono">Inspired by {inspired}</p> : null}
-      <button ref={button} className="poster-open mono" type="button" aria-label={`Open design sheet: ${concept.name}`}>
+      <button
+        ref={button}
+        id={posterButtonId(index)}
+        className="poster-open mono"
+        type="button"
+        aria-label={`Open design sheet: ${concept.name}`}
+      >
         <span>Open design sheet</span>
         <span aria-hidden="true">→</span>
       </button>

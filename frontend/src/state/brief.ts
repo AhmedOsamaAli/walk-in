@@ -1,5 +1,5 @@
-import type { Focus, Intent, Kitchen, PlaceHit, RunRequest, WalkMinutes } from "../api/types";
-import { FOCUS_LABELS, floorArea, KITCHEN_LABELS } from "../lib/format";
+import type { Focus, Intent, Kitchen, PlaceCard, PlaceHit, RunRequest, RunSite, WalkMinutes } from "../api/types";
+import { FOCUS_LABELS, floorArea, isFocus, isIntent, isKitchen, KITCHEN_LABELS } from "../lib/format";
 import type { Site } from "./site";
 
 export type AreaUnit = "m2" | "ft2";
@@ -86,4 +86,37 @@ export function askedLine(run: RunRequest, place: PlaceHit | null): { label: str
     return { label: "Your place", line: [place?.name ?? run.label, genre].filter(Boolean).join(" · ") };
   }
   return { label: "Business", line: FOCUS_LABELS[run.focus] };
+}
+
+const isWalkMinutes = (value: unknown): value is WalkMinutes => value === 5 || value === 10 || value === 15;
+
+/**
+ * The site and brief a recorded survey was run with, as the server read them: its title block is rebuilt from them, and
+ * a new survey can start from them. `place` is the owner's place the run found, when improving it.
+ */
+export function briefOf(site: RunSite, place: PlaceCard | null): { site: Site; form: BriefForm } {
+  const intent = isIntent(site.intent) ? site.intent : "explore";
+  const placeId = intent === "improve" && typeof site.place_id === "string" ? site.place_id : "";
+  const size = typeof site.size_m2 === "number" && Number.isFinite(site.size_m2) ? site.size_m2 : null;
+  const form: BriefForm = {
+    ...initialBrief,
+    intent,
+    minutes: isWalkMinutes(site.minutes) ? site.minutes : initialBrief.minutes,
+    focus: isFocus(site.focus) ? site.focus : "any",
+    notes: typeof site.notes === "string" ? site.notes : "",
+    business: typeof site.business === "string" ? site.business : "",
+    place: placeId
+      ? {
+          id: placeId,
+          name: place?.name ?? site.label,
+          genres: place?.genres ?? [],
+          lat: place?.lat ?? site.lat,
+          lon: place?.lon ?? site.lon,
+        }
+      : null,
+    area: size === null ? "" : String(size),
+    kitchen: isKitchen(site.kitchen) ? site.kitchen : "unsure",
+    outdoor: site.outdoor === true ? "yes" : site.outdoor === false ? "no" : "unsure",
+  };
+  return { site: { id: null, label: site.label, lat: site.lat, lon: site.lon }, form };
 }

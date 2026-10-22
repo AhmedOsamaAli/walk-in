@@ -1,3 +1,5 @@
+import type { Ref } from "react";
+
 export interface TitleField {
   label: string;
   /** One entry per line, so a value breaks where it should, never mid-coordinate. */
@@ -12,10 +14,12 @@ interface SiteHeaderProps {
   label: string;
   fields: readonly TitleField[];
   onNewSurvey: () => void;
+  /** The site's name, where focus lands when a survey is restored or brought back. */
+  titleRef?: Ref<HTMLHeadingElement>;
 }
 
 /** The site under survey, with the survey's parameters set out like a drawing's title block. */
-export function SiteHeader({ eyebrow, label, fields, onNewSurvey }: SiteHeaderProps) {
+export function SiteHeader({ eyebrow, label, fields, onNewSurvey, titleRef }: SiteHeaderProps) {
   const [first = "", ...rest] = eyebrow.split(" ");
   return (
     <section className="sec site-head" aria-label={eyebrow}>
@@ -27,7 +31,9 @@ export function SiteHeader({ eyebrow, label, fields, onNewSurvey }: SiteHeaderPr
           New survey
         </button>
       </div>
-      <h2 className="site-title">{label}</h2>
+      <h2 ref={titleRef} className="site-title" tabIndex={-1}>
+        {label}
+      </h2>
       <dl className="title-block">
         {fields.map((field) => (
           <div key={field.label}>

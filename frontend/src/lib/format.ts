@@ -42,6 +42,11 @@ export const KITCHEN_LABELS: Record<Kitchen, string> = {
   none: "No kitchen",
 };
 
+export const isIntent = (value: unknown): value is Intent => typeof value === "string" && Object.hasOwn(INTENTS, value);
+export const isFocus = (value: unknown): value is Focus => typeof value === "string" && Object.hasOwn(FOCUS_LABELS, value);
+export const isKitchen = (value: unknown): value is Kitchen =>
+  typeof value === "string" && Object.hasOwn(KITCHEN_LABELS, value);
+
 /** The verdict on the owner's idea, as its stamp reads. */
 export const VERDICT_STAMPS: Record<VerdictLevel, string> = {
   strong: "Strong fit",

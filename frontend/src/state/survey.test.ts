@@ -1,37 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { GapRow, StepState, SurveyEvent } from "../api/types";
-import { currentStep, initialSurvey, surveyProgress, surveyReducer, type SurveyState } from "./survey";
+import type { RunSite, SurveyEvent } from "../api/types";
+import { gap, RAW, recordFrom, recordOf, RUN_EVENT, SITE, status, TIMELINE } from "./fixtures";
+import { currentStep, initialSurvey, RECORD_ENDED, RECORD_FAILED, surveyProgress, surveyReducer, type SurveyState } from "./survey";
 
 const started = surveyReducer(initialSurvey, { type: "start", startedAt: 1000 });
 
 function play(state: SurveyState, ...events: [SurveyEvent, number][]): SurveyState {
   return events.reduce((next, [event, at]) => surveyReducer(next, { type: "event", event, at }), state);
-}
-
-function status(step: string, state: StepState, label = `Step ${step}`): SurveyEvent {
-  return { event: "status", data: { step, state, label } };
-}
-
-function gap(genre: string, score: number, extra: Partial<GapRow> = {}): GapRow {
-  return {
-    genre_id: `urn:tag:genre:place:${genre.toLowerCase().replace(/ /g, "_")}`,
-    genre,
-    demand_rank: 2,
-    ref_rank: 6,
-    nearby_count: 2,
-    nearby_capped: false,
-    favorites_kind: "local",
-    favorites_total: 5,
-    favorites_far: 4,
-    median_favorite_km: 2.4,
-    expected_nearby: 3.5,
-    lift: 0.4,
-    relative_supply: 0.7,
-    leakage: 0.71,
-    evidence: "ok",
-    gap_score: score,
-    ...extra,
-  };
 }
 
 const done: SurveyEvent = { event: "done", data: { run_id: "r1", seconds: 41.3, qloo_calls: 57, cache_hits: 3 } };
@@ -261,5 +236,91 @@ describe("surveyReducer", () => {
     const opening = surveyReducer(initialSurvey, { type: "start", startedAt: 0, intent: "open" });
     expect(surveyProgress(steps(opening, ["walk", "block", "demand", "taste", "gaps", "verdict"]))).toBeCloseTo(6 / 7);
     expect(surveyProgress(steps(started, ["walk", "block", "demand", "taste", "gaps", "agent-0"]))).toBeCloseTo(5 / 6);
+  });
+
+  it("keeps the site and the intent the server read for the run", () => {
+    const opening = play(started, [{ event: "run", data: { run_id: "r9", llm: false, site: { ...SITE, intent: "open" } } }, 0]);
+    expect(opening.intent).toBe("open");
+    expect(opening.site).toMatchObject({ lat: SITE.lat, lon: SITE.lon, label: SITE.label, business: "" });
+    const odd = { lat: "30.2", lon: -97.7, label: "Pin", intent: "teleport" } as unknown as RunSite;
+    const unplaced = play(started, [{ event: "run", data: { run_id: "r9", llm: false, site: odd } }, 0]);
+    expect(unplaced).toMatchObject({ site: null, intent: "explore" });
+  });
+});
+
+describe("a recorded survey", () => {
+  const streamed = surveyReducer(play(started, ...TIMELINE), { type: "closed", at: 23.1 });
+  const restore = (record: ReturnType<typeof recordOf>) =>
+    surveyReducer(initialSurvey, { type: "restore", record, startedAt: 1000 });
+
+  it("replays into the very state its stream left, at the recorded times", () => {
+    const restored = restore(recordOf("complete"));
+    expect({ ...restored, recorded: null }).toEqual(streamed);
+    expect(restored).toMatchObject({ status: "complete", streaming: false, recorded: RAW.length, runId: "r1" });
+    expect(restored.log.map((line) => line.at)).toEqual([0.01, 0.01, 0.02, 1.42, 5.1, 9, 12.5, 21.6]);
+  });
+
+  it("merges only the events a newer copy adds, however often the same copy comes back", () => {
+    const early = restore(recordOf("running", 6));
+    expect(early).toMatchObject({ status: "running", streaming: true, recorded: 6, block: { places: [] }, gaps: null });
+    expect(surveyReducer(early, { type: "recorded", record: recordOf("running", 6) })).toBe(early);
+    const later = surveyReducer(early, { type: "recorded", record: recordOf("running", 13) });
+    expect(later.gaps?.map((row) => row.genre)).toEqual(["Seafood", "Wine Bar"]);
+    expect(surveyReducer(later, { type: "recorded", record: recordOf("running", 13) })).toBe(later);
+    const ended = surveyReducer(later, { type: "recorded", record: recordOf("complete") });
+    expect(surveyReducer(ended, { type: "recorded", record: recordOf("complete") })).toBe(ended);
+    expect({ ...ended, recorded: null }).toEqual(streamed);
+  });
+
+  it("stays complete while the late baseline is still to be recorded", () => {
+    const done = restore(recordOf("running", RAW.length - 1));
+    expect(done).toMatchObject({ status: "complete", streaming: true, baseline: [] });
+    const late = surveyReducer(done, { type: "recorded", record: recordOf("complete") });
+    expect(late).toMatchObject({ status: "complete", streaming: false, baseline: [{ name: "Coffee shop" }] });
+  });
+
+  it("shows a failed run and its error as the live view showed them", () => {
+    const failing: [SurveyEvent, number][] = [
+      [RUN_EVENT, 0.01],
+      [status("walk", "running", "Tracing"), 0.02],
+      [{ event: "error", data: { message: "Qloo is unavailable." } }, 2],
+      [{ event: "done", data: { run_id: "r1", seconds: 2.1, qloo_calls: 3, cache_hits: 0 } }, 2.1],
+    ];
+    const live = surveyReducer(play(started, ...failing), { type: "closed", at: 2.2 });
+    const restored = restore(recordFrom("failed", failing));
+    expect({ ...restored, recorded: null }).toEqual(live);
+    expect(restored).toMatchObject({ status: "failed", streaming: false, error: "Qloo is unavailable." });
+  });
+
+  it("fails a run that ended before it finished, closing the steps it left running", () => {
+    const restored = restore(recordOf("failed", 5));
+    expect(restored).toMatchObject({ status: "failed", streaming: false, error: RECORD_ENDED });
+    expect(restored.steps.map((step) => [step.step, step.state])).toEqual([
+      ["walk", "done"],
+      ["block", "failed"],
+    ]);
+    expect(restored.log.at(-1)).toMatchObject({ kind: "err", text: RECORD_ENDED, at: 1.42 });
+  });
+
+  it("shows the failure of a run the server recorded as failed though its events finished", () => {
+    const restored = restore(recordOf("failed"));
+    expect(restored).toMatchObject({ status: "failed", streaming: false, error: RECORD_FAILED, concepts: streamed.concepts });
+    expect(restored.log.at(-1)).toMatchObject({ kind: "err", text: RECORD_FAILED, at: 23 });
+    const polled = surveyReducer(restore(recordOf("running", RAW.length - 1)), { type: "recorded", record: recordOf("failed") });
+    expect({ ...polled, recorded: null }).toEqual({ ...restored, recorded: null });
+  });
+
+  it("ignores copies of another run, and copies while a run streams live", () => {
+    const restored = restore(recordOf("running", 6));
+    expect(surveyReducer(restored, { type: "recorded", record: { ...recordOf("complete"), id: "r2" } })).toBe(restored);
+    const live = play(started, [RUN_EVENT, 0.01]);
+    expect(surveyReducer(live, { type: "recorded", record: recordOf("complete") })).toBe(live);
+  });
+
+  it("starts each restore from scratch and counts it as a new run", () => {
+    const first = restore(recordOf("complete"));
+    const second = surveyReducer(first, { type: "restore", record: recordOf("running", 2), startedAt: 5000 });
+    expect(second).toMatchObject({ run: 2, startedAt: 5000, recorded: 2, gaps: null, concepts: null, summary: null });
+    expect(second.log).toHaveLength(3);
   });
 });

@@ -11,7 +11,10 @@ interface SurveyMapProps {
   minutes: number;
   /** The survey view is showing: the legend is up and clicks no longer drop pins. */
   surveying: boolean;
-  /** Counts survey runs; a new value frames the walk and starts the radar. */
+  /**
+   * Counts survey runs, and is 0 on the brief: a new value (a run started, or shown again) frames the walk, and the
+   * radar sweeps it while the run streams.
+   */
   run: number;
   streaming: boolean;
   places: PlaceCard[] | null;
@@ -29,6 +32,8 @@ export function SurveyMap({ theme, site, walk, minutes, surveying, run, streamin
   });
   const beginRun = useEffectEvent(() => {
     controller.current?.startRun(minutes);
+    // A survey shown after it ended (restored, or brought back by Forward) is framed without the radar.
+    if (!streaming) controller.current?.finishRun();
   });
 
   useEffect(() => {

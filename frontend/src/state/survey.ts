@@ -7,6 +7,8 @@ import type {
   ImprovePayload,
   Intent,
   PlaceCard,
+  RunRecord,
+  RunSite,
   StatusPayload,
   StepState,
   SurveyEvent,
@@ -14,7 +16,8 @@ import type {
   Verdict,
   Walk,
 } from "../api/types";
-import { agentText, replayText, secondsText, VERDICT_STAMPS } from "../lib/format";
+import { toSurveyEvent } from "../api/stream";
+import { agentText, isIntent, replayText, secondsText, VERDICT_STAMPS } from "../lib/format";
 
 /** Each intent's fixed pipeline. Only these steps move the progress bar: the agent's "agent-N" steps vary in number. */
 export const PIPELINE_STEPS: Record<Intent, readonly string[]> = {
@@ -57,6 +60,10 @@ export interface SurveyState {
   /** performance.now() when the run started. */
   startedAt: number;
   runId: string | null;
+  /** The site and brief as the server read them. */
+  site: RunSite | null;
+  /** How many of a recorded run's events are applied; null for a run streamed live. */
+  recorded: number | null;
   log: LogLine[];
   steps: Step[];
   /** The owner's place, when improving it. */
@@ -86,6 +93,8 @@ export const initialSurvey: SurveyState = {
   streaming: false,
   startedAt: 0,
   runId: null,
+  site: null,
+  recorded: null,
   log: [],
   steps: [],
   place: null,
@@ -108,10 +117,19 @@ export const initialSurvey: SurveyState = {
 export type SurveyAction =
   | { type: "start"; startedAt: number; intent?: Intent }
   | { type: "event"; event: SurveyEvent; at: number }
+  /** A recorded run, shown from scratch as if it had just streamed. */
+  | { type: "restore"; record: RunRecord; startedAt: number }
+  /** A newer copy of the recorded run on screen: only the events not applied yet count. */
+  | { type: "recorded"; record: RunRecord }
   | { type: "failed"; message: string; at: number }
   | { type: "closed"; at: number }
   | { type: "toggleGap"; index: number }
   | { type: "reset" };
+
+/** Why a recorded run that ended without its "done" event failed. */
+export const RECORD_ENDED = "The survey stopped before it finished.";
+/** Why a run the server recorded as failed failed, when its events do not say. */
+export const RECORD_FAILED = "The survey ran into an error, so parts of it may be missing.";
 
 function append(state: SurveyState, line: Omit<LogLine, "id">): SurveyState {
   return { ...state, log: [...state.log, { ...line, id: state.log.length }] };
@@ -156,12 +174,28 @@ function stop(state: SurveyState, message: string, at: number): SurveyState {
   return { ...failed, error: message };
 }
 
+/** The run's site, when it has a position to show on the map. */
+function runSite(value: unknown): RunSite | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { lat, lon, label } = value as Partial<Record<keyof RunSite, unknown>>;
+  if (typeof lat !== "number" || typeof lon !== "number" || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { ...(value as RunSite), label: typeof label === "string" && label ? label : "Selected site" };
+}
+
 function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyState {
   switch (event.event) {
     case "run": {
       const mode = event.data.llm ? "LLM agent with Qloo tools" : "evidence rules (no LLM key set)";
       const understood = event.data.understood ?? [];
-      const started = note({ ...state, runId: event.data.run_id, understood }, at, "info", `Survey ${event.data.run_id} started · ${mode}`);
+      const site = runSite(event.data.site);
+      const asked = site?.intent;
+      const intent = isIntent(asked) ? asked : state.intent;
+      const started = note(
+        { ...state, runId: event.data.run_id, site, intent, understood },
+        at,
+        "info",
+        `Survey ${event.data.run_id} started · ${mode}`,
+      );
       return understood.length ? note(started, at, "info", `Read from your notes: ${understood.join(", ")}`) : started;
     }
     case "status":
@@ -223,6 +257,29 @@ function onEvent(state: SurveyState, event: SurveyEvent, at: number): SurveyStat
   }
 }
 
+/**
+ * Applies the recorded events this state has not seen yet, at their recorded times, exactly as if they had just
+ * streamed. Once the record has ended nothing more arrives: a run it left unfinished, or recorded as failed, has failed.
+ */
+function replay(state: SurveyState, record: RunRecord): SurveyState {
+  const applied = state.recorded ?? 0;
+  const fresh = record.events.slice(applied);
+  const ended = record.status !== "running";
+  if (!fresh.length && (!ended || !state.streaming)) return state;
+  const next = fresh.reduce<SurveyState>(
+    (current, [name, data, at]) => {
+      const event = toSurveyEvent({ event: name, data });
+      return event ? onEvent(current, event, at) : current;
+    },
+    { ...state, recorded: applied + fresh.length },
+  );
+  if (!ended) return next;
+  const last = record.events.at(-1)?.[2] ?? 0;
+  if (next.status === "running") return stop(next, RECORD_ENDED, last);
+  if (record.status === "failed" && next.status !== "failed") return stop(next, RECORD_FAILED, last);
+  return { ...next, streaming: false };
+}
+
 export function surveyReducer(state: SurveyState, action: SurveyAction): SurveyState {
   switch (action.type) {
     case "start":
@@ -236,6 +293,14 @@ export function surveyReducer(state: SurveyState, action: SurveyAction): SurveyS
       };
     case "event":
       return onEvent(state, action.event, action.at);
+    case "restore":
+      return replay(
+        { ...initialSurvey, run: state.run + 1, status: "running", streaming: true, startedAt: action.startedAt, recorded: 0 },
+        action.record,
+      );
+    case "recorded":
+      if (state.recorded === null || (state.runId !== null && state.runId !== action.record.id)) return state;
+      return replay(state, action.record);
     case "failed":
       if (state.status !== "running") return { ...note(state, action.at, "err", action.message), streaming: false };
       return stop(state, action.message, action.at);

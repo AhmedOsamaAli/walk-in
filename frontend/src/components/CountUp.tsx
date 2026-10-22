@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { prefersReducedMotion } from "../lib/motion";
+import { useContext, useEffect, useRef } from "react";
+import { prefersReducedMotion, Settled } from "../lib/motion";
 
 interface CountUpProps {
   value: number;
@@ -7,15 +7,16 @@ interface CountUpProps {
   className?: string;
 }
 
-/** A number that counts up from zero when it appears. */
+/** A number that counts up from zero when it appears, unless the survey it is on was restored as it ended. */
 export function CountUp({ value, decimals = 0, className }: CountUpProps) {
   const element = useRef<HTMLSpanElement>(null);
+  const settled = useContext(Settled);
+  const target = Number.isFinite(value) ? value : 0;
 
   useEffect(() => {
     // Writes go to React's own text node, so React and the animation never fight over the element.
     const text = element.current?.firstChild;
-    if (!text) return;
-    const target = Number.isFinite(value) ? value : 0;
+    if (!text || settled) return;
     if (prefersReducedMotion()) {
       text.nodeValue = target.toFixed(decimals);
       return;
@@ -29,11 +30,11 @@ export function CountUp({ value, decimals = 0, className }: CountUpProps) {
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [value, decimals]);
+  }, [target, decimals, settled]);
 
   return (
     <span ref={element} className={className}>
-      {(0).toFixed(decimals)}
+      {(settled ? target : 0).toFixed(decimals)}
     </span>
   );
 }

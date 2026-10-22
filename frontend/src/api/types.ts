@@ -324,11 +324,31 @@ export interface BaselineConcept {
   genre?: string;
 }
 
+/**
+ * The site and brief as the server read them, sent with the run event. A recorded run can come from another version of
+ * the app, so the brief's values are checked before use.
+ */
+export interface RunSite {
+  lat: number;
+  lon: number;
+  label: string;
+  focus?: string;
+  notes?: string;
+  minutes?: number;
+  size_m2?: number | null;
+  kitchen?: string | null;
+  outdoor?: boolean | null;
+  intent?: string;
+  business?: string;
+  place_id?: string;
+}
+
 export interface RunPayload {
   run_id: string;
   llm: boolean;
   /** What the server read from the owner's notes as rules ("no alcohol", "budget prices ($–$$)"). */
   understood?: string[];
+  site?: RunSite;
 }
 
 export type StepState = "running" | "done" | "failed";
@@ -376,6 +396,19 @@ export type SurveyEvent =
   | { event: "notice"; data: { message: string } }
   | { event: "error"; data: { message: string } }
   | { event: "done"; data: DonePayload };
+
+export type RunStatus = "running" | "complete" | "failed";
+
+/** One server-sent event of a recorded run: its name, its data and its time in seconds since the run started. */
+export type RecordedEvent = [event: string, data: unknown, t: number];
+
+/** A survey run as the server recorded it (GET /api/runs/{id}); its events grow while it runs. */
+export interface RunRecord {
+  id: string;
+  status: RunStatus;
+  created_at: string;
+  events: RecordedEvent[];
+}
 
 export interface RunRequest {
   lat: number;

@@ -1,3 +1,4 @@
+import { toRunRecord } from "./stream";
 import type {
   Design,
   GeocodeResult,
@@ -5,6 +6,7 @@ import type {
   PlaceHit,
   Preset,
   RenderResult,
+  RunRecord,
   RunRequest,
   Walk,
   WalkMinutes,
@@ -65,6 +67,12 @@ export const api = {
   design: (runId: string, index: number) => request<Design>("/api/design", post({ run_id: runId, index })),
   render: (runId: string, index: number, shot: string) =>
     request<RenderResult>("/api/render", post({ run_id: runId, index, shot })),
+  /** A survey as the server recorded it; a 404 means it is gone. */
+  run: async (id: string, signal?: AbortSignal): Promise<RunRecord> => {
+    const record = toRunRecord(await request<unknown>(`/api/runs/${encodeURIComponent(id)}`, { signal }));
+    if (!record) throw new Error("The server sent a survey this app cannot read.");
+    return record;
+  },
 };
 
 /** The survey's query: what the owner wants, and the unit when they described it. */

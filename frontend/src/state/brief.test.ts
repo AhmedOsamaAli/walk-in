@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { runParams } from "../api/client";
+import type { RunSite } from "../api/types";
 import { floorArea } from "../lib/format";
-import { initialBrief, missing, runRequest, unitLine, type BriefForm } from "./brief";
+import { briefOf, initialBrief, missing, runRequest, unitLine, type BriefForm } from "./brief";
 
 const site = { id: "east_austin", label: "East Austin, Texas", lat: 30.2622, lon: -97.7247 };
 const place = { id: "4F04-6D7D", name: "Suerte", genres: ["Mexican"], lat: 30.26228, lon: -97.72328 };
@@ -49,5 +50,52 @@ describe("brief", () => {
     const params = new URLSearchParams(runParams(run));
     expect(params.get("place_id")).toBe("4F04-6D7D");
     expect(params.has("size_m2") || params.has("kitchen") || params.has("outdoor")).toBe(false);
+  });
+
+  it("rebuilds a recorded survey's brief, which asks the server for the same survey again", () => {
+    const run = runRequest(
+      site,
+      form({ intent: "open", business: "bakery", minutes: 15, notes: "halal", area: "650", areaUnit: "ft2", kitchen: "light", outdoor: "yes" }),
+    );
+    const recorded: RunSite = {
+      lat: run.lat,
+      lon: run.lon,
+      label: run.label,
+      focus: run.focus,
+      notes: run.notes,
+      minutes: run.minutes,
+      size_m2: run.sizeM2 ?? null,
+      kitchen: run.kitchen ?? null,
+      outdoor: run.outdoor ?? null,
+      intent: run.intent,
+      business: run.business ?? "",
+      place_id: "",
+    };
+    const brief = briefOf(recorded, null);
+    expect(brief.site).toEqual({ id: null, label: site.label, lat: site.lat, lon: site.lon });
+    expect(brief.form).toMatchObject({ intent: "open", business: "bakery", minutes: 15, area: "60.4", areaUnit: "m2" });
+    expect(runParams(runRequest(brief.site, brief.form))).toBe(runParams(run));
+  });
+
+  it("finds the owner's place again in a recorded improve survey", () => {
+    const recorded: RunSite = { ...site, label: "Suerte", minutes: 10, intent: "improve", place_id: place.id };
+    const brief = briefOf(recorded, { name: "Suerte", genres: ["Mexican"], lat: place.lat, lon: place.lon });
+    expect(brief.form.place).toEqual({ id: place.id, name: "Suerte", genres: ["Mexican"], lat: place.lat, lon: place.lon });
+    expect(missing(brief.site, brief.form)).toBeNull();
+    expect(runRequest(brief.site, brief.form)).toMatchObject({ intent: "improve", placeId: place.id });
+  });
+
+  it("falls back to the brief's defaults for values it does not know", () => {
+    const odd: RunSite = {
+      lat: 1,
+      lon: 2,
+      label: "Pin",
+      intent: "teleport",
+      focus: "space",
+      minutes: 7,
+      kitchen: "huge",
+      size_m2: Number.NaN,
+    };
+    expect(briefOf(odd, null).form).toEqual(initialBrief);
   });
 });

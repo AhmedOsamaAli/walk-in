@@ -108,6 +108,8 @@ function unitSummary(form: BriefForm): string {
 
 interface BriefProps {
   hidden: boolean;
+  /** Why the link the page was opened with shows the brief instead, say a survey that is no longer available. */
+  notice: string | null;
   site: Site | null;
   walk: Walk | null;
   form: BriefForm;
@@ -117,7 +119,7 @@ interface BriefProps {
   onSurvey: () => void;
 }
 
-export function Brief({ hidden, site, walk, form, onForm, onSite, onPlace, onSurvey }: BriefProps) {
+export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlace, onSurvey }: BriefProps) {
   const go = useRef<HTMLButtonElement>(null);
   const fromBrief = useRef(false);
   const { intent } = form;
@@ -149,6 +151,7 @@ export function Brief({ hidden, site, walk, form, onForm, onSite, onPlace, onSur
 
   return (
     <section id="s-brief" className="sec brief" hidden={hidden}>
+      {notice ? <p className="brief-notice">{notice}</p> : null}
       <fieldset className="intents">
         <legend className="mono">
           <b>00</b>

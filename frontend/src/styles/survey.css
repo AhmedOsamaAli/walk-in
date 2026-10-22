@@ -73,6 +73,15 @@
   transition: background .35s var(--ease), color .35s;
 }
 .ghost:hover { background: var(--ink); color: var(--on-ink); }
+/* Focus lands on the site's name when a survey is restored; a heading is not a control, so it draws no ring. */
+.site-title:focus { outline: none; }
+
+/* ---------- A survey's link while it loads ---------- */
+.opening p { color: var(--ash); }
+.opening p::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
+
+/* A restored survey, or one brought back by Back or Forward, is on the page as it ended: nothing slides in again. */
+.sheet[data-settled] :is(.live, .sec.reveal, .log li, .gap, .poster, .moves li, .stamp) { animation: none; }
 
 /* ---------- 01 Log, newest line first ---------- */
 .log-meta { margin: -6px 0 16px; color: var(--ash); }
