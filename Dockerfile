@@ -29,4 +29,6 @@ RUN useradd --create-home --uid 10001 walkin \
 USER walkin
 
 EXPOSE 8000
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# Render's proxy terminates HTTPS; trusting its X-Forwarded-Proto lets the app see https (secure cookies, absolute URLs).
+# Only that proxy can reach the container, so any forwarding address is trusted.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
