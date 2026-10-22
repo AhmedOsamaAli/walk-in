@@ -151,13 +151,13 @@ def claims(run: RunState, concept: dict, row: dict | None) -> list[dict]:
             "proof": f"{item['places']} of the {plural(genre)} locals love {'is' if item['places'] == 1 else 'are'} "
                      f"known for it; none inside the walk is.",
         })
-    km, far, total = row.get("median_favorite_km"), row.get("favorites_far", 0), row.get("favorites_total", 0)
-    if row.get("favorites_kind") == "local" and (row.get("leakage") or 0) >= TRAVEL and far >= 3 and km:
+    km, far, total = row.get("median_far_km"), row.get("favorites_far", 0), row.get("favorites_total", 0)
+    if row.get("favorites_kind") == "local" and (row.get("leakage") or 0) >= TRAVEL and far >= 3:
         out.append({
             "kind": "closer",
             "line": f"{scoring.genre_title(genre)} without crossing town",
-            "proof": f"{far} of the {total} {plural(genre)} locals love more than the city does are outside the walk, "
-                     f"a median {km} km away.",
+            "proof": f"{far} of the {total} {plural(genre)} people here love more than the city does are outside the "
+                     f"walk{f', a median {km} km away' if km else ''}.",
         })
     themes = Counter(theme for card in row.get("competitors") or [] for theme in card.get("complaints") or [])
     for theme, places in themes.most_common(2):

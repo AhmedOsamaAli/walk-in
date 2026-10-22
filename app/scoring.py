@@ -1007,6 +1007,7 @@ def gap_signals(
     locations = [loc for loc in (place_location(f) for f in favorites) if loc]
     distances = [distance_m(site[0], site[1], *loc) for loc in locations]
     far = [loc for loc in locations if not within(*loc)]
+    far_distances = [distance_m(site[0], site[1], *loc) for loc in far]
     return {
         "genre_id": genre_id,
         "genre": genre_name,
@@ -1020,6 +1021,8 @@ def gap_signals(
         "favorites_total": len(locations),
         "favorites_far": len(far),
         "median_favorite_km": round(median(distances) / 1000, 1) if distances else None,
+        # How far people go for the favorites outside the walk: the trip a place inside it would save them.
+        "median_far_km": round(median(far_distances) / 1000, 1) if far_distances else None,
         "storefront_share": round(storefront, 2),
     }
 

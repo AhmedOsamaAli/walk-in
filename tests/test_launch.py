@@ -38,7 +38,8 @@ INSIDE = [bakery("Corner Loaf", 4, 1), bakery("Dawn Rolls", 8, 1)]
 def gap_row() -> dict:
     row = {
         "genre": "Bakery", "genre_id": LOVED[0]["tags"][0]["id"], "demand_rank": 6, "nearby_count": 2,
-        "favorites_kind": "local", "favorites_far": 3, "favorites_total": 3, "leakage": 1.0, "median_favorite_km": 2.1,
+        "favorites_kind": "local", "favorites_far": 3, "favorites_total": 3, "leakage": 1.0, "median_favorite_km": 1.4,
+        "median_far_km": 2.1,
         "_favorite_entities": LOVED, "favorites": [{**scoring.place_card(e), "within_walk": False} for e in LOVED],
         "_nearby_entities": INSIDE, "competitors": [scoring.place_card(e) for e in INSIDE],
     }

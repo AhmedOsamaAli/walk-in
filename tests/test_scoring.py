@@ -254,6 +254,9 @@ def test_gap_signals_counts_favorites_outside_the_walk():
     assert row["ref_rank"] == 10.0
     assert row["favorites_kind"] == "local"
     assert row["median_favorite_km"] is not None
+    # The trip saved is measured over the far favorite only, not diluted by the one already close by.
+    assert row["median_far_km"] == round(scoring.distance_m(*site, 40.7200, -73.9900) / 1000, 1)
+    assert row["median_far_km"] > row["median_favorite_km"]
 
 
 def test_score_gaps_prefers_local_lift_and_relative_undersupply():
