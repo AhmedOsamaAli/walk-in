@@ -39,6 +39,86 @@ def fits(row: dict) -> bool:
     return (row.get("fit") or {}).get("fits", True) and not row.get("ruled_out")
 
 
+# ---------- OpenStreetMap ----------
+
+def osm_extra(row: dict) -> list[dict]:
+    """The places of the kind OpenStreetMap shows inside the walk that Qloo does not list there (row['osm'])."""
+    return (row.get("osm") or {}).get("extra") or []
+
+
+def supply(row: dict) -> int:
+    """Places of the kind inside the walk, Qloo's and OpenStreetMap's extras: what the gap is scored on."""
+    return scoring.supply_count(row)
+
+
+def osm_names(row: dict, limit: int = 4) -> str:
+    """'Joe's Bakery & Coffee Shop and Insomnia Cookies'; past `limit` names, how many more."""
+    names = [place["name"] for place in osm_extra(row)]
+    if len(names) > limit:
+        return f"{', '.join(names[:limit])} and {len(names) - limit} more"
+    return scoring.natural_list(names)
+
+
+def osm_count_text(row: dict) -> str:
+    """'2 more bakeries' (beyond Qloo's), or '2 bakeries' when Qloo lists none."""
+    n = len(osm_extra(row))
+    kind = singular(row["genre"]) if n == 1 else plural(row["genre"])
+    return f"{n} {'more ' if row['nearby_count'] else ''}{kind}"
+
+
+def osm_line(row: dict) -> str | None:
+    """'OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list: Joe's Bakery & Coffee Shop and
+    Insomnia Cookies.'"""
+    if not osm_extra(row):
+        return None
+    return f"OpenStreetMap shows {osm_count_text(row)} inside the walk that Qloo doesn't list: {osm_names(row)}."
+
+
+def unchecked_line(row: dict) -> str | None:
+    """Why a count of Qloo's alone was not cross-checked; None when it was, or when the cross-check is off."""
+    osm = row.get("osm") or {}
+    if osm.get("checked") or osm.get("reason") in (None, "off"):
+        return None
+    if osm["reason"] == "unmapped":
+        return (f"Not cross-checked: no OpenStreetMap tag reliably marks {plural(row['genre'])}, so this count is "
+                f"Qloo's alone.")
+    return "Not cross-checked: OpenStreetMap did not answer in time, so this count is Qloo's alone."
+
+
+def price_caution(row: dict) -> str | None:
+    """Price claims about the places inside the walk rest on Qloo's price levels; this says when OpenStreetMap shows
+    places there whose prices nobody lists."""
+    return osm_caution(row, "Prices are Qloo's", "its price is" if len(osm_extra(row)) == 1 else "their prices are")
+
+
+def osm_caution(row: dict, whose: str, unknown: str) -> str | None:
+    """'Prices are Qloo's: OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list, and their prices
+    are not known.' None when OpenStreetMap adds no place: a claim about the places Qloo lists inside the walk stands as
+    stated, with this caution when there are others."""
+    if not osm_extra(row):
+        return None
+    return (f"{whose}: OpenStreetMap shows {osm_count_text(row)} inside the walk that Qloo doesn't list, and {unknown} "
+            f"not known.")
+
+
+def osm_check_text(row: dict) -> str | None:
+    """The cross-check in words for the agent, so it knows what the count of places within the walk holds."""
+    osm = row.get("osm") or {}
+    if not osm or osm.get("reason") == "off":
+        return None
+    if not osm.get("checked"):
+        return unchecked_line(row) or osm.get("note")
+    if osm_extra(row):
+        return (f"the places within the walk are {row['nearby_count']} Qloo lists and {len(osm_extra(row))} only "
+                f"OpenStreetMap shows ({osm_names(row, limit=6)}); nothing is known of those places' ratings, prices "
+                f"or reviews")
+    if osm.get("note"):
+        return osm["note"]
+    if not osm.get("count"):
+        return f"OpenStreetMap shows no {singular(row['genre'])} inside the walk either"
+    return f"OpenStreetMap shows {osm['count']} inside the walk, all of them places Qloo lists"
+
+
 # ---------- Words ----------
 
 # Words that keep their capital inside a sentence: nationalities and cuisines ('Mexican', 'Middle Eastern', 'Tex-Mex').
@@ -171,6 +251,7 @@ def open_price_note(row: dict, ladder: list[dict]) -> str | None:
     step = max(open_steps, key=lambda s: (s["loved"], s["level"]))
     level = dollars(step["level"])
     priced = "" if loved == len(example_places(row)) else " that list a price"
+    # Only said when the walk has priced places of the kind, so price_evidence's basis carries any caution about them.
     return (f"No {level} {singular(row['genre'])} inside the walk, while {step['loved']} of the {loved} "
             f"{plural(row['genre'])} people here love{priced} are {level}: that price level is open.")
 
@@ -253,11 +334,16 @@ def price_evidence(row: dict, constraints: Constraints | None = None, block: dic
         basis += f" {budget['basis']}"
     elif chosen != level:
         basis += f" Set to {dollars(chosen)} by your notes."
+    caution = price_caution(row) if nearby or budget else None
+    if caution:
+        basis += f" {caution}"
     ladder = price_ladder(row)
     out = {
         "level": chosen, "evidence_level": level, "loved": loved, "nearby": nearby, "basis": basis,
         "ladder": ladder, "open_note": open_price_note(row, ladder), "anchors": price_anchors(row, chosen),
     }
+    if caution:
+        out["caution"] = caution
     if budget:
         out["budget"] = budget
     return out
@@ -407,7 +493,7 @@ def offer_items(row: dict, constraints: Constraints | None = None, limit: int = 
 def _shape(row: dict) -> dict:
     expected = row.get("expected_nearby")
     relative = row.get("relative_supply", 1)
-    under = expected is not None and (relative <= UNDER or row["nearby_count"] == 0 and expected >= 1)
+    under = expected is not None and (relative <= UNDER or supply(row) == 0 and expected >= 1)
     over = relative >= OVER and not row.get("around_capped")
     travel = row.get("favorites_kind") == "local" and (row.get("leakage") or 0) >= TRAVEL and row["favorites_far"] >= 3
     stronger = (row.get("lift") or 0) >= STRONGER
@@ -427,7 +513,7 @@ def gap_reading(row: dict) -> str:
     if s["under"]:
         return "Under-supplied"
     if s["travel"]:
-        return "Locals travel for it"
+        return "People here travel for it"
     if s["over"]:
         return "Crowded"
     if s["stronger"]:
@@ -438,13 +524,16 @@ def gap_reading(row: dict) -> str:
 
 
 def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
-    """The row in plain sentences: demand against the areas around, supply against density, where people here
-    travel."""
+    """The row in plain sentences: demand against the areas around, supply against density (with the places only
+    OpenStreetMap shows inside the walk), where people here travel."""
     genre = in_sentence(row["genre"])
     lines = [_demand_line(row, genre)]
-    supply = _supply_line(row, minutes)
-    if supply:
-        lines.append(supply)
+    supply_line = _supply_line(row, minutes)
+    if supply_line:
+        lines.append(supply_line)
+    extra = osm_line(row)
+    if extra:
+        lines.append(extra)
     travel = _travel_line(row)
     if travel:
         lines.append(travel)
@@ -452,6 +541,10 @@ def gap_evidence(row: dict, minutes: int = 10) -> list[str]:
         lines.append(f"Thin evidence: Qloo knows at most one {singular(row['genre'])} in the surrounding area.")
     elif row.get("evidence") == "atypical":
         lines.append(f"The {plural(row['genre'])} people here love are mostly in hotels or malls, so the comparison is weak.")
+    # A count that says the kind is missing or short, when OpenStreetMap could not confirm it.
+    unchecked = unchecked_line(row) if _shape(row)["under"] else None
+    if unchecked:
+        lines.append(unchecked)
     return lines
 
 
@@ -474,14 +567,19 @@ def _demand_line(row: dict, genre: str) -> str:
 
 
 def _supply_line(row: dict, minutes: int) -> str | None:
-    nearby = row["nearby_count"]
-    here = f"{count_of(row['genre'], nearby, row.get('nearby_capped'))} inside the {minutes}-minute walk"
+    """Places of the kind inside the walk against what a block this dense holds; with OpenStreetMap's extras, the count
+    is both maps' and says how it splits."""
+    nearby, total, capped = row["nearby_count"], supply(row), bool(row.get("nearby_capped"))
+    here = f"{count_of(row['genre'], total, capped)} inside the {minutes}-minute walk"
+    if total > nearby:
+        qloo = f"{nearby}{'+' if capped else ''} on Qloo" if nearby else "none on Qloo"
+        here += f" ({qloo}, {total - nearby} {'more ' if nearby else ''}on OpenStreetMap)"
     expected = row.get("expected_nearby")
     if expected is None:
         return f"{here}."
     typical = f"at least {number(expected)}" if row.get("around_capped") else f"about {number(expected)}"
     s = _shape(row)
-    if nearby == 0:
+    if total == 0:
         return f"{here}, where a block this dense usually has {typical}."
     if s["under"]:
         return f"Only {here}, where a block this dense usually has {typical}."
@@ -559,19 +657,28 @@ def competition(row: dict, minutes: int, constraints: Constraints | None = None)
     earnest = {p.get("name") for p in competitor_places(row)}
     rivals = [c for c in cards if c["name"] in earnest] or cards
     parts = []
-    if not row["nearby_count"]:
+    total = supply(row)
+    if not total:
         _, favorites = storefront_favorites(row)
         nearest = min((f for f in favorites if f.get("distance_m")), key=lambda f: f["distance_m"], default=None)
         parts.append(f"{count_of(row['genre'], 0)} competes inside the {minutes}-minute walk" + (
             f"; the nearest one people here love is {nearest['name']}, {nearest['distance_m'] / 1000:.1f} km away."
             if nearest else "."
         ))
+    elif not row["nearby_count"]:
+        # Only OpenStreetMap shows the competition: its names, and nothing about ratings or reviews.
+        parts.append(f"{count_of(row['genre'], 0)} Qloo lists competes inside the {minutes}-minute walk, but OpenStreetMap "
+                     f"shows {osm_count_text(row)} there: {osm_names(row)}.")
     elif rivals:
         best = max(rivals, key=lambda c: (c.get("rating") or 0))
         detail = ", ".join(x for x in (f"{best['rating']}★" if best.get("rating") else "", dollars(best.get("price_level"))) if x)
         known = scoring.natural_list((best.get("known_for") or [])[:2])
-        lead = (f"{count_of(row['genre'], row['nearby_count'], row.get('nearby_capped'))} inside the walk; "
-                f"{'the best rated is' if row['nearby_count'] > 1 else 'it is'} {best['name']}")
+        also = f", {len(osm_extra(row))} of them only on OpenStreetMap" if osm_extra(row) else ""
+        if osm_extra(row):
+            who = "the best rated on Qloo is" if row["nearby_count"] > 1 else "the one on Qloo is"
+        else:
+            who = "the best rated is" if total > 1 else "it is"
+        lead = f"{count_of(row['genre'], total, row.get('nearby_capped'))} inside the walk{also}; {who} {best['name']}"
         parts.append(lead + (f" ({detail})" if detail else "") + (f", known for {known}." if known else "."))
         themes = Counter(theme for c in cards for theme in c.get("complaints") or [])
         moves = [(theme, COMPLAINT_MOVES.get(theme[:1].upper() + theme[1:])) for theme, _ in themes.most_common(2)]
@@ -581,8 +688,10 @@ def competition(row: dict, minutes: int, constraints: Constraints | None = None)
             parts.append(f"Their reviews complain about {said}: {'; '.join(move for _, move in moves)}.")
     items = [i["item"].lower() for i in offer_items(row, constraints) if i["new_here"]][:3]
     if items:
+        # Only Qloo's places carry reviews, so the claim is about the ones it lists.
+        listed = " that Qloo lists" if osm_extra(row) else ""
         parts.append(f"Stand apart with what the {plural(row['genre'])} people here love are known for and none inside the "
-                     f"walk is: {scoring.natural_list(items)}.")
+                     f"walk{listed} is: {scoring.natural_list(items)}.")
     return " ".join(parts)
 
 
@@ -590,7 +699,7 @@ def risk(row: dict, minutes: int) -> str:
     """The biggest risk the evidence shows, stated with its numbers."""
     genre = in_sentence(row["genre"])
     s = _shape(row)
-    nearby = row["nearby_count"]
+    nearby = supply(row)
     if row.get("evidence") == "thin":
         return f"Thin evidence: Qloo knows at most one {singular(row['genre'])} in the surrounding area, so treat this as a hypothesis."
     if row.get("evidence") == "atypical":
@@ -683,7 +792,7 @@ def gap_summary(g: dict) -> dict:
         "people_here_rank_it": g["demand_rank"] if g["demand_rank"] < scoring.UNRANKED else "outside their top 50",
         "median_rank_in_6_same_size_areas_around": g["ref_rank"],
         "demand_compared_with_areas_around": demand_comparison(g),
-        "places_within_walk": f"{g['nearby_count']}{'+' if g['nearby_capped'] else ''}",
+        "places_within_walk": f"{supply(g)}{'+' if g['nearby_capped'] else ''}",
         "typical_for_a_block_this_dense": (
             f"at least {g['expected_nearby']}" if g.get("around_capped") and g["expected_nearby"] is not None else g["expected_nearby"]
         ),
@@ -692,6 +801,9 @@ def gap_summary(g: dict) -> dict:
         "evidence": g["evidence"],
         "gap_score": g["gap_score"],
     }
+    cross = osm_check_text(g)
+    if cross:
+        summary["openstreetmap_cross_check"] = cross
     price = g.get("price")
     if price and price.get("evidence_level"):
         summary["price_evidence"] = price["basis"]
@@ -733,7 +845,7 @@ def inspect_payload(run: RunState, row: dict) -> dict:
         else "the_citys_famous_places_of_this_type"
     )
     offer = offer_items(row, run.constraints, limit=8)
-    return {
+    payload = {
         "genre": row["genre"],
         "competitors_within_walk": [
             {k: c.get(k) for k in ("name", "rating", "price_level", "known_for", "complaints", "distance_m")}
@@ -750,6 +862,11 @@ def inspect_payload(run: RunState, row: dict) -> dict:
         "price_evidence": (row.get("price") or price_evidence(row, run.constraints, block_price(run)))["basis"],
         "design_dna_of_these_places": scoring.design_dna(entities),
     }
+    if osm_extra(row):
+        payload["competitors_only_openstreetmap_shows_within_walk"] = [
+            {"name": p["name"], "distance_m": p.get("distance_m")} for p in osm_extra(row)[:8]
+        ]
+    return payload
 
 
 def short_label(label: str) -> str:

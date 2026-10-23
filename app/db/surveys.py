@@ -1,23 +1,44 @@
-"""Surveys and their design sheets in the database."""
+"""Surveys and their design sheets in the database.
+
+A finished survey's state runs to megabytes of JSON, so it is stored compressed: zlib (level 6) of compact JSON, packed
+and unpacked in a worker thread so the event loop keeps serving while it is done.
+"""
 from __future__ import annotations
 
+import asyncio
+import json
+import zlib
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, exists, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 
 from .database import Database
-from .tables import campaigns, designs, kits, orders, surveys, utcnow
+from .tables import designs, surveys, utcnow
 
 # INSERT ... ON CONFLICT DO NOTHING is spelled the same on both databases, but SQLAlchemy builds it per dialect.
 INSERTS = {"sqlite": sqlite.insert, "postgresql": postgresql.insert}
 # A survey takes a minute or two; one still marked running long after it started was cut off by a restart.
 STALE_AFTER = timedelta(minutes=15)
+COMPRESSION_LEVEL = 6
 
 
 def survey_status(status: str, created_at: datetime, now: datetime) -> str:
     """A saved survey's status as the page should see it: 'failed' when a restart cut it off while it ran."""
     return "failed" if status == "running" and now - created_at > STALE_AFTER else status
+
+
+def pack_state(state: dict) -> bytes:
+    """A run's state as stored: zlib of compact JSON in UTF-8."""
+    try:
+        text = json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate in the data, which UTF-8 cannot hold: escape it instead
+        text = json.dumps(state, separators=(",", ":")).encode("utf-8")
+    return zlib.compress(text, COMPRESSION_LEVEL)
+
+
+def unpack_state(blob: bytes) -> dict:
+    return json.loads(zlib.decompress(blob).decode("utf-8"))
 
 
 class SurveyStore:
@@ -39,18 +60,25 @@ class SurveyStore:
     async def finish(
         self, run_id: str, status: str, events: list[list], state: dict | None, headline: str | None = None,
     ) -> None:
-        """Records how a survey ended: its status, every event it streamed, the run's final state and its headline
-        (the top concept's name, or the top gap)."""
-        values = {"status": status, "events": events, "state": state}
+        """Records how a survey ended: its status, every event it streamed, the run's final state (compressed) and its
+        headline (the top concept's name, or the top gap)."""
+        values = {"status": status, "events": events, "state": await asyncio.to_thread(pack_state, state) if state else None}
         if headline:
             values["headline"] = headline[:200]
         async with self._engine.begin() as connection:
             await connection.execute(update(surveys).where(surveys.c.id == run_id).values(**values))
 
-    async def get(self, run_id: str) -> dict | None:
+    async def get(self, run_id: str, *, with_state: bool = True) -> dict | None:
+        """A survey as saved, its state unpacked (None while it runs); without its state when it is not needed."""
+        columns = surveys.c if with_state else [column for column in surveys.c if column.name != "state"]
         async with self._engine.connect() as connection:
-            row = (await connection.execute(select(surveys).where(surveys.c.id == run_id))).mappings().first()
-        return dict(row) if row else None
+            row = (await connection.execute(select(*columns).where(surveys.c.id == run_id))).mappings().first()
+        if not row:
+            return None
+        found = dict(row)
+        if found.get("state") is not None:
+            found["state"] = await asyncio.to_thread(unpack_state, found["state"])
+        return found
 
     async def save_design(self, run_id: str, idx: int, sheet: dict) -> None:
         """Keeps a concept's design sheet; when two requests design the same concept, the first sheet saved stays."""
@@ -64,18 +92,10 @@ class SurveyStore:
             return {idx: sheet for idx, sheet in rows}
 
     async def purge(self, older_than_days: int) -> int:
-        """Deletes surveys older than this, with their design sheets, unless a signed-in user keeps them in My places
-        or an order or a campaign refers to them.
-
-        Kits come with orders; they are checked too, so the purge can never break a foreign key and stop a startup.
-        """
+        """Deletes surveys older than this, with their design sheets, unless a signed-in user keeps them in My places."""
         cutoff = utcnow() - timedelta(days=older_than_days)
         async with self._engine.begin() as connection:
-            result = await connection.execute(delete(surveys).where(
-                surveys.c.created_at < cutoff,
-                surveys.c.user_id.is_(None),
-                ~exists().where(orders.c.survey_id == surveys.c.id),
-                ~exists().where(kits.c.survey_id == surveys.c.id),
-                ~exists().where(campaigns.c.survey_id == surveys.c.id),
-            ))
+            result = await connection.execute(
+                delete(surveys).where(surveys.c.created_at < cutoff, surveys.c.user_id.is_(None))
+            )
         return result.rowcount

@@ -13,19 +13,12 @@ services:
         value: https://hackathon.api.qloo.com
       - key: DATABASE_URL
         sync: false
-      - key: PAYPAL_CLIENT_ID
-        sync: false
-      - key: PAYPAL_CLIENT_SECRET
-        sync: false
-      - key: PAYPAL_ENV
-        value: sandbox
-      - key: PAYPAL_WEBHOOK_ID
-        sync: false
       - key: PUBLIC_URL
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
-      - key: CRON_SECRET
+      # Shared with the Cloudflare Pages front door (frontend/functions), which sends the visitor's address with it.
+      - key: PROXY_SECRET
         sync: false
       - key: LLM_API_KEY
         sync: false

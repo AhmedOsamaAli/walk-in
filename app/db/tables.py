@@ -1,9 +1,9 @@
 """The database's tables, as SQLAlchemy Core. The migrations in migrations/ create them; keep both in step.
 
 Users sign in with Google; a session row holds only the SHA-256 of its cookie. The app writes surveys and their design
-sheets, for anyone, and records the signed-in user and the browser (device) that ran each. Orders, kits, campaigns,
-pledges and PayPal events are for launch kits and pledges paid with PayPal: amounts are integer cents (whole units for
-currencies without cents), and ids that come from PayPal are PayPal's.
+sheets, for anyone, and records the signed-in user and the browser (device) that ran each. A finished survey's state is
+kept as zlib-compressed JSON (app.db.surveys): it runs to megabytes, and compresses about sevenfold. Launch kits, one
+per survey concept, live and go with their survey.
 """
 from __future__ import annotations
 
@@ -11,16 +11,17 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     Column,
     DateTime,
     Dialect,
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
+    UniqueConstraint,
 )
 from sqlalchemy.types import TypeDecorator
 
@@ -100,7 +101,8 @@ surveys = Table(
     Column("lon", Float, nullable=False),
     Column("request", JSON, nullable=False),  # the site and the owner's brief, as asked
     Column("events", JSON, nullable=False),  # every event as streamed: [event, data, seconds since the start]
-    Column("state", JSON),  # the finished run (app.survey.snapshot), so it can still be designed after a restart
+    # The finished run (app.survey.snapshot) as zlib-compressed JSON, so it can still be designed after a restart.
+    Column("state", LargeBinary),
     _user(),  # who ran it, when signed in (or who signed in later in the same browser)
     Column("device_id", String(32), index=True),  # the browser that ran it: its walkin_device cookie
     Column("headline", String(200)),  # the top concept's name, or the top gap, for My places
@@ -114,86 +116,16 @@ designs = Table(
     _created(),
 )
 
-orders = Table(
-    "orders", metadata,
-    Column("id", String(64), primary_key=True),  # the PayPal order id
-    Column("survey_id", String(32), ForeignKey("surveys.id"), nullable=False, index=True),
-    Column("idx", Integer, nullable=False),
-    Column("product", String(32), nullable=False),  # launch_kit | pledge
-    Column("amount_cents", Integer, nullable=False),
-    Column("currency", String(3), nullable=False),
-    Column("status", String(24), nullable=False, index=True),  # created | pending | completed | failed | refunded
-    Column("capture_id", String(64)),
-    Column("payer_id", String(64)),
-    Column("environment", String(8), nullable=False),  # sandbox | live
-    _created(),
-    _updated(),
-    _user(),  # the buyer
-)
-
 kits = Table(
     "kits", metadata,
-    Column("token", String(64), primary_key=True),
-    Column("order_id", String(64), ForeignKey("orders.id"), nullable=False, unique=True),
-    Column("survey_id", String(32), ForeignKey("surveys.id"), nullable=False, index=True),
-    Column("idx", Integer, nullable=False),
-    Column("status", String(16), nullable=False, index=True),  # building | ready | failed | refunded
-    Column("payload", JSON),
-    _created(),
-    _updated(),
-    _user(),  # the owner
-    Column("name", String(200)),  # the business's name
+    Column("token", String(64), primary_key=True),  # random, in the kit's link: anyone with the link can open the kit
+    Column("survey_id", String(32), ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False),
+    Column("idx", Integer, nullable=False),  # the concept's position in the survey's concepts
+    Column("status", String(16), nullable=False),  # building | ready | failed
+    Column("name", String(200)),  # the business's name, for the kit's page and My places
+    Column("payload", JSON),  # app.survey.kit.build_kit's kit, dossier included, once ready
     Column("error", String(500)),  # why the last build failed, in plain words
-)
-
-campaigns = Table(
-    "campaigns", metadata,
-    Column("id", String(32), primary_key=True),
-    Column("survey_id", String(32), ForeignKey("surveys.id"), nullable=False, index=True),
-    Column("idx", Integer, nullable=False),
-    Column("owner_token_hash", String(64)),  # unused since owners sign in
-    Column("title", String(200), nullable=False),
-    Column("offer", JSON, nullable=False),  # the page: pitch, perks, how it works, discount, business and concept
-    Column("amount_cents", Integer, nullable=False),
-    Column("currency", String(3), nullable=False),
-    Column("goal_count", Integer, nullable=False),
-    Column("deadline", UTCDateTime, nullable=False),
-    Column("status", String(16), nullable=False, index=True),  # open | funded | partial | collected | expired | cancelled
     _created(),
     _updated(),
-    _user(),  # the owner
-    Column("kit_token", String(64), ForeignKey("kits.token"), index=True),  # the kit it started from
-    Column("closed_at", UTCDateTime),  # when the owner closed or cancelled it before the deadline
-    Column("funded", Boolean),  # decided once it closes: whether it met its goal; null until then
-    Column("report", JSON),  # the last settlement's report, in plain words
-)
-
-pledges = Table(
-    "pledges", metadata,
-    Column("id", String(32), primary_key=True),
-    Column("campaign_id", String(32), ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True),
-    Column("order_id", String(64), nullable=False, unique=True),
-    Column("authorization_id", String(64)),
-    Column("amount_cents", Integer, nullable=False),
-    Column("status", String(16), nullable=False, index=True),  # created | authorized | declined | captured | voided | expired | failed
-    Column("payer_id", String(64)),
-    _created(),
-    Column("authorized_at", UTCDateTime),
-    Column("expires_at", UTCDateTime),
-    Column("captured_at", UTCDateTime),
-    _updated(),
-    Column("reauthorization_id", String(64)),  # the renewed hold, captured instead of the original
-    Column("reauthorized_at", UTCDateTime),
-    Column("capture_id", String(64)),
-    Column("error", String(64)),  # PayPal's code for why the last settlement could not finish it
-    Column("withdraw_token_hash", String(64), unique=True),  # SHA-256 of the supporter's withdraw link token
-)
-
-paypal_events = Table(
-    "paypal_events", metadata,
-    Column("id", String(64), primary_key=True),  # PayPal's event id, so a redelivered webhook is handled once
-    Column("event_type", String(64), nullable=False),
-    Column("resource_id", String(64)),
-    Column("received_at", UTCDateTime, nullable=False, default=utcnow),
-    Column("payload", JSON, nullable=False),
+    UniqueConstraint("survey_id", "idx"),  # one kit per concept
 )

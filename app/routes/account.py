@@ -1,17 +1,11 @@
 """Public settings, sign-in (Google, or a development login), sign-out, the signed-in user, My places and deleting the
-account.
-
-Other parts of the app may add to the public settings and to My places without this module knowing them:
-app.state.config_parts holds functions (request) -> dict, and app.state.places_parts coroutines
-(request, user, now) -> dict, whose keys are merged into the answers.
-"""
+account."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import IntegrityError
 
 from .. import auth
 from ..config import settings
@@ -42,12 +36,9 @@ def limit_sign_ins(request: Request) -> None:
 
 
 @router.get("/config")
-async def public_config(request: Request) -> dict:
+async def public_config() -> dict:
     """What the web app needs to know before anyone signs in: how to sign in."""
-    config = {"google_client_id": settings.google_client_id or None, "dev_login": settings.dev_login}
-    for part in request.app.state.config_parts:
-        config.update(part(request))
-    return config
+    return {"google_client_id": settings.google_client_id or None, "dev_login": settings.dev_login}
 
 
 @router.post("/auth/google")
@@ -101,25 +92,25 @@ async def me(request: Request) -> dict:
 async def delete_me(request: Request, user: auth.SignedIn) -> Response:
     """Deletes the account: the user, all their sessions (on every device) and the surveys in their My places, with
     their design sheets. This browser forgets its session and its device id."""
-    try:
-        await auth.delete_account(request, user)
-    except IntegrityError as exc:
-        raise HTTPException(
-            409, "Other records still refer to this account, so it cannot be deleted here. Contact us and we will delete it.",
-        ) from exc
+    await auth.delete_account(request, user)
     return Response(status_code=204)
 
 
 @router.get("/me/places")
 async def places(request: Request, user: auth.SignedIn) -> dict:
-    """The user's surveys, newest first, at most 100."""
+    """The user's surveys and the launch kits made for them, newest first, at most 100 of each."""
     state = request.app.state
     now = state.now()
-    found: dict = {"surveys": [{
-        "id": row["id"], "label": row["label"], "intent": row["intent"],
-        "status": survey_status(row["status"], row["created_at"], now), "created_at": iso(row["created_at"]),
-        "headline": row["headline"], "url": f"/s/{row['id']}",
-    } for row in await state.accounts.surveys(user["id"], PLACES)]}
-    for part in state.places_parts:
-        found.update(await part(request, user, now))
-    return found
+    surveys = await state.accounts.surveys(user["id"], PLACES)
+    kits = await state.kits.owned_by(user["id"], PLACES)
+    return {
+        "surveys": [{
+            "id": row["id"], "label": row["label"], "intent": row["intent"],
+            "status": survey_status(row["status"], row["created_at"], now), "created_at": iso(row["created_at"]),
+            "headline": row["headline"], "url": f"/s/{row['id']}",
+        } for row in surveys],
+        "kits": [{
+            "token": row["token"], "survey_id": row["survey_id"], "index": row["idx"], "name": row["name"] or "",
+            "status": row["status"], "created_at": iso(row["created_at"]), "url": f"/k/{row['token']}",
+        } for row in kits],
+    }

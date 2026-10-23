@@ -1,4 +1,4 @@
-"""The launch kit an owner buys for one concept: ad copy for each channel of the launch plan, a poster drawn from the
+"""The launch kit for one concept (free for now): ad copy for each channel of the launch plan, a poster drawn from the
 walk, tracked links and the decision dossier.
 
 The model writes the copy; deterministic checks read every line against the plan's claims, so an ad never states a
@@ -25,7 +25,6 @@ from urllib.parse import urlencode
 from .. import scoring
 from ..answers import AnswerCache, fingerprint
 from ..llm import LLM
-from ..payments.pledges import DISCOUNT
 from . import launch
 from .concepts import COMMON_NAME_WORDS, place_names
 from .constraints import Constraints
@@ -110,6 +109,17 @@ SUPERLATIVE = re.compile(
     r"(?:top|highest|best)[- ]rated|(?:world[- ])?famous|renowned|legendary|iconic|award[- ]winning|unbeat(?:able|en)|"
     r"unmatched|unrivall?ed|unparalleled|ultimate|world[- ]class|best[- ]in[- ]class|lowest[- ]priced|lowest prices?|"
     r"most (?:popular|loved|beloved|famous|authentic|delicious|trusted|celebrated))\b",
+    re.IGNORECASE,
+)
+# Price promises: percentages, discounts, freebies, credits, deals and savings ("gluten-free" is not one). The ads make
+# no offer: one is the owner's to make.
+DISCOUNT = re.compile(
+    r"\d\s*%|\bper\s?cent\b|\bdiscount|\bcoupons?\b|\bvouchers?\b|\bpromo(?:tion|tional|s)?\b|\bdeals?\b|\bbargains?\b|"
+    r"\bcheaper\b|\b(?:half|reduced|special|lower|best|members?|founders?'?|founding|early[- ]bird)[- ]prices?\b|"
+    r"\bearly[- ]bird\b|(?<![-\w])free\b(?!-)|\bcomplimentary\b|\bon the house\b|\bgratis\b|\bbogo\b|"
+    r"\b(?:2|two)[- ]for[- ](?:1|one)\b|\bbuy one\b|\bcash ?back\b|\brebates?\b|\bcredits?\b(?!\s*cards?)|"
+    r"\bsav(?:e|es|ing)\s+(?:\$|€|£|\d|up\s+to|money|on)|\bsavings\b|\$\s?\d[\d.,]*\s+off\b|\d\s*%\s*off\b|\bhalf[- ]off\b|"
+    r"\bon sale\b|\boff\s+(?:your|every|each|all|any|the\s+(?:first|bill|menu|price))\b|\blifetime\b|\bfor life\b",
     re.IGNORECASE,
 )
 WEB = re.compile(

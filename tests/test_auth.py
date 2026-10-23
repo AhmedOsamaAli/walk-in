@@ -214,6 +214,7 @@ def test_surveys_run_in_this_browser_are_kept_at_sign_in(google):
             "created_at": newest["created_at"], "headline": newest["headline"], "url": f"/s/{newest['id']}",
         }
         assert newest["headline"] and newest["created_at"].endswith("Z")
+        assert places["kits"] == []
         owners = [row["user_id"] for row in rows(client, surveys)]
         assert owners.count(user["id"]) == 2 and owners.count(None) == 1
 

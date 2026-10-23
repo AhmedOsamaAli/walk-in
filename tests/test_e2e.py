@@ -832,7 +832,7 @@ def test_a_survey_stopped_by_a_shutdown_is_saved_as_failed(database_url):
 def test_shared_links_open_the_web_app_and_leave_the_api_alone():
     with make_client() as client:
         home = client.get("/")
-        for path in ("/s/abc123", "/k/kit-token", "/p/campaign1"):
+        for path in ("/s/abc123", "/me", "/privacy"):
             page = client.get(path)
             assert page.status_code == 200 and page.text == home.text
             for header in ("content-security-policy", "x-content-type-options", "referrer-policy", "cache-control"):

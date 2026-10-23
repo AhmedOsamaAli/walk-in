@@ -1,4 +1,5 @@
-"""Persistence: database URLs, the test-database guard, migrations, the survey store and snapshots of runs."""
+"""Persistence: database URLs, the test-database guard, migrations, the survey store (with its compressed states) and
+snapshots of runs."""
 from __future__ import annotations
 
 import asyncio
@@ -7,6 +8,7 @@ import os
 import ssl
 import subprocess
 import sys
+import zlib
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -21,8 +23,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app import config, main
 from app.config import ROOT, Settings
-from app.db import Database, SurveyStore, async_url
-from app.db.tables import campaigns, designs, kits, metadata, orders
+from app.db import AccountStore, Database, KitStore, SurveyStore, async_url
+from app.db.surveys import pack_state, unpack_state
+from app.db.tables import designs, kits, metadata, surveys
 from app.images import ImageGen
 from app.llm import LLM
 from app.survey import design, pipeline, snapshot
@@ -153,7 +156,7 @@ def test_the_alembic_command_line_migrates_the_database_it_is_given(database_url
         await database.dispose()
         return names
 
-    assert {"surveys", "designs", "orders", "kits", "campaigns", "pledges", "paypal_events"} <= set(asyncio.run(tables()))
+    assert {"surveys", "designs", "kits", "users", "sessions"} <= set(asyncio.run(tables()))
 
 
 def test_the_survey_store_keeps_a_survey_and_its_design_sheets(database_url):
@@ -186,39 +189,55 @@ def test_the_survey_store_keeps_a_survey_and_its_design_sheets(database_url):
     assert sheets == {0: {"name": "Tide & Table"}, 2: {"name": "Slurp"}}  # the first sheet saved for a concept stays
 
 
-def test_old_surveys_are_purged_unless_an_order_or_a_campaign_refers_to_them(database_url):
-    long_ago, lately = datetime.now(UTC) - timedelta(days=90), datetime.now(UTC) - timedelta(days=5)
-    names = ("old", "ordered", "kitted", "pledged", "recent")
+def test_a_finished_survey_s_state_is_stored_compressed(database_url):
+    state = {"site": {"label": "Zamalek, Cairo — جزيرة الزمالك"}, "gaps": [{"genre": "Café", "score": 0.5}] * 400,
+             "summary": {"top_genres": [["Bakery", 3]]}}
 
-    async def purge() -> tuple[int, list[str], list]:
+    async def keep() -> tuple[bytes, dict, dict]:
         database = await migrated(database_url)
-        surveys = SurveyStore(database)
-        for run_id in names:
-            await surveys.start(run_id, REQUEST, lately if run_id == "recent" else long_ago)
-        await surveys.save_design("old", 0, {"name": "Gone with its survey"})
-        async with database.engine.begin() as connection:
-            await connection.execute(orders.insert().values(
-                id="PAYPAL-ORDER-1", survey_id="ordered", idx=0, product="launch_kit", amount_cents=1900, currency="USD",
-                status="COMPLETED", environment="sandbox",
-            ))
-            # A kit pointing at another survey than its order would break a foreign key if that survey were deleted.
-            await connection.execute(kits.insert().values(
-                token="kit-token", order_id="PAYPAL-ORDER-1", survey_id="kitted", idx=0, status="ready",
-            ))
-            await connection.execute(campaigns.insert().values(
-                id="campaign1", survey_id="pledged", idx=0, owner_token_hash="0" * 64, title="Tide & Table",
-                offer={"item": "Oysters"}, amount_cents=2500, currency="USD", goal_count=50,
-                deadline=datetime.now(UTC) + timedelta(days=30), status="open",
-            ))
-        purged = await surveys.purge(60)
-        kept = [run_id for run_id in names if await surveys.get(run_id)]
+        store = SurveyStore(database)
+        await store.start("run1", REQUEST, datetime.now(UTC))
+        await store.finish("run1", "complete", [], state, "Café")
+        async with database.engine.connect() as connection:
+            raw = (await connection.execute(select(surveys.c.state).where(surveys.c.id == "run1"))).scalar_one()
+        whole, light = await store.get("run1"), await store.get("run1", with_state=False)
+        await database.dispose()
+        return raw, whole, light
+
+    raw, whole, light = asyncio.run(keep())
+    compact = json.dumps(state, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    assert isinstance(raw, bytes) and zlib.decompress(raw) == compact  # compact JSON, non-ASCII kept as UTF-8
+    assert raw == pack_state(state) and len(raw) < len(compact) // 10
+    assert whole["state"] == state and unpack_state(raw) == state
+    assert "state" not in light and light["headline"] == "Café" and light["status"] == "complete"
+    # A lone surrogate cannot be UTF-8; it is escaped instead, and comes back the same.
+    odd = {"label": "broken \ud83d text"}
+    assert unpack_state(pack_state(odd)) == odd
+
+
+def test_old_surveys_are_purged_with_their_kits_unless_a_signed_in_user_keeps_them(database_url):
+    long_ago, lately = datetime.now(UTC) - timedelta(days=90), datetime.now(UTC) - timedelta(days=5)
+
+    async def purge() -> tuple[int, list[str], list, list[str]]:
+        database = await migrated(database_url)
+        store, accounts, kit_store = SurveyStore(database), AccountStore(database), KitStore(database)
+        user = await accounts.sign_in("google:1", "owner@example.com", "Olive Owner", None)
+        await store.start("old", REQUEST, long_ago)
+        await store.start("kept", REQUEST, long_ago, user_id=user["id"])
+        await store.start("recent", REQUEST, lately)
+        await store.save_design("old", 0, {"name": "Gone with its survey"})
+        await kit_store.create("old", 0, token="old-kit", name="Gone too")
+        await kit_store.create("kept", 0, token="kept-kit", name="Kept")
+        purged = await store.purge(60)
+        kept = [run_id for run_id in ("old", "kept", "recent") if await store.get(run_id)]
         async with database.engine.connect() as connection:
             sheets = (await connection.execute(select(designs))).all()
+            tokens = list((await connection.execute(select(kits.c.token))).scalars())
         await database.dispose()
-        return purged, kept, sheets
+        return purged, kept, sheets, tokens
 
-    purged, kept, sheets = asyncio.run(purge())
-    assert purged == 1 and kept == ["ordered", "kitted", "pledged", "recent"] and sheets == []
+    purged, kept, sheets, tokens = asyncio.run(purge())
+    assert purged == 1 and kept == ["kept", "recent"] and sheets == [] and tokens == ["kept-kit"]
 
 
 async def survey(**brief) -> RunState:

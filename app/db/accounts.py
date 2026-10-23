@@ -81,10 +81,8 @@ class AccountStore:
         return result.rowcount
 
     async def delete(self, user_id: str) -> list[str]:
-        """Deletes a user, their sessions and their surveys (the design sheets go with them); the surveys' ids.
-
-        IntegrityError when other records still refer to the user or to one of their surveys: nothing is deleted then.
-        """
+        """Deletes a user, their sessions and their surveys (the design sheets go with them) in one transaction; the
+        surveys' ids."""
         async with self._engine.begin() as connection:
             owned = list((await connection.execute(select(surveys.c.id).where(surveys.c.user_id == user_id))).scalars())
             await connection.execute(delete(sessions).where(sessions.c.user_id == user_id))

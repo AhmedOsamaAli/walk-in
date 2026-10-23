@@ -1,4 +1,5 @@
-"""A survey run: the walk, the block, demand, taste and gaps from Qloo, then what the owner asked for, streamed as events.
+"""A survey run: the walk, the block, demand, taste and gaps from Qloo, the gaps cross-checked with the places
+OpenStreetMap shows inside the walk, then what the owner asked for, streamed as events.
 
 Intents: "explore" designs the three strongest concepts; "open" first judges the business the owner wants to open and
 designs it first; "improve" compares the owner's existing place with the places people here love in its category.
@@ -11,9 +12,9 @@ import time
 import uuid
 from datetime import UTC, datetime
 
-from .. import engine, scoring
+from .. import engine, osm, scoring
 from ..answers import AnswerCache
-from ..catchment import CatchmentService
+from ..catchment import Catchment, CatchmentService
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError, track_reads
 from . import constraints, intents
@@ -22,6 +23,8 @@ from .evidence import annotate, public_gap
 from .models import Emit, RunState, RunStore, Site
 
 log = logging.getLogger("walkin")
+
+OSM_FAILED = "OpenStreetMap did not answer in time, so the gaps rest on Qloo's places alone and say they were not cross-checked."
 
 
 def read_notes(site: Site) -> constraints.Constraints:
@@ -38,11 +41,13 @@ def read_notes(site: Site) -> constraints.Constraints:
 
 async def analyze_site(
     q: QlooClient, walker: CatchmentService, llm: LLM, store: RunStore, site: Site, emit: Emit,
-    answers: AnswerCache | None = None, run_id: str | None = None,
+    answers: AnswerCache | None = None, run_id: str | None = None, osm_client: osm.OsmClient | None = None,
 ) -> RunState:
     run = RunState(id=run_id or uuid.uuid4().hex[:12], site=site, constraints=read_notes(site))
     started, calls_before, hits_before = time.time(), q.calls, q.cache_hits
     reads = track_reads()
+    osm.track(None)
+    checking: asyncio.Future | None = None
     await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood})
 
     async def step(name: str, label: str, coro):
@@ -68,13 +73,18 @@ async def analyze_site(
         )
         run.catchment = catchment
         await emit("catchment", catchment.public())
-        block, (genres, cues), taste = await asyncio.gather(
-            step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_block(q, catchment)),
+        # OpenStreetMap is asked alongside Qloo; the gaps wait for it only once Qloo's evidence is in.
+        check = osm.track(osm.CrossCheck(None, catchment))
+        if osm_client is not None:
+            checking = asyncio.ensure_future(cross_check(osm_client, catchment, check, emit))
+        (block, closed), (genres, cues), taste = await asyncio.gather(
+            step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_walk(q, catchment)),
             step("demand", "Ranking what people here engage with against six same-size areas around",
                  engine.demand_genres(q, catchment)),
             step("taste", "Finding the brands, artists, films, shows and podcasts this area over-indexes on",
                  engine.local_taste(q, site.lat, site.lon)),
         )
+        check.learn(block + closed)
         run.block, run.genres, run.cues, run.taste = block, genres, cues, taste
         run.summary = scoring.summarize_block(block)
         await emit("block", {
@@ -86,7 +96,7 @@ async def analyze_site(
 
         gaps = await step(
             "gaps", "Comparing supply with the surroundings and finding places people here love more than the rest of the city",
-            engine.gap_table(q, catchment, genres, site.focus),
+            engine.gap_table(q, catchment, genres, site.focus, checking if checking is not None else check),
         )
         run.gaps = [annotate(run, row) for row in gaps]
         await emit("gaps", {"rows": [public_gap(g) for g in run.gaps]})
@@ -102,6 +112,8 @@ async def analyze_site(
     except QlooError as exc:
         await emit("error", {"message": str(exc)})
     finally:
+        if checking is not None and not checking.done():
+            checking.cancel()  # the survey stopped before its gaps needed OpenStreetMap
         store.add(run)
         calls, hits = q.calls - calls_before, q.cache_hits - hits_before
         await emit("done", {
@@ -115,6 +127,17 @@ async def analyze_site(
             "data_as_of": datetime.fromtimestamp(reads.oldest, UTC).isoformat() if reads.oldest else None,
         })
     return run
+
+
+async def cross_check(client: osm.OsmClient, catchment: Catchment, check: osm.CrossCheck, emit: Emit) -> osm.CrossCheck:
+    """Fills the survey's cross-check with the places OpenStreetMap shows inside the walk, as a step of its own; when no
+    instance answers in time, the step fails, the log says why and the survey goes on."""
+    await emit("status", {"step": "osm", "state": "running", "label": osm.LABEL})
+    check.scan = await client.scan(catchment)
+    await emit("status", {"step": "osm", "state": "done" if check.checked else "failed", "label": osm.LABEL})
+    if not check.checked:
+        await emit("notice", {"message": OSM_FAILED})
+    return check
 
 
 async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, answers: AnswerCache | None) -> None:

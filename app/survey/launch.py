@@ -19,7 +19,10 @@ from .evidence import (
     dollars,
     example_places,
     offer_items,
+    osm_caution,
+    osm_extra,
     plural,
+    price_caution,
     singular,
     storefront_favorites,
     tag_share,
@@ -140,16 +143,17 @@ def claims(run: RunState, concept: dict, row: dict | None) -> list[dict]:
             "kind": "only",
             "line": f"The only {dollars(level)} {singular(genre)} within a {minutes}-minute walk",
             "proof": f"None of the {priced_inside} {plural(genre)} inside the walk that list a price is {dollars(level)}; "
-                     f"{step['loved']} of the {plural(genre)} locals love are.",
+                     f"{step['loved']} of the {plural(genre)} locals love are." + _caution(price_caution(row)),
         })
     signature = {str(item).lower() for item in concept.get("signature") or []}
     new_items = [i for i in offer_items(row, run.constraints, limit=8) if i["new_here"] and i["item"].lower() in signature]
+    unknown = "what it is known for is" if len(osm_extra(row)) == 1 else "what they are known for is"
     for item in new_items[:2]:
         out.append({
             "kind": "new",
             "line": f"{item['item']}, which no {singular(genre)} within a {minutes}-minute walk is known for",
             "proof": f"{item['places']} of the {plural(genre)} locals love {'is' if item['places'] == 1 else 'are'} "
-                     f"known for it; none inside the walk is.",
+                     f"known for it; none inside the walk is." + _caution(osm_caution(row, "Reviews are Qloo's", unknown)),
         })
     km, far, total = row.get("median_far_km"), row.get("favorites_far", 0), row.get("favorites_total", 0)
     if row.get("favorites_kind") == "local" and (row.get("leakage") or 0) >= TRAVEL and far >= 3:
@@ -171,6 +175,11 @@ def claims(run: RunState, concept: dict, row: dict | None) -> list[dict]:
             })
             break
     return out
+
+
+def _caution(text: str | None) -> str:
+    """A claim about the places Qloo lists inside the walk stands; when OpenStreetMap shows others, its proof says so."""
+    return f" {text}" if text else ""
 
 
 def domain(url: str) -> str:

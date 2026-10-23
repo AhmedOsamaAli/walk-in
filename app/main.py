@@ -19,21 +19,22 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, engine, sales, schemas, scoring
+from . import auth, engine, schemas, scoring
 from .answers import AnswerCache
 from .catchment import ALLOWED_MINUTES, CatchmentService
 from .config import ROOT, settings
-from .db import AccountStore, Database, SurveyStore
+from .db import AccountStore, Database, KitStore, SurveyStore
 from .db.surveys import survey_status
 from .db.tables import utcnow
 from .geocode import Geocoder
 from .images import Images, explain_failure
+from .kits import KitBuilder
 from .llm import LLM
-from .payments.paypal import PayPalClient
+from .osm import OsmClient
 from .providers import build_images, build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
-from .routes import account
+from .routes import account, kits
 from .survey import concepts, pipeline, snapshot
 from .survey import design as designs
 from .survey.models import EventLog, LiveRuns, RunState, RunStore, Site
@@ -46,6 +47,7 @@ DESIGNS_PER_HOUR = 40
 RENDERS_PER_HOUR = 24
 MAP_REQUESTS_PER_HOUR = 200
 SIGN_INS_PER_HOUR = 30
+KITS_PER_HOUR = 12
 # On shutdown, running surveys get this many seconds to finish before they are stopped and saved as failed.
 SHUTDOWN_GRACE_S = 10
 
@@ -65,18 +67,14 @@ PRESETS = [
 # Sign in with Google loads its script, button frame and styles from accounts.google.com/gsi
 # (developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy).
 GOOGLE_SIGN_IN = "https://accounts.google.com/gsi/"
-# Paid features: PayPal's JavaScript SDK loads its script, buttons and checkout frames from these hosts
-# (developer.paypal.com/sdk/js/v5/best-practices).
-PAYPAL = " https://*.paypal.com https://*.paypalobjects.com https://*.venmo.com"
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
-    f"script-src 'self' https://unpkg.com {GOOGLE_SIGN_IN}client{PAYPAL}",
-    f"style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com {GOOGLE_SIGN_IN}style{PAYPAL}",
+    f"script-src 'self' https://unpkg.com {GOOGLE_SIGN_IN}client",
+    f"style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com {GOOGLE_SIGN_IN}style",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https:",
-    f"connect-src 'self' {GOOGLE_SIGN_IN}{PAYPAL}",
-    f"frame-src {GOOGLE_SIGN_IN}{PAYPAL}",
-    f"child-src 'self'{PAYPAL}",
+    f"connect-src 'self' {GOOGLE_SIGN_IN}",
+    f"frame-src {GOOGLE_SIGN_IN}",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -105,19 +103,17 @@ class Services:
     images: Images
     geocoder: Geocoder
     answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
+    osm: OsmClient | None = None  # the OpenStreetMap cross-check of the gaps; without it, rows say it is off
     google: auth.GoogleKeys = field(default_factory=auth.GoogleKeys)
-    paypal: PayPalClient | None = None  # paid features; without it nothing is for sale
 
     async def aclose(self) -> None:
-        for service in (self.qloo, self.walker, self.images, self.geocoder, self.google, self.paypal):
-            if service is not None:
-                await service.aclose()
+        if self.osm is not None:
+            await self.osm.aclose()
+        for service in (self.qloo, self.walker, self.images, self.geocoder, self.google):
+            await service.aclose()
 
 
 def default_services() -> Services:
-    paypal = None
-    if settings.paypal_enabled:
-        paypal = PayPalClient(settings.paypal_client_id, settings.paypal_client_secret, settings.paypal_api_base)
     return Services(
         qloo=QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir),
         walker=CatchmentService(settings.walk_cache_dir),
@@ -125,7 +121,7 @@ def default_services() -> Services:
         images=build_images(settings),
         geocoder=Geocoder(),
         answers=AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache),
-        paypal=paypal,
+        osm=OsmClient(settings.cache_dir.parent / "osm"),
     )
 
 
@@ -233,6 +229,7 @@ async def run(
             log.warning("Could not save survey %s", survey.run_id, exc_info=True)
         tasks = [pipeline.analyze_site(
             services.qloo, services.walker, services.llm, runs, site, emit, services.answers, run_id=survey.run_id,
+            osm_client=services.osm,
         )]
         # The no-data baseline answers "what should open here?", so it only stands next to concepts.
         if services.llm.enabled and site.intent != "improve":
@@ -310,7 +307,7 @@ async def run_record(request: Request, run_id: str) -> dict:
     live: EventLog | None = request.app.state.live.get(run_id)
     if live:
         return {"id": run_id, "status": live.status, "created_at": live.created_at, "events": live.events}
-    row = await request.app.state.surveys.get(run_id)
+    row = await request.app.state.surveys.get(run_id, with_state=False)  # the events are all the page needs
     if not row:
         raise HTTPException(404, "Survey not found.")
     status = survey_status(row["status"], row["created_at"], datetime.now(UTC))  # failed when a restart cut it off
@@ -466,10 +463,8 @@ def web_root() -> Path:
 
 def create_app(
     services_factory: Callable[[], Services] = default_services, database_url: str | None = None,
-    settle_every: float | None = sales.SETTLE_EVERY_S,
 ) -> FastAPI:
-    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own. `settle_every`
-    (paid features) is the settlement loop's period in seconds; None turns the loop off."""
+    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -486,17 +481,22 @@ def create_app(
         app.state.accounts = accounts
         app.state.runs = RunStore(load=partial(snapshot.restore, surveys))
         app.state.live = LiveRuns()
+        app.state.kits = KitStore(database)
+        app.state.builder = KitBuilder(app.state.kits, app.state.runs, surveys, services)
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
         app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
         app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)
         app.state.render_budget = DailyBudget(settings.image_daily_limit)
         app.state.map_limiter = RateLimiter(MAP_REQUESTS_PER_HOUR, 3600)
         app.state.auth_limiter = RateLimiter(SIGN_INS_PER_HOUR, 3600)
+        app.state.kit_limiter = RateLimiter(KITS_PER_HOUR, 3600)
+        app.state.kit_budget = DailyBudget(settings.kit_daily_limit)
+        await app.state.builder.resume()  # kits a restart cut off are built again
         try:
-            async with sales.running(app, settle_every):
-                yield
+            yield
         finally:
             await app.state.live.stop(SHUTDOWN_GRACE_S)
+            await app.state.builder.stop()  # unfinished kits stay "building", and the next start builds them
             await services.aclose()
             await database.dispose()
 
@@ -506,18 +506,17 @@ def create_app(
         description=(
             "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "
             "business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} returns its events "
-            "again; the other endpoints are JSON. Signing in with Google keeps surveys in My places."
+            "again; the other endpoints are JSON. POST /api/kits builds a concept's launch kit (free for now). Signing "
+            "in with Google keeps surveys and kits in My places."
         ),
         lifespan=lifespan,
     )
     app.state.now = utcnow  # the app's clock; tests move it
-    # What other parts of the app add to /api/config and My places, and API paths they call from elsewhere.
-    app.state.config_parts, app.state.places_parts, app.state.origin_exempt = [], [], set()
 
     @app.middleware("http")
     async def security(request: Request, call_next):
         """Turns away unsafe API calls from other sites' pages, sets the cookies endpoints queued, and the headers."""
-        if auth.origin_allowed(request, app.state.origin_exempt):
+        if auth.origin_allowed(request):
             response = await call_next(request)
             auth.apply_cookies(request, response)
         else:
@@ -526,22 +525,25 @@ def create_app(
         response.headers.setdefault("Content-Security-Policy", DOCS_POLICY if docs else CONTENT_SECURITY_POLICY)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        # Google's sign-in (and PayPal's checkout) open popups that must be able to answer this page.
+        # Google's sign-in opens a popup when the browser has no FedCM, and the popup must be able to answer this page.
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
         return response
 
     app.include_router(router)
     app.include_router(account.router)
+    app.include_router(kits.router)
     root = web_root()
 
-    # Shared links to a survey (/s), My places (/me) and the privacy note (/privacy) are pages of the web app.
+    # Shared links to a survey (/s), a launch kit (/k) and its printable dossier, My places (/me) and the privacy note
+    # (/privacy) are pages of the web app.
     @app.get("/s/{key}", include_in_schema=False)
+    @app.get("/k/{key}", include_in_schema=False)
+    @app.get("/k/{key}/dossier", include_in_schema=False)
     @app.get("/me", include_in_schema=False)
     @app.get("/privacy", include_in_schema=False)
     async def shared_page() -> FileResponse:
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
-    sales.install(app, shared_page)
     app.mount("/", RevalidatingStaticFiles(directory=root, html=True), name="web")
     return app
 

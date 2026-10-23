@@ -17,7 +17,7 @@ from ..answers import AnswerCache, fingerprint
 from ..images import Images
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError
-from . import experience, launch
+from . import experience, launch, mood
 from .concepts import (
     ground_names,
     grounded_price,
@@ -46,11 +46,18 @@ needs a deep fryer, griddle or flat-top, grill or charcoal, wok or pizza oven, e
 or assembled cold, and the layout and renders show no cooking line, grill, fryer or extraction hood; with no kitchen,
 nothing is cooked at all. The offer starts from offer_evidence (what the places people here love are known for, those
 no place inside the walk offers first) and price_level follows price_evidence.
+mood_board holds what people here over-index on (tiles: artists, films, shows and brands), the era their years point to
+and the design direction it gives: the interior's materials and lighting, image_prompt and facade_prompt follow its
+palette, materials and lighting. The tiles set the mood only: the interior, image_prompt and facade_prompt never name a
+person, film, show or brand, and show no posters, portraits, faces or logos of any.
 Return JSON with keys: name, tagline, concept_statement, interior {mood, materials (list), lighting, layout, seating},
 offer (list of 4-6 items), price_level (1-4), music {direction, artists (list, only from local_artists)},
-partners (list of {name, why}; name only from nearby_places or partner_brands), image_prompt (a photorealistic wide
-view of the whole interior: layout, materials, lighting and seating; no people, text or logos), facade_prompt (the
-shopfront seen from a typical street of this neighborhood, with a sign that reads exactly the concept name; no people)."""
+partners (list of {name, why}; name only from nearby_places or partner_brands), mood_statement (one or two full
+sentences on how the room should feel: its light, materials and sound, in mood_board's era and direction; it may name
+a few of mood_board.tiles, written exactly as given, and nothing else: no other names, numbers or years), image_prompt
+(a photorealistic wide view of the whole interior: layout, materials, lighting and seating; no people, text or logos),
+facade_prompt (the shopfront seen from a typical street of this neighborhood, with a sign that reads exactly the
+concept name; no people)."""
 
 # Equipment a unit without a hood cannot have, as a layout or a render might show it.
 HOOD_FIXTURES = re.compile(
@@ -86,6 +93,7 @@ async def design_concept(
     unit = space.unit_text(site.size_m2, site.kitchen, site.outdoor)
     fit = space.fit(concept["genre"], site.size_m2, site.kitchen)
     capacity = fit["capacity_text"] if fit else None
+    board = mood.build(run, concept, dna, fans)
     design: dict[str, Any] = {}
     mode, model = "rules", None
     if llm.enabled:
@@ -101,6 +109,7 @@ async def design_concept(
             "signature_names_this_category_s_fans_share": sorted(shared & ({*local_artists} | {b["name"] for b in brand_cards})),
             "partner_brands": fitting_brands[:8],
             "taste_cues": run.cues,
+            "mood_board": mood.brief(board),
         }
         if row:
             brief["offer_evidence"] = offer_items(row, run.constraints, limit=8)
@@ -149,6 +158,11 @@ async def design_concept(
     design["capacity"] = capacity
     design["capacity_basis"] = CAPACITY_BASIS if capacity else None
     design["experience"] = experience.plan(run, concept["genre"])
+    # The model's mood statement stands only if it keeps to the board's names and era, and to the owner's rules.
+    also = (concept["name"], design.get("name"), site.label, concept["genre"], scoring.genre_title(concept["genre"]))
+    design["mood"] = await mood.finish(
+        llm, board, design.pop("mood_statement", None), answers, also, rules=statement_rules(run),
+    )
     design["launch"] = launch.plan(run, concept, row, shared, design["hours"])
     design["owner_rules"] = owner_rule_lines(run, row, {
         "genre": concept["genre"], "signature": design["offer"], "price_level": design.get("price_level"),
@@ -225,6 +239,22 @@ def keep_rules(run: RunState, concept: dict, row: dict | None, design: dict) -> 
     return notes
 
 
+def statement_rules(run: RunState):
+    """What a mood statement must not say, as the tagline must not: anything the owner's notes rule out, or a budget
+    place called upscale or premium."""
+    rules = run.constraints
+
+    def problems(text: str) -> list[str]:
+        found = []
+        if why := rules.item_problem(text):
+            found.append(f"it breaks the owner's rules ({why})")
+        if rules.budget and UPSCALE.search(text):
+            found.append("it calls a budget place upscale or premium")
+        return found
+
+    return problems
+
+
 def offer_evidence(run: RunState, concept: dict, row: dict | None) -> list[str]:
     """What the sheet's offer starts from: what the places people here love are known for, within the owner's rules,
     and for a wildcard its own signature first (it combines two kinds of business)."""
@@ -252,6 +282,10 @@ CAPACITY_BASIS = (
     "standing guest) after kitchen, storage and circulation. Check the local code and the unit's certificate."
 )
 
+# The shortest prompt an image service takes (AI Horde: 1,500 characters). A description is cut to leave room for the
+# mood board's direction and the rules after it (no people, text or logos), which must reach every service.
+PROMPT_LIMIT = 1500
+
 
 def room_scale(run: RunState) -> str:
     size = space.size_text(run.site.size_m2)
@@ -264,20 +298,39 @@ def room_kitchen(run: RunState, genre: str) -> str:
     return f"{fixtures[:1].upper()}{fixtures[1:]}, against a clean, uncluttered back wall. " if fixtures else ""
 
 
+def direction(design: dict, words) -> str:
+    """The mood board's direction as a render prompt words it (mood.interior_direction or mood.facade_direction)."""
+    board = design.get("mood")
+    return f"{words(board)} " if isinstance(board, dict) else ""
+
+
+def unnamed(run: RunState, text: str, *keep: str) -> str:
+    """A description without the sentences that name a person, title or brand the survey read, or show posters,
+    portraits or faces; the site's name and the sign's text are not counted as names."""
+    return mood.scrub(text, mood.taste_names(run), mood.allowed_names([run.site.label, *keep]))
+
+
 def design_shots(run: RunState, concept: dict, design: dict, dna: dict) -> list[dict]:
-    """Prompts for the two renders. The server keeps them, so a client can only render the shots it was given."""
+    """Prompts for the two renders. The server keeps them, so a client can only render the shots it was given. Both
+    follow the mood board's direction (era, palette, materials and light), and neither carries a name people here
+    love."""
     sign = sign_text(str(design.get("name") or concept["name"]))
     interior = design.get("image_prompt")
     facade = design.get("facade_prompt")
-    if isinstance(interior, str) and interior.strip():
-        interior = f"{interior.strip()} {room_scale(run)}{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}"
+    interior = unnamed(run, interior) if isinstance(interior, str) else ""
+    if interior:
+        tail = f"{direction(design, mood.interior_direction)}{room_scale(run)}{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}"
+        interior = f"{mood.closed(mood.clip(interior, PROMPT_LIMIT - len(tail) - 2))} {tail}"
     else:
         interior = interior_prompt(run, concept, dna, design)
-    if isinstance(facade, str) and facade.strip():
-        facade = facade.strip()
+    facade = unnamed(run, facade, sign) if isinstance(facade, str) else ""
+    if facade:
+        tail = f"{direction(design, mood.facade_direction)}{FACADE_STYLE}"
+        reads = f'The sign above the entrance reads "{sign}".'
+        facade = mood.closed(mood.clip(facade, PROMPT_LIMIT - len(tail) - len(reads) - 3))
         if sign.lower() not in facade.lower():
-            facade += f' The sign above the entrance reads "{sign}".'
-        facade = f"{facade} {FACADE_STYLE}"
+            facade = f"{facade} {reads}"
+        facade = f"{facade} {tail}"
     else:
         facade = facade_prompt(run, concept, dna, design, sign)
     return [
@@ -322,19 +375,21 @@ def interior_prompt(run: RunState, concept: dict, dna: dict, design: dict | None
         f"lighting: {interior['lighting']}" if interior.get("lighting") else "",
     ]
     described = ". ".join(part for part in details if part and not part.endswith(": "))
-    return (f"Interior of a small street-level {noun} in {run.site.label}. {described}. {room_scale(run)}"
-            f"{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}")
+    tail = f"{direction(design or {}, mood.interior_direction)}{room_scale(run)}{room_kitchen(run, concept['genre'])}{INTERIOR_STYLE}"
+    lead = unnamed(run, f"Interior of a small street-level {noun} in {run.site.label}. {described}.")
+    return f"{mood.clip(lead, PROMPT_LIMIT - len(tail) - 1)} {tail}"
 
 
 def facade_prompt(run: RunState, concept: dict, dna: dict, design: dict, sign: str) -> str:
     noun = place_noun(concept["genre"])
     style = ", ".join(dna.get("decor", [])[:2]).lower()
-    mood = ", ".join(dna.get("ambience", [])[:2]).lower() or "welcoming"
-    return (
+    feel = ", ".join(dna.get("ambience", [])[:2]).lower() or "welcoming"
+    view = unnamed(run, (
         f"Street-level view of a newly opened {noun} on a typical street of {run.site.label}. A sign above the entrance "
         f'reads "{sign}" in clear, well-designed lettering. {"Shopfront style: " + style + ". " if style else ""}'
-        f"Large windows show a {mood} interior. {FACADE_STYLE}"
-    )
+        f"Large windows show a {feel} interior."
+    ), sign)
+    return f"{view} {direction(design, mood.facade_direction)}{FACADE_STYLE}"
 
 
 def render_key(images: Images, shot: dict) -> str:

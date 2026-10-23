@@ -50,6 +50,7 @@ from .evidence import (
     short_label,
     singular,
     storefront_favorites,
+    supply,
 )
 from .experience import fans_of
 from .intents import requested_row
@@ -470,7 +471,7 @@ def one_liner(row: dict, minutes: int) -> str:
     outside the walk (median_far_km); without that measure, no distance is given."""
     title = scoring.genre_title(row["genre"])
     places = plural(row["genre"])
-    nearby, expected, km = row["nearby_count"], row.get("expected_nearby"), row.get("median_far_km")
+    nearby, expected, km = supply(row), row.get("expected_nearby"), row.get("median_far_km")
     leakage = row.get("leakage")
     travels = row.get("favorites_kind") == "local" and leakage is not None and leakage >= 0.65 and row["favorites_far"] >= 3
     under = expected is not None and (row.get("relative_supply", 1) <= 0.75 or nearby == 0 and expected >= 1)
@@ -834,8 +835,8 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
     level, basis = grounded_price(run, first, proposal.get("price_level"))
     cards = [card for row in (first, second) for card in storefront_favorites(row)[1][:2] if card.get("name")]
     both = f"{article(singular(first['genre']))} and {article(singular(second['genre']))}"
-    halves = [count_of(row["genre"], row["nearby_count"], row.get("nearby_capped"))
-              for row in (first, second) if row["nearby_count"]]
+    halves = [count_of(row["genre"], supply(row), row.get("nearby_capped"))
+              for row in (first, second) if supply(row)]
     beat = (f"No place inside the walk is both; the nearest competition is the {' and the '.join(halves)} inside the "
             f"walk, each doing one half." if halves else "No place inside the walk is either.")
     concept = {

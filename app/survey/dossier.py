@@ -80,7 +80,7 @@ UNTESTED_BASIS = ("A wildcard concept: the evidence shows locals love what it co
 def build_dossier(
     run: RunState, index: int, design: dict, copy: dict | None = None, *, prepared: date | None = None,
 ) -> dict:
-    """The dossier for concept `index` and its design sheet; `copy` is the launch kit's checked ad copy, when bought."""
+    """The dossier for concept `index` and its design sheet; `copy` is the launch kit's checked ad copy, once made."""
     concept = concept_at(run, index)
     row = gap_for(run, concept["genre"])
     name = business_name(run, concept, design)

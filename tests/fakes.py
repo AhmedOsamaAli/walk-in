@@ -4,6 +4,7 @@ The fake Qloo world is invented (no real Qloo data may be committed). It is shap
 is known: Seafood is loved more here than around, under-supplied, and its local favorites lie outside the
 walk; Yoga is barely known locally (thin); Gift shop favorites are hotels (atypical). Ramen and Board Game
 Cafe sit outside the gap table for the agent's live tests, and Seafood's local fans share taste with the area.
+The fake OpenStreetMap (FakeOsm) shows bakeries, a seafood bar and a ramen shop inside the walk that Qloo does not list.
 """
 from __future__ import annotations
 
@@ -281,6 +282,50 @@ class FakeQloo:
 class FakeWalker:
     async def walk(self, lat: float, lon: float, minutes: int = 10):
         return circle_catchment(lat, lon, minutes)
+
+    async def aclose(self) -> None:
+        pass
+
+
+# What OpenStreetMap shows around the site, as Overpass returns it: one of Qloo's bakeries; a place Qloo lists as a
+# coffee shop that OpenStreetMap tags a bakery; two bakeries, a seafood bar and a ramen shop Qloo does not list; and a
+# bakery beyond the walk. (type, id, name, metres from the site, bearing, tags)
+OSM_ELEMENTS = [
+    ("node", 101, "Bakery Nearby 1", 130, 37, {"shop": "bakery"}),
+    ("way", 102, "Block Place 2", 80, 94, {"shop": "bakery", "building": "yes"}),
+    ("node", 103, "Crumb & Co", 250, 120, {"shop": "bakery"}),
+    ("node", 104, "Sunrise Pastry", 420, 300, {"shop": "pastry"}),
+    ("node", 105, "Saltmarsh Fish Bar", 350, 200, {"amenity": "restaurant", "cuisine": "seafood;oyster"}),
+    ("node", 106, "Kumo Ramen", 300, 250, {"amenity": "restaurant", "cuisine": "ramen"}),
+    ("node", 107, "Far Loaf", 1500, 0, {"shop": "bakery"}),
+]
+OSM_AS_OF = "2026-10-22T20:00:00Z"
+
+
+def overpass_elements() -> list[dict]:
+    elements = []
+    for kind, osm_id, name, meters, bearing, tags in OSM_ELEMENTS:
+        lat, lon = offset(meters, bearing)
+        point = {"lat": lat, "lon": lon} if kind == "node" else {"center": {"lat": lat, "lon": lon}}
+        elements.append({"type": kind, "id": osm_id, **point, "tags": {"name": name, **tags}})
+    return elements
+
+
+class FakeOsm:
+    """Stands in for the Overpass client: the places above, read the way the real client reads an answer."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.scans = 0
+
+    async def scan(self, catchment):
+        from app import osm
+
+        self.scans += 1
+        if self.fail:
+            return osm.Scan(False, note=osm.NOTES["unavailable"])
+        places = osm.places_inside(osm.compact(overpass_elements()), catchment.contains)
+        return osm.Scan(True, places, "overpass.test", OSM_AS_OF)
 
     async def aclose(self) -> None:
         pass

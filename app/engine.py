@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
+from collections.abc import Awaitable
 
-from . import scoring
+from . import osm, scoring
 from .catchment import Catchment
 from .geo import distance_m, point_wkt
-from .qloo import QlooClient
+from .qloo import QlooClient, QlooError
 
 TASTE_M = 1500  # neighborhood used for brand and artist taste
 METRO_M = 20_000  # the wider city, used for the city's own favorite places
@@ -16,6 +18,7 @@ MIN_AROUND_M = 900  # smallest "surrounding area" used to predict supply
 NEARBY_LIMIT = 100  # places of a genre counted inside the walk
 AROUND_LIMIT = 150  # places of a genre counted in the surrounding area
 GAP_GENRES = 8
+LOOKUPS = 24  # places only OpenStreetMap seems to show, looked up by name on Qloo per cross-check
 REF_BEARINGS = (0, 60, 120, 180, 240, 300)
 TASTE_REF_BEARINGS = (30, 150, 270)
 TASTE_DOMAINS = {
@@ -58,9 +61,8 @@ async def places_in(
 PAGE = 50
 
 
-async def places_upto(q: QlooClient, location: dict, tag: str, limit: int) -> list[dict]:
-    """Every open place of a genre in an area, page by page up to `limit`: Qloo returns at most 50 per request, and a
-    dense city has more cafés than that within a kilometre, which would make every genre look equally common."""
+async def places_found(q: QlooClient, location: dict, tag: str, limit: int) -> list[dict]:
+    """Every place of a genre in an area, open or closed, page by page until `limit` places have been fetched."""
     found: dict[str, dict] = {}
     offset = 0
     while offset < limit:
@@ -71,7 +73,13 @@ async def places_upto(q: QlooClient, location: dict, tag: str, limit: int) -> li
         if len(page) < PAGE:
             break
         offset += PAGE
-    return [place for place in found.values() if scoring.is_open(place)][:limit]
+    return list(found.values())
+
+
+async def places_upto(q: QlooClient, location: dict, tag: str, limit: int) -> list[dict]:
+    """Every open place of a genre in an area, page by page up to `limit`: Qloo returns at most 50 per request, and a
+    dense city has more cafés than that within a kilometre, which would make every genre look equally common."""
+    return [place for place in await places_found(q, location, tag, limit) if scoring.is_open(place)][:limit]
 
 
 def walk_filter(catchment: Catchment) -> dict:
@@ -82,10 +90,13 @@ def circle_filter(lat: float, lon: float, radius: int) -> dict:
     return {"filter.location": point_wkt(lat, lon), "filter.location.radius": radius}
 
 
-async def scan_block(q: QlooClient, catchment: Catchment) -> list[dict]:
-    """Up to 100 places inside the walking catchment, deduplicated."""
+async def scan_walk(q: QlooClient, catchment: Catchment) -> tuple[list[dict], list[dict]]:
+    """Up to 100 places inside the walking catchment, deduplicated, as (open, closed): the closed ones are no part of
+    the block, but OpenStreetMap often still shows them, and the cross-check must know Qloo lists them as closed."""
     location = walk_filter(catchment)
-    first, second = await asyncio.gather(places_in(q, location), places_in(q, location, offset=50))
+    first, second = await asyncio.gather(
+        places_in(q, location, include_closed=True), places_in(q, location, offset=50, include_closed=True),
+    )
     seen: set[str] = set()
     places = []
     for place in first + second:
@@ -93,7 +104,12 @@ async def scan_block(q: QlooClient, catchment: Catchment) -> list[dict]:
         if pid and pid not in seen:
             seen.add(pid)
             places.append(place)
-    return places
+    return [p for p in places if scoring.is_open(p)], [p for p in places if not scoring.is_open(p)]
+
+
+async def scan_block(q: QlooClient, catchment: Catchment) -> list[dict]:
+    """Up to 100 open places inside the walking catchment, deduplicated."""
+    return (await scan_walk(q, catchment))[0]
 
 
 async def _genre_ranking(q: QlooClient, signal: dict) -> list[dict]:
@@ -146,8 +162,8 @@ def near(entities: list[dict], lat: float, lon: float, limit_m: float = 1.5 * FA
 async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> dict:
     lat, lon = catchment.lat, catchment.lon
     favorites_area = circle_filter(lat, lon, FAVORITES_M)
-    nearby, around, local_favorites, city_favorites = await asyncio.gather(
-        places_upto(q, walk_filter(catchment), genre["id"], NEARBY_LIMIT),
+    inside, around, local_favorites, city_favorites = await asyncio.gather(
+        places_found(q, walk_filter(catchment), genre["id"], NEARBY_LIMIT),
         places_upto(q, circle_filter(lat, lon, around_radius(catchment)), genre["id"], AROUND_LIMIT),
         places_in(q, {"signal.location": catchment.wkt, **favorites_area}, tag=genre["id"], take=20),
         places_in(
@@ -157,6 +173,7 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
             take=20,
         ),
     )
+    nearby = [place for place in inside if scoring.is_open(place)][:NEARBY_LIMIT]
     # Hotels and malls among the favorites make the comparison atypical; places Qloo merely tags with the genre (a
     # museum with a bar for 'Cocktail bar') say nothing about it and are left out of the favorites.
     storefront = scoring.storefront_share(local_favorites[:10])
@@ -180,15 +197,56 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
     row["city_favorites"] = [p.get("name") for p in city_favorites[:6] if p.get("name")]
     row["_favorite_entities"] = favorites
     row["_nearby_entities"] = nearby
+    # Qloo lists these inside the walk as closed: OpenStreetMap may still show them, and they are no extra supply.
+    row["_closed_nearby"] = [
+        {"entity_id": scoring.item_id(p), "name": p.get("name"), "location": p.get("location")}
+        for p in inside if not scoring.is_open(p)
+    ]
     return row
 
 
-async def gap_table(q: QlooClient, catchment: Catchment, genres: list[dict], focus: str = "any") -> list[dict]:
-    """Rank the neighborhood's top genres by how underserved they are within the walking catchment."""
+def cross_check_rows(rows: list[dict], check: osm.CrossCheck | None) -> osm.CrossCheck:
+    """Learns every row's Qloo places before any row is checked: Qloo may list a bakery as a Mexican restaurant."""
+    check = check or osm.CrossCheck(None)
+    for row in rows:
+        check.learn_row(row)
+    return check
+
+
+async def cross_check(q: QlooClient, rows: list[dict], check: osm.CrossCheck | None) -> None:
+    """Adds to each row what OpenStreetMap shows inside the walk (row['osm']), without the cross-check, that it is off.
+
+    A place only OpenStreetMap seems to show is looked up by name on Qloo around where it stands (the nearest
+    LOOKUPS of them), so "Qloo doesn't list it" is checked rather than assumed from the lists the survey read."""
+    check = cross_check_rows(rows, check)
+
+    async def lookup(place: dict) -> list[dict]:
+        try:
+            return await search_places(q, place["name"], place["lat"], place["lon"], miles=1, take=5)
+        except QlooError:
+            return []
+
+    found = await asyncio.gather(*(lookup(place) for place in check.candidates(rows)[:LOOKUPS]))
+    for places in found:
+        check.learn(places, located_only=True)
+    for row in rows:
+        check.apply(row)
+
+
+async def gap_table(
+    q: QlooClient, catchment: Catchment, genres: list[dict], focus: str = "any",
+    checked: osm.CrossCheck | Awaitable[osm.CrossCheck] | None = None,
+) -> list[dict]:
+    """Rank the neighborhood's top genres by how underserved they are within the walking catchment.
+
+    `checked`: the survey's OpenStreetMap cross-check, or what will give it once OpenStreetMap answers; it is awaited
+    only after Qloo's evidence is in, and applied before the rows are scored, so supply counts both maps.
+    """
     candidates = [genre for genre in genres if scoring.matches_focus(genre["name"], focus)][:GAP_GENRES]
-    rows = await asyncio.gather(*(genre_evidence(q, catchment, genre) for genre in candidates))
+    rows = list(await asyncio.gather(*(genre_evidence(q, catchment, genre) for genre in candidates)))
+    await cross_check(q, rows, await checked if inspect.isawaitable(checked) else checked)
     around_area = math.pi * around_radius(catchment) ** 2
-    return scoring.score_gaps(list(rows), catchment.area_m2, around_area)
+    return scoring.score_gaps(rows, catchment.area_m2, around_area)
 
 
 async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dict | None, str | None]:
@@ -244,8 +302,10 @@ def _normalize_genre(text: str) -> str:
 
 
 async def probe_genre(q: QlooClient, catchment: Catchment, genre: dict, table: list[dict]) -> dict:
-    """Live evidence for one more genre, scored on the same supply baseline as the site's gap table."""
+    """Live evidence for one more genre, scored on the same supply baseline as the site's gap table and cross-checked
+    with the survey's OpenStreetMap places (osm.current())."""
     row = await genre_evidence(q, catchment, genre)
+    await cross_check(q, [row], osm.current())
     around_area = math.pi * around_radius(catchment) ** 2
     return scoring.score_gaps([row], catchment.area_m2, around_area, baseline_rows=table)[0]
 

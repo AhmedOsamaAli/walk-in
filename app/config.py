@@ -90,6 +90,8 @@ class Settings:
     image_provider: str = field(default_factory=lambda: _env("IMAGE_PROVIDER"))
     # Most renders the server makes per day (UTC), to cap spending on a public demo; cached renders are free.
     image_daily_limit: int = field(default_factory=lambda: int(_env_float("IMAGE_DAILY_LIMIT") or 60))
+    # Most launch kits the server builds per day (UTC); each one asks the model for its ad copy.
+    kit_daily_limit: int = field(default_factory=lambda: int(_env_or("KIT_DAILY_LIMIT", 60)))
     cloudflare_image_model: str = field(
         default_factory=lambda: _env("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-2-klein-4b")
     )
@@ -104,26 +106,17 @@ class Settings:
     cache_dir: Path = field(default_factory=lambda: Path(_env("CACHE_DIR") or ROOT / ".cache" / "qloo"))
     walk_cache_dir: Path = field(default_factory=lambda: Path(_env("WALK_CACHE_DIR") or ROOT / ".cache" / "walk"))
     agent_cache_dir: Path = field(default_factory=lambda: Path(_env("AGENT_CACHE_DIR") or ROOT / ".cache" / "agent"))
-    # Where surveys, design sheets, orders, kits and pledges live: a local SQLite file by default, or a Postgres URL
-    # (Neon's free tier, for example) on a host whose disk does not survive a restart.
+    # Where users, surveys, design sheets and launch kits live: a local SQLite file by default, or a Postgres URL (Neon's
+    # free tier, for example) on a host whose disk does not survive a restart.
     database_url: str = field(
         default_factory=lambda: _env("DATABASE_URL") or f"sqlite:///{(ROOT / '.data' / 'walkin.db').as_posix()}"
     )
-    # Surveys older than this are deleted on startup, unless an order or a campaign refers to them.
+    # Surveys older than this are deleted on startup, with their kits, unless a signed-in user keeps them in My places.
     survey_retention_days: int = field(default_factory=lambda: int(_env_or("SURVEY_RETENTION_DAYS", 60)))
-    # PayPal (developer.paypal.com, Apps & Credentials): the sandbox until PAYPAL_ENV=live. Without keys nothing is for
-    # sale and the free plan stays as it is.
-    paypal_client_id: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_ID"))
-    paypal_client_secret: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_SECRET"))
-    paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox"))
-    # Set once the app has a public address and a webhook is registered with PayPal; refunds then revoke kits.
-    paypal_webhook_id: str = field(default_factory=lambda: _env("PAYPAL_WEBHOOK_ID"))
-    kit_price: str = field(default_factory=lambda: _env("KIT_PRICE", "19.00"))
-    kit_currency: str = field(default_factory=lambda: _env("KIT_CURRENCY", "USD"))
-    # The app's public address (https://...), for links inside kits, posters and pledge pages.
+    # The app's public address (https://...). When it is https, cookies are Secure and the development login is off.
     public_url: str = field(default_factory=lambda: _env("PUBLIC_URL").rstrip("/"))
     # Sign in with Google (console.cloud.google.com, Google Auth Platform > Clients): the web client's ID. Without it
-    # nobody can sign in, so the kit and pledge campaigns stay closed; surveys work as before.
+    # nobody can sign in, so nothing is kept in My places; surveys work as before.
     google_client_id: str = field(default_factory=lambda: _env("GOOGLE_CLIENT_ID"))
     # Days a sign-in lasts; using the app renews it, at most once a day.
     session_days: int = field(default_factory=lambda: int(_env_or("SESSION_DAYS", 30)))
@@ -133,10 +126,6 @@ class Settings:
     allowed_origins: tuple[str, ...] = field(default_factory=lambda: _env_list("ALLOWED_ORIGINS"))
     # Shared with the Cloudflare front door (frontend/functions): with it, X-Client-IP is the visitor's own address.
     proxy_secret: str = field(default_factory=lambda: _env("PROXY_SECRET"))
-    # The secret a scheduled job sends to POST /api/cron/settle; without it that endpoint does not exist.
-    cron_secret: str = field(default_factory=lambda: _env("CRON_SECRET"))
-    # Days after buying in which the owner can refund a launch kit themselves.
-    kit_refund_days: int = field(default_factory=lambda: int(_env_or("KIT_REFUND_DAYS", 14)))
 
     @property
     def hosted(self) -> bool:
@@ -154,14 +143,6 @@ class Settings:
         if not self.hosted:
             origins.update(DEV_ORIGINS)
         return frozenset(origin for origin in origins if origin)
-
-    @property
-    def paypal_enabled(self) -> bool:
-        return bool(self.paypal_client_id and self.paypal_client_secret)
-
-    @property
-    def paypal_api_base(self) -> str:
-        return "https://api-m.paypal.com" if self.paypal_env == "live" else "https://api-m.sandbox.paypal.com"
 
 
 settings = Settings()

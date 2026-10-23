@@ -3,7 +3,7 @@
 A Google ID token is trusted only once its signature checks out against Google's published keys (JWKS), and its
 issuer, audience (our client ID), expiry and verified email do too. A session is a random token in an HttpOnly cookie;
 the database keeps only its SHA-256, so a leaked database signs nobody in. Cookies are queued on the request and set on
-whatever response goes out (security_middleware in app.main), errors included.
+whatever response goes out (the security middleware in app.main), errors included.
 """
 from __future__ import annotations
 
@@ -295,13 +295,10 @@ def own_origin(request: Request) -> str | None:
     return f"{forwarded or request.url.scheme}://{host}".lower()
 
 
-def origin_allowed(request: Request, exempt: frozenset[str] | set[str] = frozenset()) -> bool:
-    """Whether a request may go on: safe methods, paths outside the API and `exempt` paths (called by services that
-    prove themselves otherwise) always may; an unsafe API call with an Origin header must come from PUBLIC_URL, the
-    server itself or ALLOWED_ORIGINS."""
+def origin_allowed(request: Request) -> bool:
+    """Whether a request may go on: safe methods and paths outside the API always may; an unsafe API call with an
+    Origin header must come from PUBLIC_URL, the server itself or ALLOWED_ORIGINS."""
     if request.method not in UNSAFE_METHODS or not request.url.path.startswith("/api/"):
-        return True
-    if request.url.path in exempt:
         return True
     origin = request.headers.get("origin")
     if origin is None:

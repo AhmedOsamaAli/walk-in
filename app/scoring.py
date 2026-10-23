@@ -1036,7 +1036,10 @@ def score_gaps(
       areas around the site do (comparing against the whole city inflates genres that rank high at any
       small scale);
     - supply: places within the walk versus what the surrounding density predicts, divided by the site's
-      median ratio so parks, rivers and highways in the surroundings do not bias every genre;
+      median ratio so parks, rivers and highways in the surroundings do not bias every genre. The places
+      within the walk are Qloo's plus those only OpenStreetMap shows there (row['osm'], app.osm), so a
+      kind of place Qloo's list lacks is not scored as missing; the site's median ratio stays Qloo's own,
+      so a category OpenStreetMap cannot check is scored as it was;
     - leakage: share of the places locals love more than the city does that lie outside the walk. The
       city's famous places are excluded because every neighborhood's favorites include them.
 
@@ -1049,7 +1052,7 @@ def score_gaps(
     for row in rows:
         row["expected_raw"] = round(row["around_count"] * area_ratio, 2)
     # One pseudo-count on both sides: finding none where the surroundings predict 0.25 is not evidence of a gap.
-    informative = [_supply_ratio(row) for row in (baseline_rows or rows) if row["around_count"] >= 3]
+    informative = [_supply_ratio(row, qloo_only=True) for row in (baseline_rows or rows) if row["around_count"] >= 3]
     baseline = median(informative) if informative else 1.0
     baseline = baseline if baseline > 0 else 1.0
     for row in rows:
@@ -1058,7 +1061,8 @@ def score_gaps(
         lift = 0.0 if ref is None else max(-1.0, min(1.0, (ref - local) / 10))
         demand = 0.55 * max(0.0, 1 - (local - 1) / 15) + 0.45 * (lift + 1) / 2
         relative = _supply_ratio(row) / baseline
-        undersupply = 0.8 / (1 + relative) + 0.2 * (1 - row["nearby_count"] / (row["nearby_count"] + 6))
+        supply = supply_count(row)
+        undersupply = 0.8 / (1 + relative) + 0.2 * (1 - supply / (supply + 6))
         total = row["favorites_total"]
         leakage = None
         if row.get("favorites_kind") == "local" and total >= 3:
@@ -1084,8 +1088,19 @@ def score_gaps(
     return sorted(rows, key=lambda row: (row["evidence"] != "ok", -row["gap_score"]))
 
 
-def _supply_ratio(row: dict) -> float:
-    return (row["nearby_count"] + 1) / (row["expected_raw"] + 1)
+def osm_extra(row: dict) -> int:
+    """How many places of the kind OpenStreetMap shows inside the walk that Qloo does not list there."""
+    return len((row.get("osm") or {}).get("extra") or [])
+
+
+def supply_count(row: dict) -> int:
+    """Places of the kind inside the walk: Qloo's, plus those only OpenStreetMap shows."""
+    return row["nearby_count"] + osm_extra(row)
+
+
+def _supply_ratio(row: dict, qloo_only: bool = False) -> float:
+    inside = row["nearby_count"] if qloo_only else supply_count(row)
+    return (inside + 1) / (row["expected_raw"] + 1)
 
 
 # Qloo popularity is a percentile; above this an artist or brand is a household name everywhere (Beyoncé, Chanel).
