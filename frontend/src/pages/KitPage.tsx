@@ -1,18 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import { kits, type Kit, type KitView } from "../api/kit";
 import { BrandMark } from "../components/BrandMark";
 import { CopyChecks, CopyDeck } from "../components/kit/CopyDeck";
 import { DossierBody, dossierContents, dossierGist } from "../components/kit/DossierView";
 import { PosterSection } from "../components/kit/PosterSection";
-import { TrackedLinks, useLanding } from "../components/kit/TrackedLinks";
+import { OWN_LINK_ID, TrackedLinks, useLanding } from "../components/kit/TrackedLinks";
 import { Link } from "../components/Link";
 import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components/Page";
 import { SectionHead } from "../components/SectionHead";
 import type { TitleField } from "../components/SiteHeader";
+import { panelId, tabId, TabPanel, Tabs, type TabItem } from "../components/Tabs";
 import { dateText } from "../lib/account";
 import { letter } from "../lib/format";
 import { kitError, trackedUrl } from "../lib/kit";
+import { KIT_PARTS, kitPart, partInHash, type KitPart } from "../lib/kitParts";
+import { scrollBehavior } from "../lib/motion";
 import { BRIEF_URL, dossierUrl, PLACES_URL } from "../lib/routes";
 import { useNow } from "../lib/useNow";
 import { useKit, useKitNews } from "../state/kit";
@@ -31,13 +34,8 @@ const NEWS = {
   failed: "The launch kit could not be built.",
 };
 
-/** The kit's parts, in the order the page sets them out. */
-const PARTS = [
-  { id: "kit-copy", no: "01", label: "Ad copy" },
-  { id: "kit-poster", no: "02", label: "Window poster" },
-  { id: "kit-links", no: "03", label: "Tracked links" },
-  { id: "kit-report", no: "04", label: "The report" },
-] as const;
+/** The ids of the kit's tabs and their panels: "kit-tab-poster", "kit-panel-poster". */
+const TABS = "kit";
 
 function since(iso: string, now: number): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
@@ -159,74 +157,149 @@ function Missing() {
   );
 }
 
-/** Where each part of the kit starts on the page. */
-function Parts() {
-  return (
-    <nav className="kit-jump" aria-label="Parts of the kit">
-      <ol>
-        {PARTS.map((part) => (
-          <li key={part.id}>
-            <a href={`#${part.id}`}>
-              <span className="mono">{part.no}</span>
-              {part.label}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
+/**
+ * The part on show: the one the address's hash names (a link can open the kit on its report), else the poster. Choosing
+ * a part writes it in the hash, in place, so Back still leaves the kit rather than stepping through its tabs.
+ */
+function usePart(): [KitPart, (part: KitPart) => void] {
+  const [part, setPart] = useState<KitPart>(() => partInHash(window.location.hash) ?? "poster");
+  useEffect(() => {
+    const follow = () => {
+      const named = partInHash(window.location.hash);
+      if (named) setPart(named);
+    };
+    window.addEventListener("hashchange", follow);
+    return () => {
+      window.removeEventListener("hashchange", follow);
+    };
+  }, []);
+  const choose = useCallback((next: KitPart) => {
+    setPart(next);
+    window.history.replaceState(window.history.state, "", `#${next}`);
+  }, []);
+  return [part, choose];
+}
+
+/**
+ * After a part is chosen: its top under the pinned tabs (`under` is how far the last part's top had gone beneath them,
+ * measured as it was chosen, before a tab taking the keyboard's focus scrolls the page), or the owner's link field in
+ * view with the cursor in it.
+ */
+type Then = { to: "top"; y: number; under: number; pinned: boolean } | { to: "field" };
+
+function measured(part: KitPart): Then {
+  const bar = document.getElementById(tabId(TABS, part))?.parentElement;
+  const panel = document.getElementById(panelId(TABS, part));
+  if (!bar || !panel) return { to: "top", y: window.scrollY, under: 0, pinned: false };
+  const box = bar.getBoundingClientRect();
+  return {
+    to: "top",
+    y: window.scrollY,
+    under: Math.max(0, box.bottom - panel.getBoundingClientRect().top),
+    // At its sticky offset: held under the top bar while the page scrolls on.
+    pinned: box.top <= parseFloat(getComputedStyle(bar).top) + 1,
+  };
+}
+
+function bringIntoView(then: Then): void {
+  if (then.to === "field") {
+    const field = document.getElementById(OWN_LINK_ID);
+    field?.scrollIntoView({ block: "center", behavior: scrollBehavior() });
+    field?.focus({ preventScroll: true });
+    return;
+  }
+  // Chosen while the tabs were pinned, a part starts at its top just under them, not where the last part was left.
+  if (then.pinned) window.scrollTo({ top: then.y - then.under, behavior: "instant" });
 }
 
 function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const { website, invalid, landing, setWebsite } = useLanding(view.token, view.survey_url);
+  const [part, setPart] = usePart();
+  const then = useRef<Then | null>(null);
   const posterLink = kit.links.find((link) => link.key === "poster");
   const posterUrl = posterLink ? trackedUrl(landing.url, posterLink.query) : landing.url;
   const contents = dossierContents(kit.dossier);
   const cover = kit.dossier.cover;
   const sections = kit.dossier.sections.length;
   const pieces = Object.keys(kit.copy).length;
+  const items: TabItem[] = KIT_PARTS.map(({ id, label }) => ({
+    id,
+    label,
+    badge: id === "copy" ? String(pieces) : id === "links" && landing.kind === "own" ? String(kit.links.length) : null,
+  }));
+
+  // Once the chosen part shows.
+  useLayoutEffect(() => {
+    const after = then.current;
+    then.current = null;
+    if (after) bringIntoView(after);
+  }, [part]);
+
+  function choose(next: KitPart, to: Then["to"] = "top") {
+    const after: Then = to === "field" ? { to } : measured(part);
+    if (next === part) {
+      bringIntoView(after);
+      return;
+    }
+    then.current = after;
+    setPart(next);
+  }
 
   return (
     <>
-      <Parts />
-      <section className="pg-sec" aria-labelledby="kit-copy">
+      <Tabs
+        label="Parts of the kit"
+        items={items}
+        selected={part}
+        onSelect={(id) => {
+          const next = kitPart(id);
+          if (next) choose(next);
+        }}
+        idPrefix={TABS}
+        pin="page"
+        className="kit-tabs"
+      />
+      <TabPanel idPrefix={TABS} id="poster" selected={part === "poster"} className="pg-sec">
         <SectionHead
-          id="kit-copy"
           no="01"
+          title="The window poster"
+          note={
+            landing.kind === "own"
+              ? "Print it for the window. Its QR code opens your link, tagged as the poster's channel."
+              : "Print it for the window. Add your link under Links and it carries a QR code to it."
+          }
+        />
+        <PosterSection
+          poster={kit.poster}
+          link={posterUrl}
+          landing={landing}
+          onAddLink={() => {
+            choose("links", "field");
+          }}
+        />
+      </TabPanel>
+
+      <TabPanel idPrefix={TABS} id="copy" selected={part === "copy"} className="pg-sec">
+        <SectionHead
+          no="02"
           title="Ad copy"
           note={`${pieces === 1 ? "One piece" : `${pieces} pieces`}, one per channel of the launch plan. Every line was checked against the evidence: no number it does not give, no other business's name, no superlative.`}
         />
         <CopyDeck kit={kit} />
         <CopyChecks kit={kit} />
-      </section>
+      </TabPanel>
 
-      <section className="pg-sec" aria-labelledby="kit-poster">
+      <TabPanel idPrefix={TABS} id="links" selected={part === "links"} className="pg-sec">
         <SectionHead
-          id="kit-poster"
-          no="02"
-          title="The window poster"
-          note={
-            landing.kind === "own"
-              ? "Print it for the window. Its QR code opens your link, tagged as the poster's channel."
-              : "Print it for the window. Add your link below and it carries a QR code to it."
-          }
-        />
-        <PosterSection poster={kit.poster} link={posterUrl} landing={landing} />
-      </section>
-
-      <section className="pg-sec" aria-labelledby="kit-links">
-        <SectionHead
-          id="kit-links"
           no="03"
           title="Tracked links"
           note="One link per channel, tagged so your analytics can tell which channel brought each visit."
         />
         <TrackedLinks links={kit.links} landing={landing} website={website} invalid={invalid} onWebsite={setWebsite} />
-      </section>
+      </TabPanel>
 
-      <section className="pg-sec" aria-labelledby="kit-report">
+      <TabPanel idPrefix={TABS} id="report" selected={part === "report"} className="pg-sec">
         <SectionHead
-          id="kit-report"
           no="04"
           title="The report"
           note={`The case for this business in ${sections} sections, for a landlord or a lender. Every section says what it rests on.`}
@@ -262,7 +335,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
             ))}
           </ol>
         </div>
-      </section>
+      </TabPanel>
     </>
   );
 }
@@ -301,7 +374,7 @@ function useTitleFocus(): (node: HTMLElement | null) => void {
   );
 }
 
-/** A launch kit by its link: followed while it is built, then its ad copy, poster, tracked links and report. */
+/** A launch kit by its link: followed while it is built, then its poster, ad copy, tracked links and report, a tab each. */
 export function KitPage({ token }: { token: string }) {
   const { load, restart } = useKit(token);
   const titleRef = useTitleFocus();

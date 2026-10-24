@@ -48,8 +48,7 @@
 .sec-next-link:hover { color: var(--ink); }
 
 /* A "next" link shows once what it leads to is on the page: the concepts (or their cards), the verdict, the moves or
-   what to change, the taste, the gaps. The wider taste carries one for each kind of survey, and only this survey's
-   shows. */
+   what to change, the taste, the gaps. */
 :root:not(:has(#s-concepts)) .sec-next[data-next-to="s-concepts"],
 :root:not(:has(#s-concepts[data-designed])) .sec-next[data-next-to="designs"],
 :root:not(:has(#s-verdict)) .sec-next[data-next-to="s-verdict"],
@@ -58,10 +57,31 @@
 :root:not(:has(#s-taste)) .sec-next[data-next-to="s-taste"],
 :root:not(:has(#s-gaps)) .sec-next[data-next-to="s-gaps"] { display: none; }
 
-/* ---------- The design sheet: its kit, the last part, a click away from the top ---------- */
-.d-jump { margin: -4px 0 4px; font-size: 15px; line-height: 1.45; }
-/* The title and the kit's heading take focus when the sheet opens or the link is followed; neither is a control. */
-.d-title[tabindex="-1"]:focus, .d-h[tabindex="-1"]:focus { outline: none; }
+/* ---------- The survey's tabs (App.tsx, components/Tabs.tsx): pinned under the bars, one panel at a time ---------- */
+/* Straight in the sheet, which has no padding of its own: the first tab lines up with the sections' text. */
+.sheet > .survey-tabs { margin: 0; }
+/* A tab lights up as its content arrives. */
+.survey-tabs .tab { transition: color .3s, opacity .6s; }
+/* A phone: five tabs fit across; a sixth (an idea under test) scrolls the bar sideways. */
+@media (max-width: 480px) {
+  .sheet > .survey-tabs { padding: 0 12px; }
+  .survey-tabs .tab { padding: 0 8px; }
+}
+/* A tab shown again: what it holds does not slide in a second time. */
+.tab-panel.tab-left :is(.sec.reveal, .log li, .gap, .poster, .moves li, .stamp) { animation: none; }
+
+/* ---------- The design sheet's tabs, pinned at the top of the sheet; its Close sits at their right end ---------- */
+.d-main > .design-tabs { margin: 22px -46px 0; padding: 0 46px; background: color-mix(in srgb, var(--paper) 94%, transparent); }
+.design .design-close { top: 4px; z-index: 6; }
+/* The sheet's title takes focus when it opens; it is not a control. */
+.d-title[tabindex="-1"]:focus { outline: none; }
+/* A phone: Close shrinks to its cross, so the three tabs fit beside it. */
+@media (max-width: 560px) {
+  .d-main > .design-tabs { margin: 18px -22px 0; padding: 0 52px 0 22px; }
+  .design .design-close { top: 3px; right: 8px; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; font-size: 0; }
+  .design .design-close::before { content: "\00d7" / ""; font: 400 21px/1 var(--f-sans); }
+}
+
 @media print {
-  .d-jump, .sec-next { display: none !important; }
+  .sec-next { display: none !important; }
 }

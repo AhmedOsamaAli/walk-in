@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { KitPoster } from "../../api/kit";
 import { LINK_KINDS, shortLink } from "../../lib/kit";
-import { OWN_LINK_ID, type Landing } from "./TrackedLinks";
+import { isPlainClick } from "../../lib/navigation";
+import type { Landing } from "./TrackedLinks";
 import { PosterArt } from "./PosterArt";
 
 /** "golden-hour-poster.svg". */
@@ -35,23 +36,15 @@ interface PosterSectionProps {
   /** The poster's tracked link, for the QR code. */
   link: string | null;
   landing: Landing;
-}
-
-/** Takes the owner to the field for their link, below, and puts the cursor in it. */
-function toLinkField(event: MouseEvent<HTMLAnchorElement>): void {
-  const field = document.getElementById(OWN_LINK_ID);
-  if (!field) return;
-  event.preventDefault();
-  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  field.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
-  field.focus({ preventScroll: true });
+  /** Takes the owner to the field for their link, in the kit's Links tab, with the cursor in it. */
+  onAddLink: () => void;
 }
 
 /**
  * The poster on screen, printed on its own (the page's print styles hide everything else), or saved as an SVG file. Its
  * QR code needs a page of the owner's to send a passer-by to: without one, the poster has none and asks for the link.
  */
-export function PosterSection({ poster, link, landing }: PosterSectionProps) {
+export function PosterSection({ poster, link, landing, onAddLink }: PosterSectionProps) {
   const svg = useRef<SVGSVGElement>(null);
   const [printing, setPrinting] = useState(false);
   const own = landing.kind === "own" ? landing : null;
@@ -90,8 +83,17 @@ export function PosterSection({ poster, link, landing }: PosterSectionProps) {
               Facebook page, a Google Maps listing or a WhatsApp link. Add yours and the poster carries one; until then it
               prints without.
             </p>
-            <a className="ghost mono" href={`#${OWN_LINK_ID}`} onClick={toLinkField}>
-              Add your link <span aria-hidden="true">↓</span>
+            <a
+              className="ghost mono"
+              href="#links"
+              onClick={(event) => {
+                // A modified click opens the kit on its Links tab elsewhere, as a link does.
+                if (!isPlainClick(event)) return;
+                event.preventDefault();
+                onAddLink();
+              }}
+            >
+              Add your link <span aria-hidden="true">→</span>
             </a>
           </div>
         )}

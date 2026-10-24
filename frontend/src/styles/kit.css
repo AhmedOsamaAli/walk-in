@@ -103,22 +103,19 @@
   .kit-walk .brand-mark { width: 92px; height: 92px; }
 }
 
-/* ---------- The kit's parts, under its title ---------- */
-.kit-jump { padding: 0 var(--pad); border-bottom: var(--rule); }
-.kit-jump ol { display: flex; flex-wrap: wrap; gap: 0 26px; }
-.kit-jump a {
-  display: inline-flex; align-items: baseline; gap: 8px; padding: 14px 0 13px;
-  font-size: 14.5px; font-weight: 500; text-decoration: none;
-  transition: color .3s;
+/* ---------- The kit's parts, a tab each, the tabs pinned under the bar (Tabs.tsx, tabs.css) ---------- */
+/* Straight under the title block, across the sheet; the first tab's label lines up with the page's text. */
+.kit-page .kit-tabs { margin: 0; padding: 0 max(0px, calc(var(--pad) - 14px)); }
+@media (max-width: 480px) {
+  .kit-page .kit-tabs { padding: 0 max(0px, calc(var(--pad) - 11px)); }
 }
-.kit-jump a .mono { font-size: 10.5px; color: var(--blue); }
-.kit-jump a:hover { color: var(--blue); }
-@container page (max-width: 560px) {
-  .kit-jump ol { gap: 0 18px; }
-  .kit-jump a { padding: 11px 0 10px; font-size: 14px; }
+/* What the keyboard reaches scrolls clear of the pinned tabs too (47 px tall, 43 on a phone). */
+:root:has(.kit-tabs) { scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + 59px); }
+@media (max-width: 480px) {
+  :root:has(.kit-tabs) { scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + 55px); }
 }
 
-/* ---------- 01 Ad copy: one card per channel, every field in a paste well ---------- */
+/* ---------- Ad copy (tab 02): one card per channel, every field in a paste well ---------- */
 .ad-deck { columns: 2 360px; column-gap: 16px; }
 .ad-card {
   display: grid; gap: 14px; break-inside: avoid; margin-bottom: 16px; padding: 20px 22px 18px;
@@ -161,7 +158,7 @@
   .ad-card { padding: 18px 16px 16px; border-radius: var(--r-m); }
 }
 
-/* ---------- 02 The window poster, pinned to the drafting table ---------- */
+/* ---------- The window poster (tab 01), pinned to the drafting table ---------- */
 .poster-section { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 34px; align-items: start; }
 .poster-frame {
   display: grid; place-items: center; padding: clamp(16px, 3.4vw, 40px);
@@ -184,7 +181,7 @@
   .poster-section { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ---------- 03 Tracked links ---------- */
+/* ---------- Tracked links (tab 03) ---------- */
 .links-panel { display: grid; gap: 20px; }
 .links-site { max-width: 560px; }
 .kit-field { display: grid; gap: 7px; align-content: start; }
@@ -214,7 +211,7 @@
   .link-url { grid-column: 1 / -1; }
 }
 
-/* ---------- 04 The report, folded on the kit's page ---------- */
+/* ---------- The report (tab 04), folded on the kit's page ---------- */
 .dz-preview { display: grid; gap: 20px; }
 .dz-preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
 .dz-preview-note { max-width: 52ch; font-size: 14px; line-height: 1.45; color: var(--text-4); }
@@ -494,8 +491,8 @@
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
 
-  /* The kit's own page prints as a record, without its controls. */
-  .kit-page .kit-jump, .kit-page .copy, .kit-page .poster-actions, .kit-page .dz-preview-head .ink-button,
+  /* The kit's own page prints as a record, every part one after another (tabs.css), without its controls. */
+  .kit-page .copy, .kit-page .poster-actions, .kit-page .dz-preview-head .ink-button,
   .kit-page .page-actions, .kit-state-links, .kit-page .poster-ask a { display: none !important; }
   .kit-page .ad-card, .kit-page .link-row, .kit-page .poster-frame { break-inside: avoid; }
   .kit-page .poster-art { transform: none; box-shadow: none; }

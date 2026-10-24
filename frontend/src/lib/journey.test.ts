@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Concept, ConceptsPayload, Verdict } from "../api/types";
 import { initialSurvey, type SurveyState } from "../state/survey";
-import { afterGaps, APP_TITLE, firstResult, stoppedNext, tabTitle } from "./journey";
+import { APP_TITLE, firstResult, stoppedNext, tabTitle } from "./journey";
 
 const concept = (name: string, wildcard = false): Concept => ({ name, genre: "Coffee shop", gap_score: wildcard ? null : 60, wildcard });
 
@@ -50,18 +50,10 @@ describe("firstResult", () => {
   });
 });
 
-describe("afterGaps", () => {
-  it("leads from the gaps to what the owner asked for", () => {
-    expect(afterGaps("open")).toEqual({ id: "s-verdict", label: "See the verdict on your idea" });
-    expect(afterGaps("improve")).toEqual({ id: "s-improve", label: "See what to change" });
-    expect(afterGaps("explore")).toEqual({ id: "s-concepts", label: "See the concepts" });
-  });
-});
-
 describe("stoppedNext", () => {
   it("says the brief is kept to try again, and that what was found stays", () => {
     expect(stoppedNext(false)).toBe("Your brief is kept, so you can try again.");
-    expect(stoppedNext(true)).toBe("What it found is below. Your brief is kept, so you can try again.");
+    expect(stoppedNext(true)).toBe("What it found is in the tabs below. Your brief is kept, so you can try again.");
   });
 });
 

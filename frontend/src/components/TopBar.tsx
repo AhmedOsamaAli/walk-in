@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { markLabel, replays, type MarkState } from "../lib/brand";
-import { cx } from "../lib/css";
 import { prefersReducedMotion } from "../lib/motion";
 import { isPlainClick, type HomeMove } from "../lib/navigation";
 import { BRIEF_URL, EXAMPLES_URL } from "../lib/routes";
-import type { Section, SectionId } from "../lib/sections";
 import type { Theme } from "../state/theme";
 import { AccountMenu } from "./AccountMenu";
 import { BrandMark } from "./BrandMark";
@@ -19,10 +17,6 @@ interface TopBarProps {
   /** What a click on the mark does from here; the app does it in place, without reloading the page. */
   home: HomeMove;
   onHome: () => void;
-  /** The survey's sections; none on the pages that are not the survey. */
-  sections: readonly Section[];
-  ready: readonly SectionId[];
-  current: SectionId | null;
   theme: Theme;
   onToggleTheme: () => void;
   /** The map fills the screen over the bar: nothing on it can be reached meanwhile. */
@@ -31,14 +25,12 @@ interface TopBarProps {
   examples?: "link" | "current" | null;
 }
 
+/** The mark, the examples, the account and the theme. A survey's own navigation is its tabs, pinned under this bar. */
 export function TopBar({
   mark,
   progress,
   home,
   onHome,
-  sections,
-  ready,
-  current,
   theme,
   onToggleTheme,
   inert = false,
@@ -82,27 +74,7 @@ export function TopBar({
         <BrandMark state={mark} progress={progress} replay={replay} />
         <span className="mark-word">Walk-in</span>
       </a>
-      {sections.length ? (
-        <nav className="bar-nav mono" aria-label="Survey sections">
-          {sections.map(({ id, no, label }) => {
-            const available = ready.includes(id);
-            return (
-              <a
-                key={id}
-                href={`#${id}`}
-                className={cx(available && "ready", current === id && "current")}
-                aria-disabled={available ? undefined : true}
-                aria-current={current === id ? "location" : undefined}
-                tabIndex={available ? undefined : -1}
-              >
-                {no} {label}
-              </a>
-            );
-          })}
-        </nav>
-      ) : (
-        <span className="bar-gap" />
-      )}
+      <span className="bar-gap" />
       <div className="bar-end">
         {examples ? (
           <Link

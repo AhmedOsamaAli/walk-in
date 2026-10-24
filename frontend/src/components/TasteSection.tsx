@@ -2,8 +2,8 @@ import { Fragment, useState } from "react";
 import type { TasteEntity, TastePayload } from "../api/types";
 import { safeUrl } from "../lib/format";
 import { initials } from "../lib/initials";
-import { toSection } from "../lib/journey";
 import { SectionHead } from "./SectionHead";
+import { NextAction } from "./TabLink";
 
 /** Where Walk-in puts a list to work: the launch plan's ad settings (launch.py) or the experience plan (experience.py). */
 interface Use {
@@ -153,21 +153,7 @@ export function TasteSection({ no, taste, cues }: TasteSectionProps) {
           <span className="muted">None detected.</span>
         )}
       </div>
-      {/* The last section: the way back to what to act on. Only the one for this survey shows (styles/journey.css). */}
-      <p className="sec-next" data-next-to="designs">
-        <b className="sec-next-label mono">Next</b>
-        <span>Open a concept's design sheet, then make its launch kit.</span>
-        <a className="sec-next-link" href="#s-concepts" onClick={toSection("s-concepts")}>
-          Back to the concepts <span aria-hidden="true">↑</span>
-        </a>
-      </p>
-      <p className="sec-next" data-next-to="moves">
-        <b className="sec-next-label mono">Next</b>
-        <span>Make the first change on the list.</span>
-        <a className="sec-next-link" href="#s-improve" onClick={toSection("s-improve")}>
-          Back to what to change <span aria-hidden="true">↑</span>
-        </a>
-      </p>
+      <NextAction />
     </section>
   );
 }

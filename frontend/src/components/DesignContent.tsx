@@ -1,12 +1,13 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { messageOf } from "../api/client";
 import type { Concept, Design, ExperiencePlan } from "../api/types";
 import { audienceTitle } from "../lib/audience";
 import { letter, list, naturalList } from "../lib/format";
-import { goToInBox } from "../lib/journey";
+import { revealPanel } from "../lib/journey";
 import { areaText, hasLaunchPlan } from "../lib/launch";
-import { isPlainClick } from "../lib/navigation";
 import { offerItems, unitText, type OfferItem, type OfferMark } from "../lib/sheet";
+import type { TabItem } from "../lib/tabs";
 import { loadDesign } from "../state/designs";
 import { WhoYoudWin } from "./AudienceView";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -14,6 +15,7 @@ import { ExperiencePlanView } from "./ExperiencePlan";
 import { HoursText } from "./Hours";
 import { KitOffer } from "./KitOffer";
 import { LaunchPlanView } from "./LaunchPlan";
+import { panelId, TabPanel, Tabs } from "./Tabs";
 
 interface SheetProps {
   runId: string;
@@ -49,14 +51,10 @@ function SheetTitle({ children }: { children: ReactNode }) {
   );
 }
 
-/** "Launch kit ↓" under the tagline: the kit is the sheet's last part, so a click brings it up in the sheet. */
-function toKit(event: MouseEvent<HTMLAnchorElement>): void {
-  const box = event.currentTarget.closest<HTMLElement>(".design-body");
-  const heading = box?.querySelector<HTMLElement>("#design-kit");
-  if (!isPlainClick(event) || !box || !heading) return;
-  event.preventDefault();
-  goToInBox(heading, box);
-}
+/** The sheet's tabs and their panels share this prefix in their ids. */
+const SHEET_TABS = "design";
+
+type SheetTab = "concept" | "people" | "kit";
 
 function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
   return (
@@ -185,63 +183,94 @@ function Room({ design }: { design: Design }) {
 }
 
 function Sheet({ runId, index, concept, design }: SheetProps & { design: Design }) {
+  const [tab, setTab] = useState<SheetTab>("concept");
+  const main = useRef<HTMLDivElement>(null);
   const name = design.name ?? concept.name;
   const tagline = design.tagline ?? concept.one_liner;
   const offer = offerItems(design, concept);
   const area = design.launch ? areaText(design.launch.where) : "area";
   const rules = list(design.owner_rules).map((line) => line.trim());
   const madeBy = design.mode === "agent" ? (design.model ?? "agent") : "evidence rules";
+  const { audience } = design;
+  const plan = hasLaunchPlan(design.launch) ? design.launch : null;
+  const people = audience ? (audience.general ? "Who it draws" : "Who you'd win") : plan ? "Who to reach" : null;
+  const tabs: (TabItem & { id: SheetTab })[] = [
+    { id: "concept", label: "Concept" },
+    ...(people ? [{ id: "people" as const, label: people }] : []),
+    { id: "kit", label: "Launch kit" },
+  ];
+
+  /** Another tab: the sheet scrolls back to its top when it had scrolled past it, under the pinned tabs. */
+  function show(id: string) {
+    flushSync(() => {
+      setTab(id as SheetTab);
+    });
+    const box = main.current?.closest<HTMLElement>(".design-body");
+    const bar = main.current?.querySelector<HTMLElement>(".design-tabs");
+    const panel = document.getElementById(panelId(SHEET_TABS, id));
+    if (box && bar && panel) revealPanel(panel, bar, box);
+  }
 
   return (
-    <div className="d-main">
+    <div className="d-main" ref={main}>
       <p className="d-eyebrow mono">
         Design sheet · Concept {letter(index)} · {concept.genre} · {madeBy}
       </p>
       <SheetTitle>{name}</SheetTitle>
       {tagline ? <p className="d-tagline">{tagline}</p> : null}
-      <p className="d-jump">
-        <a className="sec-next-link" href="#design-kit" onClick={toKit}>
-          Launch kit <span aria-hidden="true">↓</span>
-        </a>
-      </p>
-      {offer.length ? <Offer items={offer} concept={concept} area={area} /> : null}
-      {design.audience ? (
-        <>
-          <h3 className="d-h">{audienceTitle(design.audience)}</h3>
-          <WhoYoudWin audience={design.audience} area={area} />
-        </>
+      <Tabs
+        label={`Design sheet: ${name}`}
+        items={tabs}
+        selected={tab}
+        onSelect={show}
+        idPrefix={SHEET_TABS}
+        pin="sheet"
+        className="design-tabs"
+      />
+      <TabPanel idPrefix={SHEET_TABS} id="concept" selected={tab === "concept"}>
+        {offer.length ? <Offer items={offer} concept={concept} area={area} /> : null}
+        <Room design={design} />
+        {rules.length ? (
+          <>
+            <h3 className="d-h">Your rules</h3>
+            <ul className="d-rules">
+              {rules.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        {hasExperience(design.experience) ? (
+          <>
+            <h3 className="d-h">Experience</h3>
+            <Experience plan={design.experience} />
+          </>
+        ) : null}
+      </TabPanel>
+      {people ? (
+        <TabPanel idPrefix={SHEET_TABS} id="people" selected={tab === "people"}>
+          {audience ? (
+            <>
+              <h3 className="d-h">{audienceTitle(audience)}</h3>
+              <WhoYoudWin audience={audience} area={area} />
+            </>
+          ) : null}
+          {plan ? (
+            <>
+              <h3 className="d-h">Launch</h3>
+              <p className="d-p launch-lede">
+                Who to reach, where and when, and only what the evidence lets an ad say. Paste the settings into each
+                platform.
+              </p>
+              <LaunchPlanView plan={plan} peopleAbove={Boolean(audience)} />
+            </>
+          ) : null}
+        </TabPanel>
       ) : null}
-      <Room design={design} />
-      {rules.length ? (
-        <>
-          <h3 className="d-h">Your rules</h3>
-          <ul className="d-rules">
-            {rules.map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-      {hasExperience(design.experience) ? (
-        <>
-          <h3 className="d-h">Experience</h3>
-          <Experience plan={design.experience} />
-        </>
-      ) : null}
-      {hasLaunchPlan(design.launch) ? (
-        <>
-          <h3 className="d-h">Launch</h3>
-          <p className="d-p launch-lede">
-            Who to reach, where and when, and only what the evidence lets an ad say. Paste the settings into each
-            platform.
-          </p>
-          <LaunchPlanView plan={design.launch} peopleAbove={Boolean(design.audience)} />
-        </>
-      ) : null}
-      <h3 className="d-h" id="design-kit" tabIndex={-1}>
-        Launch kit
-      </h3>
-      <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
+      <TabPanel idPrefix={SHEET_TABS} id="kit" selected={tab === "kit"}>
+        <h3 className="d-h">Launch kit</h3>
+        <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
+      </TabPanel>
     </div>
   );
 }

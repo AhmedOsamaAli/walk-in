@@ -1,8 +1,8 @@
 import type { Comparison, ImprovePayload, OfferDiff } from "../api/types";
-import { toSection } from "../lib/journey";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { PlaceLink } from "./PlaceLink";
 import { SectionHead } from "./SectionHead";
+import { TabLink } from "./TabLink";
 
 const FAMILIES: readonly { key: string; label: string }[] = [
   { key: "menu", label: "Menu" },
@@ -47,9 +47,9 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
         <p className="concepts-empty serif">{data.note}</p>
         <p className="sec-next" data-next-to="s-gaps">
           <b className="sec-next-label mono">Next</b>
-          <a className="sec-next-link" href="#s-gaps" onClick={toSection("s-gaps")}>
-            See what's missing <span aria-hidden="true">↑</span>
-          </a>
+          <TabLink to="gaps">
+            See what's missing <span aria-hidden="true">→</span>
+          </TabLink>
         </p>
       </section>
     );
@@ -165,9 +165,9 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
         <span>
           {moves.length ? "Start with move 1, then see what else people here love." : "See what else people here love."}
         </span>
-        <a className="sec-next-link" href="#s-taste" onClick={toSection("s-taste")}>
-          The wider taste <span aria-hidden="true">↓</span>
-        </a>
+        <TabLink to="taste">
+          The wider taste <span aria-hidden="true">→</span>
+        </TabLink>
       </p>
     </section>
   );

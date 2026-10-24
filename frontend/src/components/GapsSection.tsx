@@ -1,25 +1,24 @@
-import type { GapRow, Intent } from "../api/types";
-import { afterGaps, toSection } from "../lib/journey";
+import type { GapRow } from "../api/types";
 import { AREA } from "../map/pins";
 import { GapItem } from "./GapItem";
 import { SectionHead } from "./SectionHead";
+import { NextAction } from "./TabLink";
 
 interface GapsSectionProps {
+  /** Its tab's place in the bar: "02". */
+  no: string;
   gaps: GapRow[];
   openGap: number | null;
   onToggle: (index: number) => void;
   /** The area inside a sentence, as the survey measured it: "the walk", or "the drive" for a drive or a road distance. */
   area?: string;
-  /** What the owner asked, which names the section the gaps lead to. */
-  intent?: Intent;
 }
 
-export function GapsSection({ gaps, openGap, onToggle, area = AREA, intent = "explore" }: GapsSectionProps) {
-  const next = afterGaps(intent);
+export function GapsSection({ no, gaps, openGap, onToggle, area = AREA }: GapsSectionProps) {
   return (
     <section id="s-gaps" className="sec reveal">
       <SectionHead
-        no="03"
+        no={no}
         title="What's missing"
         note={`Place types people here love, compared with same-size areas around the site and ranked by how under-supplied they are inside ${area}. Open one to see its competitors and the places people here love most, and where each one is on the map.`}
       />
@@ -55,13 +54,7 @@ export function GapsSection({ gaps, openGap, onToggle, area = AREA, intent = "ex
           </li>
         )}
       </ol>
-      {/* Shown once the section it leads to is on the page (styles/journey.css). */}
-      <p className="sec-next" data-next-to={next.id}>
-        <b className="sec-next-label mono">Next</b>
-        <a className="sec-next-link" href={`#${next.id}`} onClick={toSection(next.id)}>
-          {next.label} <span aria-hidden="true">↓</span>
-        </a>
-      </p>
+      <NextAction />
     </section>
   );
 }

@@ -4,8 +4,11 @@ import { dataAsOfText, queriesText, secondsText } from "../lib/format";
 import { FOLDED_LINES, logView } from "../lib/log";
 import type { LogLine } from "../state/survey";
 import { SectionHead } from "./SectionHead";
+import { NextAction } from "./TabLink";
 
 interface SurveyLogProps {
+  /** Its tab's place in the bar: the log is the last tab. */
+  no: string;
   log: LogLine[];
   summary: DonePayload | null;
 }
@@ -14,7 +17,7 @@ interface SurveyLogProps {
  * Newest line first; a step's line stays where it started and turns from running to a check mark with its time. Folded
  * to its newest lines until the owner opens it, so the results are not pushed down a long list.
  */
-export function SurveyLog({ log, summary }: SurveyLogProps) {
+export function SurveyLog({ no, log, summary }: SurveyLogProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
   const asOf = summary ? dataAsOfText(summary.data_as_of) : null;
@@ -22,7 +25,7 @@ export function SurveyLog({ log, summary }: SurveyLogProps) {
   const folds = log.length > FOLDED_LINES;
   return (
     <section id="s-log" className="sec reveal">
-      <SectionHead no="01" title="Survey log" />
+      <SectionHead no={no} title="Survey log" />
       {summary ? (
         <p className="log-meta mono">
           {secondsText(summary.seconds)} · {queriesText(summary)}
@@ -55,6 +58,7 @@ export function SurveyLog({ log, summary }: SurveyLogProps) {
           {open ? "Show only the latest" : `Show all ${log.length} lines`}
         </button>
       ) : null}
+      <NextAction />
     </section>
   );
 }

@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import type { DonePayload } from "../api/types";
 import { cssVars } from "../lib/css";
 import { queriesText } from "../lib/format";
-import { firstResult, goToSection, stickyTop, stoppedNext, type ResultLink } from "../lib/journey";
-import type { SectionId } from "../lib/sections";
+import { stoppedNext, type ResultLink } from "../lib/journey";
 import { useSurveyTitle } from "../lib/useSurveyTitle";
 import { currentStep, surveyProgress, type SurveyState } from "../state/survey";
 
@@ -21,38 +20,21 @@ function useElapsed(startedAt: number, running: boolean): number {
   return elapsed;
 }
 
-/** Where a section is from the owner's place on the page: on screen under the bars, below it or above it. */
-type Place = "here" | "below" | "above";
-
 /**
- * Where the section is, once first measured (null until then, so an action for a section already on screen never
- * flashes); "here" for good once the owner has had it on screen, scrolled there or sent there.
+ * The bar's height as the page's --live-h, so the tabs pin right under it and section jumps clear it, whatever it holds:
+ * one line once complete, two while running, the reason in full once stopped. Gone with the bar.
  */
-function useSectionPlace(id: SectionId | null): Place | null {
-  const [seen, setSeen] = useState<{ id: SectionId; place: Place } | null>(null);
-
-  useEffect(() => {
-    if (!id) return;
-    const section = document.getElementById(id);
-    if (!section) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry) return;
-        const top = entry.rootBounds?.top ?? 0;
-        const place: Place = entry.isIntersecting ? "here" : entry.boundingClientRect.bottom <= top ? "above" : "below";
-        setSeen({ id, place });
-        if (place === "here") observer.disconnect();
-      },
-      // Under the sticky bars, and above the bottom fifth of the window: a section's first lines peeking in are not it.
-      { rootMargin: `-${stickyTop()}px 0px -20% 0px` },
-    );
-    observer.observe(section);
-    return () => {
-      observer.disconnect();
-    };
-  }, [id]);
-
-  return seen?.id === id ? seen.place : null;
+function measureBar(bar: HTMLElement | null): (() => void) | undefined {
+  if (!bar) return;
+  const root = document.documentElement;
+  const observer = new ResizeObserver(() => {
+    root.style.setProperty("--live-h", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+  });
+  observer.observe(bar);
+  return () => {
+    observer.disconnect();
+    root.style.removeProperty("--live-h");
+  };
 }
 
 const seconds = (value: number) => (value < 10 ? value.toFixed(1) : Math.round(value).toString());
@@ -68,39 +50,25 @@ function Summary({ summary }: { summary: DonePayload | null }) {
   );
 }
 
-/** The one thing to do once the survey is complete: go to the result it was asked for, named for it. */
-function GoToResult({ result, place }: { result: ResultLink; place: Exclude<Place, "here"> }) {
-  return (
-    <button
-      className="live-go"
-      type="button"
-      onClick={() => {
-        goToSection(result.id);
-      }}
-    >
-      {result.label}
-      <span aria-hidden="true">{place === "above" ? "↑" : "↓"}</span>
-    </button>
-  );
-}
-
 interface LiveStatusProps {
   survey: SurveyState;
+  /** The result the owner asked for, while they have not opened its tab yet; null once they have, or while it runs. */
+  result: ResultLink | null;
+  /** Opens the result's tab and moves focus to its heading. */
+  onResult: () => void;
   /** Back to the brief, which keeps the site and settings the survey ran with: offered once a survey has stopped. */
   onRetry: () => void;
 }
 
 /**
- * Pinned under the top bar while a survey runs. Once complete it says so in one line, offers the way to the result the
- * owner asked for until they get there, and can be dismissed; once stopped it says why and leads back to the brief.
+ * Pinned under the top bar while a survey runs. Once complete it says so in one line, offers the result the owner asked
+ * for until they open it, and can be dismissed; once stopped it says why and leads back to the brief.
  */
-export function LiveStatus({ survey, onRetry }: LiveStatusProps) {
+export function LiveStatus({ survey, result, onResult, onRetry }: LiveStatusProps) {
   const [dismissed, setDismissed] = useState(false);
   const running = survey.status === "running";
   const failed = survey.status === "failed";
   const elapsed = useElapsed(survey.startedAt, running);
-  const result = survey.status === "complete" ? firstResult(survey) : null;
-  const place = useSectionPlace(result?.id ?? null);
   useSurveyTitle(survey.status);
   if (dismissed || survey.status === "idle") return null;
 
@@ -116,7 +84,7 @@ export function LiveStatus({ survey, onRetry }: LiveStatusProps) {
   const found = survey.block !== null || survey.gaps !== null;
 
   return (
-    <section className="live" data-state={survey.status} aria-label="Survey status">
+    <section ref={measureBar} className="live" data-state={survey.status} aria-label="Survey status">
       <span className="live-mark" aria-hidden="true">
         {mark}
       </span>
@@ -129,7 +97,12 @@ export function LiveStatus({ survey, onRetry }: LiveStatusProps) {
         </span>
       ) : (
         <div className="live-end">
-          {result && place && place !== "here" ? <GoToResult result={result} place={place} /> : null}
+          {result && survey.status === "complete" ? (
+            <button className="live-go" type="button" onClick={onResult}>
+              {result.label}
+              <span aria-hidden="true">→</span>
+            </button>
+          ) : null}
           {failed ? (
             <button className="live-go" type="button" onClick={onRetry}>
               Back to the brief

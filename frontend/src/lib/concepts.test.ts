@@ -99,7 +99,7 @@ describe("the owner's rules", () => {
 describe("conceptsNote", () => {
   it("credits the agent, and says what the wild card is when there is one", () => {
     expect(conceptsNote({ mode: "agent", model: "gpt-oss-120b", concepts: [ranked("Tidewater", "Seafood", 67)] })).toBe(
-      "Designed by the agent (gpt-oss-120b) from the gaps above. Every claim traces back to Qloo evidence.",
+      "Designed by the agent (gpt-oss-120b) from the gaps the survey found. Every claim traces back to Qloo evidence.",
     );
     expect(conceptsNote({ mode: "rules", concepts: [ranked("Tidewater", "Seafood", 67), WILD] })).toMatch(
       /deterministic rules.*The last is a wild card: two things people here love, combined\. It is untested, so it is not ranked\.$/,

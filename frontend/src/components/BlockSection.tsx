@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import type { BlockPayload, Classic, TopicGroup } from "../api/types";
 import { standingText, topicForms } from "../lib/format";
-import { toSection } from "../lib/journey";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
+import { NextAction } from "./TabLink";
 
 function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -73,14 +73,15 @@ function Classics({ classics }: { classics: Classic[] }) {
   );
 }
 
-/** The block's numbers and voices. `area` names the survey's area as the server does ("30-minute drive"). */
-export function BlockSection({ block, area }: { block: BlockPayload; area?: string }) {
+/** The block's numbers and voices. `no` is its tab's place in the bar; `area` names the survey's area as the server does
+ * ("30-minute drive"). */
+export function BlockSection({ no, block, area }: { no: string; block: BlockPayload; area?: string }) {
   const { summary, places } = block;
   const genres = summary.top_genres ?? [];
   const classics = summary.classics ?? [];
   return (
     <section id="s-block" className="sec reveal">
-      <SectionHead no="02" title="The block today" note={`Everything Qloo knows inside the ${area ?? "catchment"}.`} />
+      <SectionHead no={no} title="The block today" note={`Everything Qloo knows inside the ${area ?? "catchment"}.`} />
       <div className="stats stats-3">
         <Stat label="Places">
           <CountUp value={summary.place_count ?? places.length} />
@@ -120,13 +121,7 @@ export function BlockSection({ block, area }: { block: BlockPayload; area?: stri
         empty="No recurring complaints."
         limit={6}
       />
-      {/* Shown once the gaps are on the page (styles/journey.css). */}
-      <p className="sec-next" data-next-to="s-gaps">
-        <b className="sec-next-label mono">Next</b>
-        <a className="sec-next-link" href="#s-gaps" onClick={toSection("s-gaps")}>
-          See what's missing <span aria-hidden="true">↓</span>
-        </a>
-      </p>
+      <NextAction />
     </section>
   );
 }

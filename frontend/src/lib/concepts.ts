@@ -74,7 +74,7 @@ export function conceptsNote({ mode, model, note, concepts }: ConceptsPayload): 
     ? " The last is a wild card: two things people here love, combined. It is untested, so it is not ranked."
     : "";
   if (mode === "agent") {
-    return `Designed by ${agentCredit(model)} from the gaps above. Every claim traces back to Qloo evidence.${wild}`;
+    return `Designed by ${agentCredit(model)} from the gaps the survey found. Every claim traces back to Qloo evidence.${wild}`;
   }
   if (mode === "rules") return `Built from the evidence by deterministic rules (no AI model was available).${wild}`;
   return note ?? "";

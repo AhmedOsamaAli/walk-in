@@ -1,0 +1,40 @@
+/* ---------- Tabs: one section at a time, the bar pinned in view while the panel scrolls ---------- */
+.tabs {
+  display: flex; gap: 2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  margin: 0 calc(-1 * var(--pad)); padding: 0 var(--pad);
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: var(--rule);
+}
+.tabs::-webkit-scrollbar { display: none; }
+/* Under the top bar, the engine's waking band and the survey's status bar, whichever show. */
+.tabs-page { position: sticky; top: calc(var(--bar-h) + var(--wake-h) + var(--live-h)); z-index: 55; }
+/* At the top of a sheet that scrolls on its own. */
+.tabs-sheet { position: sticky; top: 0; z-index: 5; }
+.tab {
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 46px; padding: 0 14px;
+  font: 500 15px/1.2 var(--f-sans); color: var(--text-3); white-space: nowrap;
+  transition: color .3s;
+}
+.tab::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0;
+  background: var(--blue-fill); transform: scaleX(0); transition: transform .35s var(--ease);
+}
+.tab:hover:not([aria-disabled="true"]) { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); }
+.tab[aria-selected="true"]::after { transform: scaleX(1); }
+.tab[aria-disabled="true"] { opacity: .45; cursor: default; }
+.tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; border-radius: 6px; }
+.tab-badge { padding: 1px 7px; border-radius: 999px; background: var(--smoke); color: var(--text-2); font-size: 11px; }
+.tab[aria-selected="true"] .tab-badge { background: var(--blue-fill); color: var(--on-blue); }
+@media (prefers-reduced-motion: reduce) { .tab::after { transition: none; } }
+@media (max-width: 480px) {
+  .tab { min-height: 42px; padding: 0 11px; font-size: 14px; }
+}
+/* On paper every panel prints, one after another, and the bar is left out. */
+@media print {
+  .tabs { display: none !important; }
+  .tab-panel[hidden] { display: block !important; }
+}

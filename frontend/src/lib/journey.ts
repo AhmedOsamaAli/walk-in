@@ -1,12 +1,12 @@
-/* The survey's journey (LiveStatus.tsx, the result sections and the design sheet): where a finished survey sends the
-   owner first, how a "next" control takes them there, and what the tab's title says to an owner waiting in another tab. */
-import type { MouseEvent } from "react";
+/* The survey's journey (LiveStatus.tsx, the result tabs and the design sheet): where a finished survey sends the owner
+   first, how a "next" control takes them there, and what the tab's title says to an owner waiting in another tab. */
+import { createContext } from "react";
 import type { Intent } from "../api/types";
 import type { SurveyState, SurveyStatus } from "../state/survey";
 import { placeConcepts } from "./concepts";
 import { scrollBehavior } from "./motion";
-import { isPlainClick } from "./navigation";
 import type { SectionId } from "./sections";
+import type { SurveyTab } from "./surveyTabs";
 
 export interface ResultLink {
   /** The section it goes to. */
@@ -29,17 +29,10 @@ export function firstResult({ intent, verdict, improve, concepts, gaps }: Result
   return gaps ? { id: "s-gaps", label: "See what's missing" } : null;
 }
 
-/** The section that follows the gaps, by what the owner asked: the verdict on their idea, what to change, or concepts. */
-export function afterGaps(intent: Intent): ResultLink {
-  if (intent === "open") return { id: "s-verdict", label: "See the verdict on your idea" };
-  if (intent === "improve") return { id: "s-improve", label: "See what to change" };
-  return { id: "s-concepts", label: "See the concepts" };
-}
-
 /** What to do after a survey stopped: Back to the brief, which keeps everything it was run with. */
 export function stoppedNext(found: boolean): string {
   return found
-    ? "What it found is below. Your brief is kept, so you can try again."
+    ? "What it found is in the tabs below. Your brief is kept, so you can try again."
     : "Your brief is kept, so you can try again.";
 }
 
@@ -56,43 +49,29 @@ export function tabTitle(status: SurveyStatus, unseen: boolean): string {
   return APP_TITLE;
 }
 
-/** The space the sticky bars take at the top of the window, as the page's scroll padding allows for them. */
-export function stickyTop(): number {
-  return Number.parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+/** The survey on screen, for the "next" links inside its tabs: what the owner asked, and how to show another tab. */
+export interface Journey {
+  intent: Intent;
+  /** Shows the tab, brings its top into view and moves focus to its heading. */
+  show: (tab: SurveyTab) => void;
 }
 
-/**
- * Brings a section's top into view under the sticky bars, smoothly unless motion is reduced, and moves focus to its
- * heading, so a screen reader reads on from there. The heading takes focus without taking a place in the Tab order.
- * Returns false when the section is not on the page.
- */
-export function goToSection(id: SectionId): boolean {
-  const section = document.getElementById(id);
-  if (!section) return false;
-  const heading = section.querySelector<HTMLElement>("h2") ?? section;
-  if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-  section.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
-  heading.focus({ preventScroll: true });
-  return true;
-}
+export const JourneyContext = createContext<Journey | null>(null);
 
 /**
- * A section's "next" link (href="#s-…"): a plain click goes to the section as goToSection does, without adding to the
- * history; a modified click, or a section not on the page, is left to the browser.
+ * After a tab switch, the new panel's top in view under the pinned bars: when the page (or the sheet, `box`) had
+ * scrolled past it, it scrolls back to it, smoothly unless motion is reduced; otherwise nothing moves.
  */
-export function toSection(id: SectionId) {
-  return (event: MouseEvent<HTMLAnchorElement>): void => {
-    if (isPlainClick(event) && goToSection(id)) event.preventDefault();
-  };
+export function revealPanel(panel: HTMLElement, bar: HTMLElement, box?: HTMLElement): void {
+  const gap = panel.getBoundingClientRect().top - bar.getBoundingClientRect().bottom;
+  if (gap >= 0) return;
+  (box ?? window).scrollBy({ top: gap, behavior: scrollBehavior() });
 }
 
-/**
- * For a sheet that scrolls on its own, such as the design sheet: brings a heading to the top of the box it scrolls in,
- * smoothly unless motion is reduced, and moves focus to it. Nothing else on the page scrolls.
- */
-export function goToInBox(heading: HTMLElement, box: HTMLElement, gap = 24): void {
-  const top = box.scrollTop + heading.getBoundingClientRect().top - box.getBoundingClientRect().top - gap;
-  box.scrollTo({ top: Math.max(0, top), behavior: scrollBehavior() });
+/** Moves focus to a panel's heading, which takes it without taking a place in the Tab order. */
+export function focusHeading(panel: HTMLElement): void {
+  const heading = panel.querySelector<HTMLElement>("h2, h3");
+  if (!heading) return;
   if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
   heading.focus({ preventScroll: true });
 }

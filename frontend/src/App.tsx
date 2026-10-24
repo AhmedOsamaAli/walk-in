@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { PlaceHit, RunRequest, Verdict, Walk } from "./api/types";
 import { BlockSection } from "./components/BlockSection";
@@ -16,6 +16,7 @@ import { NextStep } from "./components/NextStep";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { SiteHeader, type TitleField } from "./components/SiteHeader";
 import { SurveyLog } from "./components/SurveyLog";
+import { panelId, tabId, TabPanel, Tabs } from "./components/Tabs";
 import { TasteSection } from "./components/TasteSection";
 import { TopBar } from "./components/TopBar";
 import { VerdictSection } from "./components/VerdictSection";
@@ -23,6 +24,7 @@ import { areaLabel, areaOf, walkLabel, type Area } from "./lib/area";
 import { markState } from "./lib/brand";
 import { DROPPED_PIN, siteName, unnamed } from "./lib/fullmap";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
+import { firstResult, focusHeading, JourneyContext, revealPanel, type Journey } from "./lib/journey";
 import { scrollBehavior, Settled, withViewTransition } from "./lib/motion";
 import { homeMove, NavigateContext, type Navigate, type Showing } from "./lib/navigation";
 import {
@@ -37,7 +39,9 @@ import {
   type PageRoute,
   type SurveyRoute,
 } from "./lib/routes";
-import { posterButtonId, sectionNo, sectionsFor, useSectionSpy, type SectionId } from "./lib/sections";
+import { posterButtonId } from "./lib/sections";
+import { answerTab, hashTab, openingTab, surveyTabs, tabNo, type SurveyTab } from "./lib/surveyTabs";
+import { shownTab } from "./lib/tabs";
 import type { MapPoint } from "./map/controller";
 import { areaWord } from "./map/pins";
 import { SurveyMap, type PlacedSpot } from "./map/SurveyMap";
@@ -123,16 +127,8 @@ function withVerdict(fields: TitleField[], verdict: Verdict | null): TitleField[
   );
 }
 
-function readySections(survey: SurveyState): SectionId[] {
-  const ready: SectionId[] = ["s-log"];
-  if (survey.block) ready.push("s-block");
-  if (survey.gaps) ready.push("s-gaps");
-  if (survey.verdict) ready.push("s-verdict");
-  if (survey.improve) ready.push("s-improve");
-  if (survey.concepts) ready.push("s-concepts");
-  if (survey.taste) ready.push("s-taste");
-  return ready;
-}
+/** The survey's tabs and their panels share this prefix in their ids. */
+const TABS_ID = "survey";
 
 /** A restored survey's title block, rebuilt from the brief its run recorded, as the live one would have read. */
 function recordedTitle(survey: SurveyState): Surveyed {
@@ -177,6 +173,12 @@ export function App() {
   const [mapFull, setMapFull] = useState(false);
   /** Counts "Use this spot" on the full-screen map; the brief brings its next step into view and focus each time. */
   const [reveal, setReveal] = useState(0);
+  /** The survey's tab, for the run it was chosen in: a survey opens on its log while it runs, else on its answer. */
+  const [tab, setTab] = useState<{ run: number; id: SurveyTab } | null>(null);
+  /** The tabs left since they were last shown: what they hold does not slide in again when they come back. */
+  const [left, setLeft] = useState<{ run: number; tabs: SurveyTab[] }>({ run: 0, tabs: [] });
+  /** The run whose answer the owner has opened since it completed: the status bar stops offering it. */
+  const [answered, setAnswered] = useState<number | null>(null);
   /** The address last shown, to tell Back and Forward from a section link, which moves only the hash. */
   const address = useRef<string | null>(null);
   const focusTitle = useRef(false);
@@ -187,9 +189,14 @@ export function App() {
 
   const title = started ?? (survey.recorded === null ? null : recordedTitle(survey));
   const surveying = screen.name === "survey" && title !== null;
-  const intent = surveying ? survey.intent : form.intent;
-  const ready = surveying ? readySections(survey) : [];
-  const current = useSectionSpy(ready);
+  const tabs = surveyTabs(survey);
+  // A survey that appears opens on the tab its link names, else its log while it runs, else its answer; after that only
+  // the owner changes tab.
+  if (surveying && tab?.run !== survey.run) setTab({ run: survey.run, id: openingTab(survey, window.location.hash) });
+  const selected = (shownTab(tabs, tab?.run === survey.run ? tab.id : null) ?? "log") as SurveyTab;
+  const answer = survey.status === "complete" ? answerTab(survey) : null;
+  if (surveying && answer !== null && selected === answer && answered !== survey.run) setAnswered(survey.run);
+  const result = answer !== null && answered !== survey.run ? firstResult(survey) : null;
   const openGap = survey.openGap === null ? null : (survey.gaps?.[survey.openGap] ?? null);
   const surveySite: MapPoint | null = started?.site ?? survey.site;
   const surveyWalk = survey.catchment ?? (started && samePoint(started.site, site) ? briefWalk : null);
@@ -375,7 +382,14 @@ export function App() {
    */
   const followHistory = useEffectEvent(() => {
     const now = currentAddress();
-    if (now === address.current) return;
+    if (now === address.current) {
+      // Only the hash moved, to a tab's name (#gaps): the survey shows that tab when it has it.
+      const asked = hashTab(window.location.hash);
+      if (surveying && asked && asked !== selected && tabs.some((item) => item.id === asked && !item.disabled)) {
+        showTab(asked, false);
+      }
+      return;
+    }
     address.current = now;
     const route = currentRoute();
     // Another page starts at its top; the same page with only its query changed keeps its place.
@@ -487,6 +501,18 @@ export function App() {
     address.current = currentAddress();
   }, [surveying, survey.recorded, survey.runId]);
 
+  // The chosen tab in view along its bar, which scrolls sideways when the tabs are wider than a phone.
+  useEffect(() => {
+    if (!surveying) return;
+    const bar = document.querySelector<HTMLElement>(".survey-tabs");
+    const chosen = document.getElementById(tabId(TABS_ID, selected));
+    if (!bar || !chosen) return;
+    const edge = chosen.getBoundingClientRect();
+    const view = bar.getBoundingClientRect();
+    if (edge.left < view.left) bar.scrollLeft += edge.left - view.left - 12;
+    else if (edge.right > view.right) bar.scrollLeft += edge.right - view.right + 12;
+  }, [surveying, selected]);
+
   // A link's design sheet that the run never produced leaves the address once the run has ended.
   const dropSheet = useEffectEvent((runId: string) => {
     replaceSheet(runId, null);
@@ -508,8 +534,93 @@ export function App() {
     setSheet(null);
     if (!closing) return;
     replaceSheet(closing.runId, null);
-    // A sheet opened from a link has no poster it was opened from: focus goes to its poster's button instead.
-    if (!closing.opener) document.getElementById(posterButtonId(closing.index))?.focus();
+    // A sheet opened from a link has no poster it was opened from: focus goes to its poster's button instead, on the
+    // concepts' tab.
+    if (closing.opener) return;
+    if (selected !== "concepts") showTab("concepts", false);
+    document.getElementById(posterButtonId(closing.index))?.focus();
+  }
+
+  /**
+   * Shows a tab of the survey and names it in the address (#concepts), so its link opens on it. When the page had
+   * scrolled past the panel's top, it comes back into view under the pinned bars; `focus` moves focus to its heading.
+   */
+  function showTab(id: SurveyTab, focus: boolean) {
+    const from = selected;
+    flushSync(() => {
+      setTab({ run: survey.run, id });
+      if (from !== id) {
+        setLeft((now) => ({ run: survey.run, tabs: [...(now.run === survey.run ? now.tabs : []), from] }));
+      }
+    });
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#${id}`);
+    const panel = document.getElementById(panelId(TABS_ID, id));
+    const bar = document.querySelector<HTMLElement>(".survey-tabs");
+    if (!panel) return;
+    if (bar) revealPanel(panel, bar);
+    if (focus) focusHeading(panel);
+  }
+
+  const journey: Journey = {
+    intent: survey.intent,
+    show: (id) => {
+      showTab(id, true);
+    },
+  };
+
+  /** What a tab of the survey holds, once it has arrived. */
+  function panelContent(id: SurveyTab): ReactNode {
+    const no = tabNo(survey.intent, id);
+    switch (id) {
+      case "log":
+        return (
+          <SectionBoundary key={`log-${survey.run}`} label="The survey log">
+            <SurveyLog no={no} log={survey.log} summary={survey.summary} />
+          </SectionBoundary>
+        );
+      case "area":
+        return survey.block ? (
+          <SectionBoundary key={`block-${survey.run}`} label="The block">
+            <BlockSection no={no} block={survey.block} area={surveyAreaLabel} />
+          </SectionBoundary>
+        ) : null;
+      case "gaps":
+        return survey.gaps ? (
+          <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
+            <GapsSection no={no} gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} area={surveyAreaWord} />
+          </SectionBoundary>
+        ) : null;
+      case "verdict":
+        return survey.verdict ? (
+          <SectionBoundary key={`verdict-${survey.run}`} label="The verdict">
+            <VerdictSection no={no} verdict={survey.verdict} />
+          </SectionBoundary>
+        ) : null;
+      case "improve":
+        return survey.improve ? (
+          <SectionBoundary key={`improve-${survey.run}`} label="What to change">
+            <ImproveSection no={no} data={survey.improve} />
+          </SectionBoundary>
+        ) : null;
+      case "concepts":
+        return survey.concepts ? (
+          <SectionBoundary key={`concepts-${survey.run}`} label="The concepts">
+            <ConceptsSection
+              no={no}
+              data={survey.concepts}
+              rules={survey.understood}
+              baseline={survey.baseline}
+              onOpen={openDesign}
+            />
+          </SectionBoundary>
+        ) : null;
+      case "taste":
+        return survey.taste ? (
+          <SectionBoundary key={`taste-${survey.run}`} label="The wider taste">
+            <TasteSection no={no} taste={survey.taste} cues={survey.cues ?? []} />
+          </SectionBoundary>
+        ) : null;
+    }
   }
 
   /** A spot placed on the map: by hand, or found by the full-screen map's search, which knows the place's name. */
@@ -535,9 +646,6 @@ export function App() {
           progress={surveyProgress(survey)}
           home={homeMove(showing)}
           onHome={goHome}
-          sections={page ? [] : sectionsFor(intent)}
-          ready={ready}
-          current={current}
           theme={theme}
           onToggleTheme={toggleTheme}
           inert={pageInert}
@@ -571,7 +679,14 @@ export function App() {
               {surveying ? (
                 <Settled value={settled}>
                   <SectionBoundary key={`live-${survey.run}`} label="The survey status">
-                    <LiveStatus survey={survey} onRetry={retry} />
+                    <LiveStatus
+                      survey={survey}
+                      result={result}
+                      onResult={() => {
+                        if (answer) showTab(answer, true);
+                      }}
+                      onRetry={retry}
+                    />
                   </SectionBoundary>
                   {noExamples ? null : <ExampleWait key={`wait-${survey.run}`} running={survey.status === "running"} />}
                   <SiteHeader
@@ -582,51 +697,30 @@ export function App() {
                     onNewSurvey={newSurvey}
                     titleRef={titleRef}
                   />
-                  <SectionBoundary key={`log-${survey.run}`} label="The survey log">
-                    <SurveyLog log={survey.log} summary={survey.summary} />
-                  </SectionBoundary>
-                  {survey.block ? (
-                    <SectionBoundary key={`block-${survey.run}`} label="The block">
-                      <BlockSection block={survey.block} area={surveyAreaLabel} />
-                    </SectionBoundary>
-                  ) : null}
-                  {survey.gaps ? (
-                    <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
-                      <GapsSection
-                        gaps={survey.gaps}
-                        openGap={survey.openGap}
-                        onToggle={toggleGap}
-                        area={surveyAreaWord}
-                        intent={intent}
-                      />
-                    </SectionBoundary>
-                  ) : null}
-                  {survey.verdict ? (
-                    <SectionBoundary key={`verdict-${survey.run}`} label="The verdict">
-                      <VerdictSection no={sectionNo(intent, "s-verdict")} verdict={survey.verdict} />
-                    </SectionBoundary>
-                  ) : null}
-                  {survey.improve ? (
-                    <SectionBoundary key={`improve-${survey.run}`} label="What to change">
-                      <ImproveSection no={sectionNo(intent, "s-improve")} data={survey.improve} />
-                    </SectionBoundary>
-                  ) : null}
-                  {survey.concepts ? (
-                    <SectionBoundary key={`concepts-${survey.run}`} label="The concepts">
-                      <ConceptsSection
-                        no={sectionNo(intent, "s-concepts")}
-                        data={survey.concepts}
-                        rules={survey.understood}
-                        baseline={survey.baseline}
-                        onOpen={openDesign}
-                      />
-                    </SectionBoundary>
-                  ) : null}
-                  {survey.taste ? (
-                    <SectionBoundary key={`taste-${survey.run}`} label="The wider taste">
-                      <TasteSection no={sectionNo(intent, "s-taste")} taste={survey.taste} cues={survey.cues ?? []} />
-                    </SectionBoundary>
-                  ) : null}
+                  <Tabs
+                    label="Survey results"
+                    items={tabs}
+                    selected={selected}
+                    onSelect={(id) => {
+                      showTab(id as SurveyTab, false);
+                    }}
+                    idPrefix={TABS_ID}
+                    pin="page"
+                    className="survey-tabs"
+                  />
+                  <JourneyContext value={journey}>
+                    {tabs.map(({ id }) => (
+                      <TabPanel
+                        key={id}
+                        idPrefix={TABS_ID}
+                        id={id}
+                        selected={id === selected}
+                        className={left.run === survey.run && left.tabs.includes(id) ? "tab-left" : undefined}
+                      >
+                        {panelContent(id)}
+                      </TabPanel>
+                    ))}
+                  </JourneyContext>
                 </Settled>
               ) : null}
               {surveying && started !== null && survey.status === "complete" ? <KeepSurveys /> : null}

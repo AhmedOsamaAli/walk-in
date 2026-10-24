@@ -1,14 +1,14 @@
 import type { ChainCheck, Verdict } from "../api/types";
 import { chainLine } from "../lib/audience";
 import { VERDICT_STAMPS } from "../lib/format";
-import { toSection } from "../lib/journey";
 import { SectionHead } from "./SectionHead";
+import { TabLink } from "./TabLink";
 
 /** What happens next, by verdict: a measurable idea that fits leads the concepts. */
 function nextLine(verdict: Verdict): string {
-  if (verdict.level === "unknown") return "Qloo has no category for it, so the concepts below are the block's strongest gaps.";
-  if (verdict.level === "misfit") return "The concepts below are the strongest gaps that the unit and your notes allow.";
-  return "It leads the concepts below, designed to win here, next to the two strongest alternatives.";
+  if (verdict.level === "unknown") return "Qloo has no category for it, so the concepts are the block's strongest gaps.";
+  if (verdict.level === "misfit") return "The concepts are the strongest gaps that the unit and your notes allow.";
+  return "It leads the concepts, designed to win here, next to the two strongest alternatives.";
 }
 
 /** Where the idea ranks among the site's gaps: strongest on the left, its own tick marked. */
@@ -66,9 +66,9 @@ export function VerdictSection({ no, verdict }: { no: string; verdict: Verdict }
       {/* Shown once the concepts are on the page (styles/journey.css). */}
       <p className="sec-next" data-next-to="s-concepts">
         <b className="sec-next-label mono">Next</b>
-        <a className="sec-next-link" href="#s-concepts" onClick={toSection("s-concepts")}>
-          See the concepts <span aria-hidden="true">↓</span>
-        </a>
+        <TabLink to="concepts">
+          See the concepts <span aria-hidden="true">→</span>
+        </TabLink>
       </p>
     </section>
   );
