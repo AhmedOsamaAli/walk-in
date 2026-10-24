@@ -276,6 +276,16 @@ p.osm-also.mono { font-size: 10.5px; line-height: 1.5; color: var(--text-4); }
 }
 .poster-open:hover span:last-child { transform: translateX(4px); }
 .poster-open span:last-child { transition: transform .5s var(--ease); font-size: 18px; }
+/* The lead card's way into its design sheet reads as the main action: an ink pill, where the other cards keep a rule. */
+.poster.p0 .poster-open {
+  align-self: flex-start; justify-content: flex-start; gap: 14px; width: auto;
+  margin-top: 8px; padding: 13px 20px; border-top: 0; border-radius: 999px;
+  background: var(--on-yellow); color: var(--yellow);
+  font: 500 15px/1 var(--f-sans); letter-spacing: 0; text-transform: none;
+  transition: background-color .35s var(--ease), color .35s;
+}
+.poster.p0:hover .poster-open { background: var(--blue-fill); color: var(--on-blue); }
+.poster.p0 .poster-open:focus-visible { outline-color: var(--on-yellow); }
 .concepts-empty { font-size: 18px; }
 .concepts-caution {
   margin: -8px 0 18px; padding: 12px 16px;

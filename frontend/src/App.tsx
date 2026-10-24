@@ -282,7 +282,8 @@ export function App() {
     window.scrollTo({ top: 0, behavior: scrollBehavior() });
   }
 
-  function newSurvey() {
+  /** Back to the brief, which keeps the site and settings; `reveal` brings its next step into view and focus too. */
+  function toBrief(reveal: boolean) {
     withViewTransition(() => {
       flushSync(() => {
         adoptBrief();
@@ -290,10 +291,20 @@ export function App() {
         setStarted(null);
         setSheet(null);
         setScreen({ name: "brief" });
+        if (reveal) setReveal((count) => count + 1);
       });
     });
     if (!onBriefUrl()) navigate(BRIEF_URL);
-    window.scrollTo({ top: 0, behavior: scrollBehavior() });
+    if (!reveal) window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
+
+  function newSurvey() {
+    toBrief(false);
+  }
+
+  /** "Back to the brief" from a survey that stopped: the brief as it was, its button in view and in focus to try again. */
+  function retry() {
+    toBrief(true);
   }
 
   /**
@@ -560,7 +571,7 @@ export function App() {
               {surveying ? (
                 <Settled value={settled}>
                   <SectionBoundary key={`live-${survey.run}`} label="The survey status">
-                    <LiveStatus survey={survey} />
+                    <LiveStatus survey={survey} onRetry={retry} />
                   </SectionBoundary>
                   {noExamples ? null : <ExampleWait key={`wait-${survey.run}`} running={survey.status === "running"} />}
                   <SiteHeader
@@ -581,7 +592,13 @@ export function App() {
                   ) : null}
                   {survey.gaps ? (
                     <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
-                      <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} area={surveyAreaWord} />
+                      <GapsSection
+                        gaps={survey.gaps}
+                        openGap={survey.openGap}
+                        onToggle={toggleGap}
+                        area={surveyAreaWord}
+                        intent={intent}
+                      />
                     </SectionBoundary>
                   ) : null}
                   {survey.verdict ? (

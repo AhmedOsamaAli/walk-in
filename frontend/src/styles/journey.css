@@ -47,10 +47,21 @@
 }
 .sec-next-link:hover { color: var(--ink); }
 
-/* A "next" link shows once what it leads to is on the page: the concepts (or their cards), the moves, the taste, the
-   gaps. The wider taste carries one for each kind of survey, and only this survey's shows. */
+/* A "next" link shows once what it leads to is on the page: the concepts (or their cards), the verdict, the moves or
+   what to change, the taste, the gaps. The wider taste carries one for each kind of survey, and only this survey's
+   shows. */
 :root:not(:has(#s-concepts)) .sec-next[data-next-to="s-concepts"],
 :root:not(:has(#s-concepts[data-designed])) .sec-next[data-next-to="designs"],
+:root:not(:has(#s-verdict)) .sec-next[data-next-to="s-verdict"],
+:root:not(:has(#s-improve)) .sec-next[data-next-to="s-improve"],
 :root:not(:has(#s-improve[data-moves])) .sec-next[data-next-to="moves"],
 :root:not(:has(#s-taste)) .sec-next[data-next-to="s-taste"],
 :root:not(:has(#s-gaps)) .sec-next[data-next-to="s-gaps"] { display: none; }
+
+/* ---------- The design sheet: its kit, the last part, a click away from the top ---------- */
+.d-jump { margin: -4px 0 4px; font-size: 15px; line-height: 1.45; }
+/* The title and the kit's heading take focus when the sheet opens or the link is followed; neither is a control. */
+.d-title[tabindex="-1"]:focus, .d-h[tabindex="-1"]:focus { outline: none; }
+@media print {
+  .d-jump, .sec-next { display: none !important; }
+}

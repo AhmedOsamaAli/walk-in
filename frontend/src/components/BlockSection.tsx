@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { BlockPayload, Classic, TopicGroup } from "../api/types";
 import { standingText, topicForms } from "../lib/format";
+import { toSection } from "../lib/journey";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
 
@@ -119,6 +120,13 @@ export function BlockSection({ block, area }: { block: BlockPayload; area?: stri
         empty="No recurring complaints."
         limit={6}
       />
+      {/* Shown once the gaps are on the page (styles/journey.css). */}
+      <p className="sec-next" data-next-to="s-gaps">
+        <b className="sec-next-label mono">Next</b>
+        <a className="sec-next-link" href="#s-gaps" onClick={toSection("s-gaps")}>
+          See what's missing <span aria-hidden="true">↓</span>
+        </a>
+      </p>
     </section>
   );
 }

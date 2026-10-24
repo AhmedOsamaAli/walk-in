@@ -15,15 +15,20 @@ interface DesignSheetProps {
   onClose: () => void;
 }
 
-/** A modal dialog: Escape, the Close button or a click on the backdrop closes it, and focus returns to its poster. */
+/**
+ * A modal dialog: Escape, the Close button or a click on the backdrop closes it, and focus returns to its poster. It
+ * opens with focus on the concept's name, so a screen reader starts with the sheet rather than its Close button.
+ */
 export function DesignSheet({ target, onClose }: DesignSheetProps) {
   const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
-    if (target && !element.open) element.showModal();
-    else if (!target && element.open) element.close();
+    if (target && !element.open) {
+      element.showModal();
+      element.querySelector<HTMLElement>("#design-title")?.focus({ preventScroll: true });
+    } else if (!target && element.open) element.close();
   }, [target]);
 
   return (

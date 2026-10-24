@@ -1,6 +1,7 @@
-/* The survey's journey (LiveStatus.tsx and the result sections): where a finished survey sends the owner first, how a
-   section's "next" control takes them there, and what the tab's title says to an owner waiting in another tab. */
+/* The survey's journey (LiveStatus.tsx, the result sections and the design sheet): where a finished survey sends the
+   owner first, how a "next" control takes them there, and what the tab's title says to an owner waiting in another tab. */
 import type { MouseEvent } from "react";
+import type { Intent } from "../api/types";
 import type { SurveyState, SurveyStatus } from "../state/survey";
 import { placeConcepts } from "./concepts";
 import { scrollBehavior } from "./motion";
@@ -28,11 +29,18 @@ export function firstResult({ intent, verdict, improve, concepts, gaps }: Result
   return gaps ? { id: "s-gaps", label: "See what's missing" } : null;
 }
 
-/** What to do after a survey stopped: the brief it ran from is kept, and New survey goes back to it. */
+/** The section that follows the gaps, by what the owner asked: the verdict on their idea, what to change, or concepts. */
+export function afterGaps(intent: Intent): ResultLink {
+  if (intent === "open") return { id: "s-verdict", label: "See the verdict on your idea" };
+  if (intent === "improve") return { id: "s-improve", label: "See what to change" };
+  return { id: "s-concepts", label: "See the concepts" };
+}
+
+/** What to do after a survey stopped: Back to the brief, which keeps everything it was run with. */
 export function stoppedNext(found: boolean): string {
   return found
-    ? "What it found is below. Choose New survey to try again: your brief is kept."
-    : "Choose New survey to try again: your brief is kept.";
+    ? "What it found is below. Your brief is kept, so you can try again."
+    : "Your brief is kept, so you can try again.";
 }
 
 export const APP_TITLE = "Walk-in";
@@ -76,4 +84,15 @@ export function toSection(id: SectionId) {
   return (event: MouseEvent<HTMLAnchorElement>): void => {
     if (isPlainClick(event) && goToSection(id)) event.preventDefault();
   };
+}
+
+/**
+ * For a sheet that scrolls on its own, such as the design sheet: brings a heading to the top of the box it scrolls in,
+ * smoothly unless motion is reduced, and moves focus to it. Nothing else on the page scrolls.
+ */
+export function goToInBox(heading: HTMLElement, box: HTMLElement, gap = 24): void {
+  const top = box.scrollTop + heading.getBoundingClientRect().top - box.getBoundingClientRect().top - gap;
+  box.scrollTo({ top: Math.max(0, top), behavior: scrollBehavior() });
+  if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+  heading.focus({ preventScroll: true });
 }

@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { messageOf } from "../api/client";
 import type { Concept, Design, ExperiencePlan } from "../api/types";
 import { audienceTitle } from "../lib/audience";
 import { letter, list, naturalList } from "../lib/format";
+import { goToInBox } from "../lib/journey";
 import { areaText, hasLaunchPlan } from "../lib/launch";
+import { isPlainClick } from "../lib/navigation";
 import { offerItems, unitText, type OfferItem, type OfferMark } from "../lib/sheet";
 import { loadDesign } from "../state/designs";
 import { WhoYoudWin } from "./AudienceView";
@@ -27,13 +29,40 @@ const MARKS: Record<Exclude<OfferMark, null>, string> = {
 const hasExperience = (plan: ExperiencePlan | null | undefined): plan is ExperiencePlan =>
   [plan?.soundtrack, plan?.screen, plan?.talks].some((group) => Boolean(group?.length));
 
+/**
+ * Focus starts on the sheet's title when it opens (DesignSheet.tsx). The drafting title gives way to the finished
+ * sheet's, so the new title takes focus over when the old one had it, and leaves it wherever the reader has moved it.
+ */
+function keepFocus(title: HTMLHeadingElement | null): void {
+  const dialog = title?.closest("dialog");
+  if (!title || !dialog?.open) return;
+  const active = document.activeElement;
+  if (active === null || active === document.body || active === dialog) title.focus({ preventScroll: true });
+}
+
+/** The sheet's title, which labels the dialog and is where focus lands; a heading, so it draws no focus ring. */
+function SheetTitle({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="d-title" id="design-title" tabIndex={-1} ref={keepFocus}>
+      {children}
+    </h2>
+  );
+}
+
+/** "Launch kit ↓" under the tagline: the kit is the sheet's last part, so a click brings it up in the sheet. */
+function toKit(event: MouseEvent<HTMLAnchorElement>): void {
+  const box = event.currentTarget.closest<HTMLElement>(".design-body");
+  const heading = box?.querySelector<HTMLElement>("#design-kit");
+  if (!isPlainClick(event) || !box || !heading) return;
+  event.preventDefault();
+  goToInBox(heading, box);
+}
+
 function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
   return (
     <div className="d-main">
       <p className="d-eyebrow mono">Design sheet · Concept {letter(index)} · drafting</p>
-      <h2 className="d-title" id="design-title">
-        {concept.name}
-      </h2>
+      <SheetTitle>{concept.name}</SheetTitle>
       <div className="sk sk-line" />
       <div className="sk sk-line" />
       <div className="sk sk-block" />
@@ -46,9 +75,7 @@ function SheetError({ concept, message }: { concept: Concept; message: string })
   return (
     <div className="d-main">
       <p className="d-eyebrow mono">Design sheet</p>
-      <h2 className="d-title" id="design-title">
-        {concept.name}
-      </h2>
+      <SheetTitle>{concept.name}</SheetTitle>
       <p className="d-p">{message}</p>
     </div>
   );
@@ -170,10 +197,13 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
       <p className="d-eyebrow mono">
         Design sheet · Concept {letter(index)} · {concept.genre} · {madeBy}
       </p>
-      <h2 className="d-title" id="design-title">
-        {name}
-      </h2>
+      <SheetTitle>{name}</SheetTitle>
       {tagline ? <p className="d-tagline">{tagline}</p> : null}
+      <p className="d-jump">
+        <a className="sec-next-link" href="#design-kit" onClick={toKit}>
+          Launch kit <span aria-hidden="true">↓</span>
+        </a>
+      </p>
       {offer.length ? <Offer items={offer} concept={concept} area={area} /> : null}
       {design.audience ? (
         <>
@@ -208,7 +238,9 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
           <LaunchPlanView plan={design.launch} peopleAbove={Boolean(design.audience)} />
         </>
       ) : null}
-      <h3 className="d-h">Launch kit</h3>
+      <h3 className="d-h" id="design-kit" tabIndex={-1}>
+        Launch kit
+      </h3>
       <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
     </div>
   );

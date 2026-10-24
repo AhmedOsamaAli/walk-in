@@ -84,11 +84,17 @@ function GoToResult({ result, place }: { result: ResultLink; place: Exclude<Plac
   );
 }
 
+interface LiveStatusProps {
+  survey: SurveyState;
+  /** Back to the brief, which keeps the site and settings the survey ran with: offered once a survey has stopped. */
+  onRetry: () => void;
+}
+
 /**
  * Pinned under the top bar while a survey runs. Once complete it says so in one line, offers the way to the result the
- * owner asked for until they get there, and can be dismissed; once stopped it says why and what to do next.
+ * owner asked for until they get there, and can be dismissed; once stopped it says why and leads back to the brief.
  */
-export function LiveStatus({ survey }: { survey: SurveyState }) {
+export function LiveStatus({ survey, onRetry }: LiveStatusProps) {
   const [dismissed, setDismissed] = useState(false);
   const running = survey.status === "running";
   const failed = survey.status === "failed";
@@ -124,6 +130,11 @@ export function LiveStatus({ survey }: { survey: SurveyState }) {
       ) : (
         <div className="live-end">
           {result && place && place !== "here" ? <GoToResult result={result} place={place} /> : null}
+          {failed ? (
+            <button className="live-go" type="button" onClick={onRetry}>
+              Back to the brief
+            </button>
+          ) : null}
           <button
             className="live-close"
             type="button"
