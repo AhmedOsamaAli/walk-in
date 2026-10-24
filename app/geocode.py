@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -33,6 +34,10 @@ def address_of(data: dict) -> dict | None:
     return {"label": ", ".join([street, *towns[:2]])[:LABEL_MAX], "address": full}
 
 
+class Abandoned(Exception):
+    """The lookup was called off before its turn: whoever asked has gone (the pin moved), so Nominatim is not asked."""
+
+
 class Geocoder:
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         self._cache: dict[str, list[dict]] = {}
@@ -45,11 +50,18 @@ class Geocoder:
             timeout=15,
         )
 
-    async def _get(self, path: str, params: dict, headers: dict | None = None) -> httpx.Response:
+    async def _get(
+        self, path: str, params: dict, headers: dict | None = None,
+        wanted: Callable[[], Awaitable[bool]] | None = None,
+    ) -> httpx.Response:
+        """One Nominatim request, a second after the last; `wanted` is asked once it is this one's turn, and a lookup
+        nobody waits for any more raises Abandoned instead of using the turn."""
         async with self._lock:
             wait = 1.0 - (time.time() - self._last)
             if wait > 0:
                 await asyncio.sleep(wait)
+            if wanted is not None and not await wanted():
+                raise Abandoned
             try:
                 return await self._http.get(path, params=params, headers=headers)
             finally:
@@ -68,9 +80,11 @@ class Geocoder:
         self._cache[key] = results
         return results
 
-    async def reverse(self, lat: float, lon: float) -> dict | None:
+    async def reverse(
+        self, lat: float, lon: float, wanted: Callable[[], Awaitable[bool]] | None = None,
+    ) -> dict | None:
         """The address at a point, as address_of gives it, in English where OpenStreetMap has it; None when the point
-        has no address (open water, a field)."""
+        has no address (open water, a field). Raises Abandoned when `wanted` says nobody waits for it any more."""
         key = f"{lat:.5f},{lon:.5f}"
         if key in self._places:
             return self._places[key]
@@ -78,6 +92,7 @@ class Geocoder:
             "/reverse",
             {"lat": f"{lat:.6f}", "lon": f"{lon:.6f}", "format": "jsonv2", "zoom": 18, "addressdetails": 1},
             headers={"Accept-Language": "en"},
+            wanted=wanted,
         )
         response.raise_for_status()
         found = address_of(response.json())

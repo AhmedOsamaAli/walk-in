@@ -26,7 +26,7 @@ from .config import ROOT, settings
 from .db import AccountStore, Database, KitStore, SurveyStore
 from .db.surveys import survey_status
 from .db.tables import utcnow
-from .geocode import Geocoder
+from .geocode import Abandoned, Geocoder
 from .kits import KitBuilder
 from .llm import LLM
 from .osm import OsmClient
@@ -399,9 +399,18 @@ async def geocode(request: Request, q: str = Query(..., min_length=3, max_length
 async def reverse(
     request: Request, lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180),
 ) -> dict:
-    """The address of a pin dropped on the map."""
+    """The address of a pin dropped on the map. Lookups share Nominatim's one request a second with address search, so
+    one whose browser has gone (the pin moved on) gives up its turn."""
+    if not request.app.state.map_limiter.allow(client_ip(request)):
+        raise HTTPException(429, "Too many map requests. Try again later.")
+
+    async def wanted() -> bool:
+        return not await request.is_disconnected()
+
     try:
-        found = await request.app.state.services.geocoder.reverse(lat, lon)
+        found = await request.app.state.services.geocoder.reverse(lat, lon, wanted=wanted)
+    except Abandoned as exc:
+        raise HTTPException(408, "The lookup was called off.") from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "Address lookup is unavailable right now.") from exc
     if found is None:

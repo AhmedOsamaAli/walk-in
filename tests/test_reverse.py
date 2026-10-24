@@ -7,7 +7,7 @@ import asyncio
 import httpx
 import pytest
 
-from app.geocode import Geocoder, address_of
+from app.geocode import Abandoned, Geocoder, address_of
 from tests.account_fakes import configure, make_client
 
 WILLIAMSBURG = {
@@ -67,13 +67,45 @@ class Answers:
     def __init__(self, found: dict | None = None, fail: bool = False) -> None:
         self.found, self.fail = found, fail
 
-    async def reverse(self, lat: float, lon: float) -> dict | None:
+    async def reverse(self, lat: float, lon: float, wanted=None) -> dict | None:
         if self.fail:
             raise httpx.ConnectError("down")
         return self.found
 
     async def aclose(self) -> None:
         pass
+
+
+def test_a_lookup_nobody_waits_for_gives_up_its_turn_unasked():
+    asked: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        return httpx.Response(200, json=WILLIAMSBURG)
+
+    async def gone() -> bool:
+        return False
+
+    async def scenario() -> dict | None:
+        geocoder = Geocoder(httpx.AsyncClient(base_url="https://nominatim.test", transport=httpx.MockTransport(answer)))
+        try:
+            with pytest.raises(Abandoned):
+                await geocoder.reverse(40.7, -73.9, wanted=gone)
+            return await geocoder.reverse(40.7135, -73.9625)
+        finally:
+            await geocoder.aclose()
+
+    assert asyncio.run(scenario()) == address_of(WILLIAMSBURG)
+    assert len(asked) == 1  # only the lookup someone still waited for reached Nominatim
+
+
+def test_address_lookups_count_against_the_map_limit():
+    from app.ratelimit import RateLimiter
+
+    with make_client() as client:
+        client.app.state.map_limiter = RateLimiter(2, 3600)
+        codes = [client.get("/api/reverse", params={"lat": 40.7, "lon": -73.9 + i / 1000}).status_code for i in range(3)]
+        assert codes == [200, 200, 429]
 
 
 def test_the_route_gives_the_address_or_says_why_not():
