@@ -33,7 +33,7 @@ from .osm import OsmClient
 from .providers import build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
-from .routes import account, kits
+from .routes import account, examples, kits
 from .survey import concepts, pipeline, snapshot
 from .survey import design as designs
 from .survey.models import EventLog, LiveRuns, RunState, RunStore, Site
@@ -424,7 +424,7 @@ def create_app(
         database = Database(database_url or settings.database_url)
         await database.migrate()
         surveys = SurveyStore(database)
-        await surveys.purge(settings.survey_retention_days)
+        await surveys.purge(settings.survey_retention_days, keep=settings.examples)
         accounts = AccountStore(database)
         await accounts.purge_sessions(utcnow())
         services = services_factory()
@@ -463,6 +463,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.now = utcnow  # the app's clock; tests move it
+    app.state.examples_cache = {}  # GET /api/examples, by the ids configured
 
     @app.middleware("http")
     async def security(request: Request, call_next):
@@ -483,14 +484,16 @@ def create_app(
     app.include_router(router)
     app.include_router(account.router)
     app.include_router(kits.router)
+    app.include_router(examples.router)
     root = web_root()
 
-    # Shared links to a survey (/s), a launch kit (/k) and its printable dossier, My places (/me) and the privacy note
-    # (/privacy) are pages of the web app.
+    # Shared links to a survey (/s), a launch kit (/k) and its printable dossier, My places (/me), the examples
+    # (/examples) and the privacy note (/privacy) are pages of the web app.
     @app.get("/s/{key}", include_in_schema=False)
     @app.get("/k/{key}", include_in_schema=False)
     @app.get("/k/{key}/dossier", include_in_schema=False)
     @app.get("/me", include_in_schema=False)
+    @app.get("/examples", include_in_schema=False)
     @app.get("/privacy", include_in_schema=False)
     async def shared_page() -> FileResponse:
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})

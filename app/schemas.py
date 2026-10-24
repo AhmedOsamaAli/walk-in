@@ -26,6 +26,33 @@ class Preset(BaseModel):
     blurb: str
 
 
+class ExampleKit(BaseModel):
+    token: str
+    index: int = Field(description="The concept the kit was made for")
+    name: str | None = None
+    url: str = Field(description="The kit's page, /k/{token}")
+    report_url: str = Field(description="Its printable report, /k/{token}/dossier")
+
+
+class Example(BaseModel):
+    """A finished survey anyone can open: replayed from what was saved, so opening it spends nothing."""
+
+    run_id: str
+    url: str = Field(description="The survey's page, /s/{run_id}")
+    label: str = Field(description="The site, as the survey named it")
+    intent: str = Field(description="'explore', 'open' or 'improve'")
+    business: str | None = Field(None, description="The business tested, for 'open'")
+    area: str = Field(description="'10-minute walk', '30-minute drive', '25 km drive'")
+    ages: str | None = Field(None, description="The age focus, '25–34'; None for everyone")
+    llm: bool = Field(description="Whether the concepts were written with the AI agent")
+    headline: str | None = Field(None, description="The top concept's name, or the top gap")
+    verdict: str | None = Field(None, description="The verdict's headline, for 'open'")
+    concepts: list[str]
+    gaps: int = Field(description="Categories ranked")
+    top_gaps: list[str]
+    kit: ExampleKit | None = Field(None, description="The first concept with a ready launch kit")
+
+
 class Catchment(BaseModel):
     minutes: int
     source: str = Field(description="'street network' when traced over the streets, 'circle' when routing is unavailable")

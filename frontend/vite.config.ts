@@ -1,8 +1,10 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig, type ProxyOptions } from "vite";
 
+// The API the dev server forwards to: the local server on 8770, or another one (WALKIN_API) so several previews can run
+// side by side, each against its own server.
 const proxy: Record<string, ProxyOptions> = {
-  "/api": { target: "http://127.0.0.1:8770" },
+  "/api": { target: process.env.WALKIN_API ?? "http://127.0.0.1:8770" },
 };
 
 // The policy the production server sends. Preview serves the build under it, so a build that needs an inline

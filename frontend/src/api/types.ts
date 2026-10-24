@@ -18,6 +18,49 @@ export interface Preset {
   blurb: string;
 }
 
+/** Contract 10-24. A finished example survey's launch kit (GET /api/examples). */
+export interface ExampleKit {
+  token: string;
+  /** The concept the kit was made for. */
+  index: number;
+  name?: string | null;
+  /** "/k/{token}" */
+  url: string;
+  /** "/k/{token}/dossier", the printable report. */
+  report_url: string;
+}
+
+/**
+ * Contract 10-24. A finished survey anyone can open before running their own (GET /api/examples). It replays what was
+ * saved, so opening it spends no Qloo or AI quota.
+ */
+export interface Example {
+  run_id: string;
+  /** "/s/{run_id}" */
+  url: string;
+  /** The site, as the survey named it: "Zamalek, Cairo". */
+  label: string;
+  intent: string;
+  /** The business tested, for intent "open". */
+  business?: string | null;
+  /** "10-minute walk", "30-minute drive", "25 km drive". */
+  area: string;
+  /** "25–34"; null for everyone. */
+  ages?: string | null;
+  /** Whether the concepts were written with the AI agent. */
+  llm: boolean;
+  /** The top concept's name, or the top gap. */
+  headline?: string | null;
+  /** The verdict's headline, for intent "open". */
+  verdict?: string | null;
+  concepts: string[];
+  /** Categories ranked. */
+  gaps: number;
+  top_gaps: string[];
+  /** The first concept with a ready launch kit; null when none is built. */
+  kit?: ExampleKit | null;
+}
+
 export interface GeocodeResult {
   label: string | null;
   lat: number;

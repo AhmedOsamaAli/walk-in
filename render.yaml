@@ -17,6 +17,9 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
+      # The finished surveys anyone can open before running their own (comma-separated survey ids).
+      - key: EXAMPLES
+        sync: false
       # Shared with the Cloudflare Pages front door (frontend/functions), which sends the visitor's address with it.
       - key: PROXY_SECRET
         sync: false

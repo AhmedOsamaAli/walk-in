@@ -1,6 +1,6 @@
 import type { Area } from "../lib/area";
 import { toRunRecord } from "./stream";
-import type { Design, GeocodeResult, HeatCell, PlaceHit, Preset, RunRecord, RunRequest, Walk } from "./types";
+import type { Design, Example, GeocodeResult, HeatCell, PlaceHit, Preset, RunRecord, RunRequest, Walk } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -169,6 +169,8 @@ export function post(body?: unknown): RequestInit {
 
 export const api = {
   presets: () => request<Preset[]>("/api/presets"),
+  /** Finished surveys anyone can open, with their launch kit and report; empty when none is configured. */
+  examples: () => request<Example[]>("/api/examples"),
   geocode: (text: string) => request<GeocodeResult[]>(`/api/geocode?${query({ q: text })}`),
   places: (text: string, lat: number, lon: number, signal?: AbortSignal) =>
     request<PlaceHit[]>(`/api/places?${query({ q: text, lat: lat.toFixed(6), lon: lon.toFixed(6) })}`, { signal }),

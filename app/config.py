@@ -96,6 +96,9 @@ class Settings:
     )
     # Surveys older than this are deleted on startup, with their kits, unless a signed-in user keeps them in My places.
     survey_retention_days: int = field(default_factory=lambda: int(_env_or("SURVEY_RETENTION_DAYS", 60)))
+    # Finished surveys anyone can open before running their own (comma-separated survey ids): GET /api/examples. They
+    # are never deleted, and opening one replays what was saved, so it spends no Qloo or AI quota.
+    examples: tuple[str, ...] = field(default_factory=lambda: _env_list("EXAMPLES"))
     # The app's public address (https://...). When it is https, cookies are Secure and the development login is off.
     public_url: str = field(default_factory=lambda: _env("PUBLIC_URL").rstrip("/"))
     # Sign in with Google (console.cloud.google.com, Google Auth Platform > Clients): the web client's ID. Without it

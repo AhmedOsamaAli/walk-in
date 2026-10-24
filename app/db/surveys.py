@@ -91,11 +91,13 @@ class SurveyStore:
             rows = await connection.execute(select(designs.c.idx, designs.c.sheet).where(designs.c.survey_id == run_id))
             return {idx: sheet for idx, sheet in rows}
 
-    async def purge(self, older_than_days: int) -> int:
-        """Deletes surveys older than this, with their design sheets, unless a signed-in user keeps them in My places."""
+    async def purge(self, older_than_days: int, keep: tuple[str, ...] = ()) -> int:
+        """Deletes surveys older than this, with their design sheets, unless a signed-in user keeps them in My places or
+        they are among `keep` (the examples anyone can open)."""
         cutoff = utcnow() - timedelta(days=older_than_days)
+        condition = [surveys.c.created_at < cutoff, surveys.c.user_id.is_(None)]
+        if keep:
+            condition.append(surveys.c.id.not_in(keep))
         async with self._engine.begin() as connection:
-            result = await connection.execute(
-                delete(surveys).where(surveys.c.created_at < cutoff, surveys.c.user_id.is_(None))
-            )
+            result = await connection.execute(delete(surveys).where(*condition))
         return result.rowcount
