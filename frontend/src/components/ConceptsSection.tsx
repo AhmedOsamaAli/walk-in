@@ -1,5 +1,5 @@
 import type { BaselineConcept, ConceptsPayload } from "../api/types";
-import { changeNotes, conceptsNote, NOTES_SHOWN, placeConcepts, ruleNames } from "../lib/concepts";
+import { changeNotes, conceptsNote, NOTES_SHOWN, placeConcepts, ruleNames, type Placed } from "../lib/concepts";
 import { Poster } from "./Poster";
 import { SectionHead } from "./SectionHead";
 
@@ -80,10 +80,32 @@ interface ConceptsSectionProps {
   onOpen: (index: number, opener: HTMLElement | null) => void;
 }
 
+/** The section's last word: what to do with a concept, and the first card's design sheet a click away. */
+function NextStep({ lead, onOpen }: { lead: Placed; onOpen: ConceptsSectionProps["onOpen"] }) {
+  return (
+    <p className="sec-next">
+      <b className="sec-next-label mono">Next</b>
+      <span>Open a concept's design sheet, then make its launch kit.</span>
+      <button
+        className="sec-next-link"
+        type="button"
+        onClick={(event) => {
+          onOpen(lead.index, event.currentTarget);
+        }}
+      >
+        Start with {lead.concept.name}
+        <span className="sr-only">: open its design sheet</span> <span aria-hidden="true">→</span>
+      </button>
+    </p>
+  );
+}
+
 export function ConceptsSection({ no, data, rules, baseline, onOpen }: ConceptsSectionProps) {
   const placed = placeConcepts(data.concepts ?? []);
+  const [lead] = placed;
   return (
-    <section id="s-concepts" className="sec reveal">
+    // data-designed: the other sections' "next" links to the cards show only once there are cards (styles/journey.css).
+    <section id="s-concepts" className="sec reveal" data-designed={lead ? "" : undefined}>
       <SectionHead no={no} title="What it should become" note={conceptsNote(data)} />
       {data.caution && placed.length ? <p className="concepts-caution">{data.caution}</p> : null}
       <Kept rules={ruleNames(rules)} notes={changeNotes(data)} designed={placed.length > 0} />
@@ -104,6 +126,7 @@ export function ConceptsSection({ no, data, rules, baseline, onOpen }: ConceptsS
         <p className="concepts-empty serif">{data.note ?? "No concepts for this site."}</p>
       )}
       {baseline.length ? <Baseline items={baseline} /> : null}
+      {lead ? <NextStep lead={lead} onOpen={onOpen} /> : null}
     </section>
   );
 }

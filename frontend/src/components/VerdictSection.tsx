@@ -1,6 +1,7 @@
 import type { ChainCheck, Verdict } from "../api/types";
 import { chainLine } from "../lib/audience";
 import { VERDICT_STAMPS } from "../lib/format";
+import { toSection } from "../lib/journey";
 import { SectionHead } from "./SectionHead";
 
 /** What happens next, by verdict: a measurable idea that fits leads the concepts. */
@@ -62,6 +63,13 @@ export function VerdictSection({ no, verdict }: { no: string; verdict: Verdict }
         ) : null}
         <p className="verdict-next serif">{nextLine(verdict)}</p>
       </div>
+      {/* Shown once the concepts are on the page (styles/journey.css). */}
+      <p className="sec-next" data-next-to="s-concepts">
+        <b className="sec-next-label mono">Next</b>
+        <a className="sec-next-link" href="#s-concepts" onClick={toSection("s-concepts")}>
+          See the concepts <span aria-hidden="true">↓</span>
+        </a>
+      </p>
     </section>
   );
 }

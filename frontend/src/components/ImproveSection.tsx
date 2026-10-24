@@ -1,4 +1,5 @@
 import type { Comparison, ImprovePayload, OfferDiff } from "../api/types";
+import { toSection } from "../lib/journey";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { PlaceLink } from "./PlaceLink";
 import { SectionHead } from "./SectionHead";
@@ -44,6 +45,12 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
       <section id="s-improve" className="sec reveal">
         <SectionHead no={no} title="What to change" />
         <p className="concepts-empty serif">{data.note}</p>
+        <p className="sec-next" data-next-to="s-gaps">
+          <b className="sec-next-label mono">Next</b>
+          <a className="sec-next-link" href="#s-gaps" onClick={toSection("s-gaps")}>
+            See what's missing <span aria-hidden="true">↑</span>
+          </a>
+        </p>
       </section>
     );
   }
@@ -52,7 +59,8 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
   const names = c.peer_names.join(", ");
   const groups = dayGroups(c.hours);
   return (
-    <section id="s-improve" className="sec reveal improve">
+    // data-moves: the wider taste's way back here shows only when there are moves to make (styles/journey.css).
+    <section id="s-improve" className="sec reveal improve" data-moves={moves.length ? "" : undefined}>
       <SectionHead
         no={no}
         title="What to change"
@@ -151,6 +159,16 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
           <ExperiencePlanView plan={experience} />
         </>
       ) : null}
+      {/* Shown once the wider taste is on the page (styles/journey.css). */}
+      <p className="sec-next" data-next-to="s-taste">
+        <b className="sec-next-label mono">Next</b>
+        <span>
+          {moves.length ? "Start with move 1, then see what else people here love." : "See what else people here love."}
+        </span>
+        <a className="sec-next-link" href="#s-taste" onClick={toSection("s-taste")}>
+          The wider taste <span aria-hidden="true">↓</span>
+        </a>
+      </p>
     </section>
   );
 }

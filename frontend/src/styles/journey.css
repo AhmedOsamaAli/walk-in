@@ -1,0 +1,56 @@
+/* ---------- The journey: the way on from a finished survey (LiveStatus.tsx, lib/journey.ts) ---------- */
+
+/* The status bar's end. Once complete the row keeps the action's height after it goes, so nothing under it moves. */
+.live-end { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.live[data-state="complete"] .live-end { min-height: 36px; }
+
+/* The one primary action, in the pen's blue: to the result the owner asked for. */
+.live-go {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; padding: 0 16px;
+  background: var(--blue-fill); color: var(--on-blue); border-radius: 999px;
+  font: 500 14px/1 var(--f-sans); white-space: nowrap;
+  transition: background-color .3s var(--ease), color .3s;
+  animation: liveGoIn .5s var(--ease) both;
+}
+.live-go:hover { background: var(--ink); color: var(--on-ink); }
+.live-go span { font-size: 15px; }
+@keyframes liveGoIn { from { opacity: 0; transform: translateY(4px); } }
+.sheet[data-settled] .live-go { animation: none; }
+/* A narrow bar drops the time beside the action, and the action tightens, so "Survey complete" reads in full. */
+@container sheet (max-width: 480px) {
+  .live:has(.live-go) .live-secs { display: none; }
+  .live-end { gap: 6px; }
+  .live-go { gap: 5px; padding: 0 11px; font-size: 13px; }
+  .live-go span { font-size: 14px; }
+}
+
+/* A stopped survey: the reason in full, and what to do next under it. */
+.live[data-state="failed"] .live-step { white-space: normal; }
+.live[data-state="failed"] .live-more { grid-template-rows: 1fr; opacity: 1; }
+.live-note.live-next { white-space: normal; }
+
+/* A heading the journey sends focus to: it is not a control, so it draws no ring (as the site's name does). */
+.sec-title[tabindex="-1"]:focus { outline: none; }
+
+/* ---------- A result section's last line: the next step, small and quiet ---------- */
+.sec-next {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  margin-top: 36px; padding-top: 14px; border-top: 1px dashed var(--edge);
+  font-size: 15px; line-height: 1.45; color: var(--text-3);
+}
+.sec-next-label { color: var(--blue); }
+.sec-next-link {
+  color: var(--blue); font-weight: 500; text-align: left;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  transition: color .3s;
+}
+.sec-next-link:hover { color: var(--ink); }
+
+/* A "next" link shows once what it leads to is on the page: the concepts (or their cards), the moves, the taste, the
+   gaps. The wider taste carries one for each kind of survey, and only this survey's shows. */
+:root:not(:has(#s-concepts)) .sec-next[data-next-to="s-concepts"],
+:root:not(:has(#s-concepts[data-designed])) .sec-next[data-next-to="designs"],
+:root:not(:has(#s-improve[data-moves])) .sec-next[data-next-to="moves"],
+:root:not(:has(#s-taste)) .sec-next[data-next-to="s-taste"],
+:root:not(:has(#s-gaps)) .sec-next[data-next-to="s-gaps"] { display: none; }

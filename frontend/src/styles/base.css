@@ -1,7 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: calc(var(--bar-h) + var(--live-h) + 12px);
+  scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + 12px);
   -webkit-text-size-adjust: 100%;
 }
 body {
