@@ -1,3 +1,5 @@
 -r requirements.txt
 pytest>=8,<10
 ruff>=0.6,<1
+# The MCP server (mcp_server/) and its tests; the app itself does not need it.
+mcp>=1.28,<2

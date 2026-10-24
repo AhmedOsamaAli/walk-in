@@ -38,9 +38,12 @@ from .geo import distance_m
 
 log = logging.getLogger("walkin")
 
-# Public instances with worldwide data, in the order they are asked. private.coffee and VK Maps welcome any project;
-# the FOSSGIS instance is overloaded and asks apps to use alternatives where possible, so it comes last.
+# Public instances with worldwide data, in the order they are asked. The French community instance answered when the
+# others did not (October 2026), with data some weeks old: each answer carries its date, and the survey shows it.
+# private.coffee and VK Maps welcome any project; the FOSSGIS instance is overloaded and asks apps to use alternatives
+# where possible, so it comes last. An instance that fails rests (is asked last) for REST_S.
 ENDPOINTS = (
+    "https://overpass.openstreetmap.fr/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
@@ -52,7 +55,7 @@ COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
 LABEL = "Cross-checking the map with OpenStreetMap"
 
 TIMEOUT_S = 12.0  # one request
-BUDGET_S = 20.0  # every instance asked, together: the survey waits no longer than this
+BUDGET_S = 30.0  # every instance asked, together: the survey waits no longer than this (two dead ones leave time for a third)
 CONNECT_S = 5.0
 REST_S = 600.0  # an instance that failed is asked last for this long
 SERVER_TIMEOUT_S = 10  # what the query asks the server for, so it gives up before the client does

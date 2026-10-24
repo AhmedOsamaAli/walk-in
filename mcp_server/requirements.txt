@@ -1,0 +1,3 @@
+# The Walk-in MCP server (python mcp_server/walkin_mcp.py). Tested with mcp 1.28 and httpx 0.28 on Python 3.12.
+mcp>=1.28,<2
+httpx>=0.27,<1
