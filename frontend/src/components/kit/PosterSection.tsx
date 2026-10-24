@@ -4,17 +4,16 @@ import type { KitPoster } from "../../api/kit";
 import { LINK_KINDS, shortLink } from "../../lib/kit";
 import { OWN_LINK_ID, type Landing } from "./TrackedLinks";
 import { PosterArt } from "./PosterArt";
-import { WindowPreview } from "./WindowPreview";
 
-/** "golden-hour", for the files the poster is saved in. */
-function slugOf(name: string): string {
+/** "golden-hour-poster.svg". */
+function fileName(name: string): string {
   const slug = name
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  return slug || "walk-in";
+  return `${slug || "walk-in"}-poster.svg`;
 }
 
 function download(svg: SVGSVGElement, name: string): void {
@@ -22,7 +21,7 @@ function download(svg: SVGSVGElement, name: string): void {
   const url = URL.createObjectURL(new Blob([text], { type: "image/svg+xml" }));
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${slugOf(name)}-poster.svg`;
+  link.download = fileName(name);
   document.body.append(link);
   link.click();
   link.remove();
@@ -51,7 +50,6 @@ function toLinkField(event: MouseEvent<HTMLAnchorElement>): void {
 /**
  * The poster on screen, printed on its own (the page's print styles hide everything else), or saved as an SVG file. Its
  * QR code needs a page of the owner's to send a passer-by to: without one, the poster has none and asks for the link.
- * Below it, the owner can see it on their own window, in a photo that stays in the browser.
  */
 export function PosterSection({ poster, link, landing }: PosterSectionProps) {
   const svg = useRef<SVGSVGElement>(null);
@@ -149,7 +147,6 @@ export function PosterSection({ poster, link, landing }: PosterSectionProps) {
           To keep a PDF, print it and choose “Save as PDF”: that keeps the page&apos;s typefaces, where the SVG uses your own.
         </p>
       </div>
-      <WindowPreview poster={poster} link={code} fileName={`${slugOf(poster.name)}-in-your-window.jpg`} />
       {printing
         ? createPortal(
             <div className="print-only print-poster" aria-hidden="true">
