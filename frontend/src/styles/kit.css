@@ -184,6 +184,81 @@
   .poster-section { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* "See it in your window": the owner's own photo with the poster on its window, drawn in the browser. Under the poster
+   and its side, across both. */
+.win { grid-column: 1 / -1; display: grid; gap: 14px; }
+.win-ask {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px;
+  padding: 18px 22px; background: var(--card); border: 1px dashed var(--ink); border-radius: var(--r-m);
+}
+.win-ask-text { display: grid; gap: 4px; min-width: 0; }
+.win-title { font: 400 24px/1.15 var(--f-serif); letter-spacing: -.012em; text-wrap: balance; }
+.win-lead { max-width: 54ch; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+/* The instructions take the focus when the first photo comes in; they are not a control, so they draw no ring. */
+.win-hint:focus { outline: none; }
+.win-error { font-size: 14px; line-height: 1.45; color: var(--red); }
+.win-error:empty { display: none; }
+.win[data-state="placing"] {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-areas: "stage head" "stage tools";
+  grid-template-rows: auto 1fr;
+  gap: 16px 30px; align-items: start;
+}
+.win-head { grid-area: head; display: grid; gap: 6px; }
+/* Padded by at least half a corner's hit area, so a corner at the photo's edge stays inside the frame. */
+.win-frame {
+  grid-area: stage; display: grid; place-items: center; padding: clamp(24px, 2.6vw, 34px);
+  background: var(--bone); border: var(--rule); border-radius: var(--r-l);
+}
+.win-stage {
+  position: relative; isolation: isolate; aspect-ratio: var(--ratio);
+  width: min(100%, calc(72vh * var(--ratio))); width: min(100%, calc(72svh * var(--ratio)));
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.win-photo, .win-glass { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.win-photo { box-shadow: var(--shadow); }
+.win-poster { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+.win-poster .poster-art { width: 100%; height: 100%; max-width: none; box-shadow: none; transform: none; }
+/* The window's own light over the poster, inside its corners only. */
+.win-glass { mix-blend-mode: screen; pointer-events: none; }
+/* A corner: a white ring edged in black, so it shows on any photo, with the photo seen through it and a yellow dot on
+   the point itself. 44 px across to a finger. */
+.win-handle {
+  position: absolute; z-index: 1; display: grid; place-items: center;
+  width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%;
+  touch-action: none; cursor: grab;
+}
+.win-handle::before {
+  content: ""; width: 24px; height: 24px; border: 2.5px solid #ffffff; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(17, 17, 20, .7), inset 0 0 0 1px rgba(17, 17, 20, .7), 0 2px 8px rgba(0, 0, 0, .35);
+  transition: transform .2s var(--ease), border-color .2s;
+}
+.win-handle::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+  background: #ffcb00; border-radius: 50%; box-shadow: 0 0 0 1px #1d1d1f;
+}
+.win-handle:hover::before { transform: scale(1.12); }
+.win-handle[data-active] { cursor: grabbing; }
+.win-handle[data-active]::before { border-color: #ffcb00; transform: scale(1.12); }
+/* The keyboard's corner: a blue ring with a white one round it, seen on dark glass and light walls alike. */
+.win-handle:focus-visible { outline: 3px solid #0f68ea; outline-offset: 0; box-shadow: 0 0 0 6px #ffffff; }
+.win-tools { grid-area: tools; display: grid; gap: 18px; align-content: start; }
+.win-glass-field { display: grid; gap: 8px; }
+.win-glass-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.win-glass-head label { font-size: 15px; font-weight: 600; }
+.win-glass-head output { font-size: 11px; color: var(--text-3); }
+.win-range { width: 100%; height: 28px; margin: 0; accent-color: var(--blue-fill); cursor: pointer; }
+.win-note { max-width: 46ch; font-size: 13px; line-height: 1.45; color: var(--text-4); }
+.win-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+@container page (max-width: 820px) {
+  .win[data-state="placing"] { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "stage" "tools"; grid-template-rows: none; }
+}
+@container page (max-width: 560px) {
+  .win-ask { padding: 16px; }
+  .win-ask .ink-button { width: 100%; }
+  .win-frame { padding: 24px 22px; border-radius: var(--r-m); }
+}
+
 /* ---------- 03 Tracked links ---------- */
 .links-panel { display: grid; gap: 20px; }
 .links-site { max-width: 560px; }
