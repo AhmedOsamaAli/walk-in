@@ -1,0 +1,4 @@
+# What run_h2h.py keeps between runs: chatbot answers and per-site measurements built on Qloo's answers, which the
+# hackathon's rules forbid publishing, and its run log.
+_cache/
+STATUS.md

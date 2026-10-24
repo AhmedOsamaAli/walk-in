@@ -1,0 +1,329 @@
+[
+ {
+  "id": "chicago",
+  "name": "Milwaukee Ave, Wicker Park",
+  "city": "Chicago",
+  "country": "United States",
+  "continent": "North America",
+  "street": "trendy shopping and nightlife strip",
+  "address": "1550 N Milwaukee Ave, Chicago, IL 60622, USA",
+  "lat": 41.9095767,
+  "lon": -87.6766731,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "1550 N Milwaukee Ave, Chicago, IL 60622, USA",
+   "label": "1550-1554, North Milwaukee Avenue, Wicker Park, West Town, Chicago, West Chicago Township, Cook County, Illinois, 60622, United States",
+   "house_number": "1550-1554",
+   "road": "North Milwaukee Avenue",
+   "osm": "way/209865077",
+   "what": "building=yes"
+  }
+ },
+ {
+  "id": "new-york",
+  "name": "37th Ave, Jackson Heights",
+  "city": "New York",
+  "country": "United States",
+  "continent": "North America",
+  "street": "immigrant commercial avenue (Queens)",
+  "address": "82-12 37th Ave, Jackson Heights, Queens, NY 11372, USA",
+  "lat": 40.7496822,
+  "lon": -73.8837925,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "reverse",
+   "query": [
+    40.74975,
+    -73.8838
+   ],
+   "label": "82-12, 37th Avenue, Queens, Queens County, New York, 11372, United States",
+   "house_number": "82-12",
+   "road": "37th Avenue",
+   "osm": "node/3689604536",
+   "what": "place=house"
+  }
+ },
+ {
+  "id": "austin",
+  "name": "South Congress Ave",
+  "city": "Austin",
+  "country": "United States",
+  "continent": "North America",
+  "street": "tourist and boutique strip",
+  "address": "1600 S Congress Ave, Austin, TX 78704, USA",
+  "lat": 30.2479128,
+  "lon": -97.7506472,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "1600 S Congress Ave, Austin, TX 78704, USA",
+   "label": "1600, South Congress Avenue, South River City, Austin, Travis County, Texas, 78704, United States",
+   "house_number": "1600",
+   "road": "South Congress Avenue",
+   "osm": "way/328839155",
+   "what": "building=yes"
+  }
+ },
+ {
+  "id": "los-angeles",
+  "name": "Cesar E Chavez Ave, Boyle Heights",
+  "city": "Los Angeles",
+  "country": "United States",
+  "continent": "North America",
+  "street": "Latino neighbourhood commercial avenue",
+  "address": "1900 E Cesar E Chavez Ave, Los Angeles, CA 90033, USA",
+  "lat": 34.049965,
+  "lon": -118.215059,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "1900 E Cesar E Chavez Ave, Los Angeles, CA 90033, USA",
+   "label": "1900, East Cesar E Chavez Avenue, Boyle Heights, Los Angeles, Los Angeles County, California, 90033, United States",
+   "house_number": "1900",
+   "road": "East Cesar E Chavez Avenue",
+   "osm": "way/424169286",
+   "what": "place=house"
+  }
+ },
+ {
+  "id": "mexico-city",
+  "name": "Av. Álvaro Obregón, Roma Norte",
+  "city": "Mexico City",
+  "country": "Mexico",
+  "continent": "North America",
+  "street": "trendy avenue",
+  "address": "Avenida Álvaro Obregón 130, Roma Norte, 06700 Mexico City, Mexico",
+  "lat": 19.4179168,
+  "lon": -99.1606122,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "Avenida Álvaro Obregón 130, Roma Norte, 06700 Ciudad de México, Mexico",
+   "label": "El Parián, 130, Avenida Álvaro Obregón, Roma Norte, Roma, Mexico City, Cuauhtémoc, Mexico City, 06700, Mexico",
+   "house_number": "130",
+   "road": "Avenida Álvaro Obregón",
+   "osm": "node/6937456863",
+   "what": "amenity=restaurant"
+  }
+ },
+ {
+  "id": "london",
+  "name": "Upper Street, Islington",
+  "city": "London",
+  "country": "United Kingdom",
+  "continent": "Europe",
+  "street": "affluent high street",
+  "address": "150 Upper Street, Islington, London N1, UK",
+  "lat": 51.5401675,
+  "lon": -0.1027719,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "150 Upper Street, London N1 1RA, UK",
+   "label": "Clan Pharmacy, 150, Upper Street, Canonbury, Angel, Islington, London Borough of Islington, Greater London, England, N1 1RA, United Kingdom",
+   "house_number": "150",
+   "road": "Upper Street",
+   "osm": "node/331534998",
+   "what": "amenity=pharmacy"
+  }
+ },
+ {
+  "id": "paris",
+  "name": "Rue Oberkampf, 11e",
+  "city": "Paris",
+  "country": "France",
+  "continent": "Europe",
+  "street": "nightlife street",
+  "address": "110 Rue Oberkampf, 75011 Paris, France",
+  "lat": 48.8659734,
+  "lon": 2.3790011,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "110 Rue Oberkampf, 75011 Paris, France",
+   "label": "110, Rue Oberkampf, Quartier Saint-Ambroise, 11th Arrondissement, Paris, Ile-de-France, Metropolitan France, 75011, France",
+   "house_number": "110",
+   "road": "Rue Oberkampf",
+   "osm": "node/1292272033",
+   "what": "place=house"
+  }
+ },
+ {
+  "id": "berlin",
+  "name": "Karl-Marx-Straße, Neukölln",
+  "city": "Berlin",
+  "country": "Germany",
+  "continent": "Europe",
+  "street": "working-class high street",
+  "address": "Karl-Marx-Straße 100, 12043 Berlin, Germany",
+  "lat": 52.4794306,
+  "lon": 13.4369073,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "Karl-Marx-Straße 100, 12043 Berlin, Germany",
+   "label": "Fassungslos, 100, Karl-Marx-Straße, Rollbergsiedlung, Donaukiez, Neukölln, Berlin, 12043, Germany",
+   "house_number": "100",
+   "road": "Karl-Marx-Straße",
+   "osm": "node/7093312885",
+   "what": "shop=optician"
+  }
+ },
+ {
+  "id": "madrid",
+  "name": "Calle de Fuencarral, Malasaña",
+  "city": "Madrid",
+  "country": "Spain",
+  "continent": "Europe",
+  "street": "shopping street",
+  "address": "Calle de Fuencarral 100, 28004 Madrid, Spain",
+  "lat": 40.4279811,
+  "lon": -3.7018254,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "Fuencarral 100, 28004 Madrid, Spain",
+   "label": "Phone Service Center, 100, Calle de Fuencarral, Malasaña, Justicia, Centro, Madrid, Community of Madrid, 28004, Spain",
+   "house_number": "100",
+   "road": "Calle de Fuencarral",
+   "osm": "node/3461943020",
+   "what": "shop=mobile_phone"
+  }
+ },
+ {
+  "id": "cairo",
+  "name": "Road 9, Maadi",
+  "city": "Cairo",
+  "country": "Egypt",
+  "continent": "Africa",
+  "street": "neighbourhood commercial road",
+  "address": "96 Road 9, Maadi, Cairo, Egypt",
+  "lat": 29.961724,
+  "lon": 31.2569424,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "reverse",
+   "query": [
+    29.961821,
+    31.257153
+   ],
+   "label": "96, Street 9, Maadi al Khahiri, Cairo, 11728, Egypt",
+   "house_number": "96",
+   "road": "Street 9",
+   "osm": "node/6665599757",
+   "what": "place=house"
+  }
+ },
+ {
+  "id": "singapore",
+  "name": "Joo Chiat Road",
+  "city": "Singapore",
+  "country": "Singapore",
+  "continent": "Asia",
+  "street": "shophouse street",
+  "address": "263 Joo Chiat Road, Singapore",
+  "lat": 1.3105193,
+  "lon": 103.9017715,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "263 Joo Chiat Road, Singapore",
+   "label": "263, Joo Chiat Road, Geylang East, Joo Chiat, Geylang, Central Region, Singapore, 427519, Singapore",
+   "house_number": "263",
+   "road": "Joo Chiat Road",
+   "osm": "way/310640135",
+   "what": "building=retail"
+  }
+ },
+ {
+  "id": "tokyo",
+  "name": "Togoshi Ginza shopping street",
+  "city": "Tokyo",
+  "country": "Japan",
+  "continent": "Asia",
+  "street": "traditional shopping street (shotengai)",
+  "address": "Togoshi Ginza Street, 2-chōme Hiratsuka, Shinagawa City, Tokyo 142-0051, Japan",
+  "lat": 35.6160626,
+  "lon": 139.7129771,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "reverse",
+   "query": [
+    35.61618,
+    139.713
+   ],
+   "label": "まみね 戸越銀座の電気屋, Togoshi Ginza Street, Hiratsuka 2, Hiratsuka, Shinagawa, Tokyo, 142-0051, Japan",
+   "house_number": null,
+   "road": "Togoshi Ginza Street",
+   "osm": "node/11235213323",
+   "what": "shop=electronics"
+  }
+ },
+ {
+  "id": "sydney",
+  "name": "King Street, Newtown",
+  "city": "Sydney",
+  "country": "Australia",
+  "continent": "Oceania",
+  "street": "inner-city main street",
+  "address": "280 King Street, Newtown NSW 2042, Australia",
+  "lat": -33.8962506,
+  "lon": 151.180703,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "reverse",
+   "query": [
+    -33.8961041,
+    151.1806814
+   ],
+   "label": "Sweet Lu, 280, King Street, Newtown, Inner West, Sydney, New South Wales, 2042, Australia",
+   "house_number": "280",
+   "road": "King Street",
+   "osm": "node/10223000524",
+   "what": "shop=pastry"
+  }
+ },
+ {
+  "id": "melbourne",
+  "name": "Sydney Road, Brunswick",
+  "city": "Melbourne",
+  "country": "Australia",
+  "continent": "Oceania",
+  "street": "multicultural strip",
+  "address": "400 Sydney Road, Brunswick VIC 3056, Australia",
+  "lat": -37.7684431,
+  "lon": 144.9621695,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "400 Sydney Road, Brunswick VIC 3056, Australia",
+   "label": "4 Pines Welcome to Brunswick (The Hall), 400, Sydney Road, Brunswick, Melbourne, Victoria, 3056, Australia",
+   "house_number": "400",
+   "road": "Sydney Road",
+   "osm": "node/6078267812",
+   "what": "amenity=pub"
+  }
+ },
+ {
+  "id": "buenos-aires",
+  "name": "Honduras, Palermo Soho",
+  "city": "Buenos Aires",
+  "country": "Argentina",
+  "continent": "South America",
+  "street": "boutique and nightlife district",
+  "address": "Honduras 4800, Palermo Soho, Buenos Aires, Argentina",
+  "lat": -34.59018,
+  "lon": -58.428116,
+  "geocoder": {
+   "service": "OpenStreetMap Nominatim",
+   "method": "search",
+   "query": "Honduras 4800, Palermo, Buenos Aires, Argentina",
+   "label": "4800, Honduras, Palermo Soho, Palermo, Buenos Aires, Comuna 14, Autonomous City of Buenos Aires, C1414BMK, Argentina",
+   "house_number": "4800",
+   "road": "Honduras",
+   "osm": "node/3577274367",
+   "what": "place=house"
+  }
+ }
+]
