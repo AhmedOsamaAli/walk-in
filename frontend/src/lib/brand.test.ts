@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { litSteps, markState } from "./brand";
+import { litSteps, markLabel, markState, replays, WALK_IN_MS } from "./brand";
 
 describe("markState", () => {
   it("rests on the brief, walks while the survey runs and arrives when it is done", () => {
@@ -24,5 +24,30 @@ describe("litSteps", () => {
     expect(litSteps("stopped", 0.45)).toBe(2);
     expect(litSteps("rest", 0)).toBe(4);
     expect(litSteps("arrived", 0.6)).toBe(4);
+  });
+});
+
+describe("replays", () => {
+  it("plays the walk again on every click or tap, even while one is playing", () => {
+    expect(replays("click", false, 0)).toBe(true);
+    expect(replays("click", false, WALK_IN_MS * 3)).toBe(true);
+  });
+
+  it("previews it on hover or keyboard focus only once the last walk has ended", () => {
+    expect(replays("preview", false, WALK_IN_MS - 1)).toBe(false);
+    expect(replays("preview", false, WALK_IN_MS)).toBe(true);
+  });
+
+  it("never plays it with reduced motion", () => {
+    expect(replays("click", true, WALK_IN_MS)).toBe(false);
+    expect(replays("preview", true, WALK_IN_MS)).toBe(false);
+  });
+});
+
+describe("markLabel", () => {
+  it("names what a click on the mark does", () => {
+    expect(markLabel("top")).toBe("Walk-in, back to the top");
+    expect(markLabel("fresh")).toBe("Walk-in, start over");
+    expect(markLabel("brief")).toBe("Walk-in, back to the brief");
   });
 });

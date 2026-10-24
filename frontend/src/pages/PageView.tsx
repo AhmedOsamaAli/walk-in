@@ -1,6 +1,7 @@
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import { isPaymentRoute, type PageRoute } from "../lib/routes";
-import { PaymentPage, paymentKey } from "./PaymentPages";
+import { pageUrl, type PageRoute } from "../lib/routes";
+import { DossierPage } from "./DossierPage";
+import { KitPage } from "./KitPage";
 import { PlacesPage } from "./PlacesPage";
 import { PrivacyPage } from "./PrivacyPage";
 
@@ -16,18 +17,24 @@ function Broken() {
   );
 }
 
+function Shown({ route }: { route: PageRoute }) {
+  switch (route.page) {
+    case "places":
+      return <PlacesPage />;
+    case "privacy":
+      return <PrivacyPage />;
+    case "kit":
+      return <KitPage token={route.token} />;
+    case "dossier":
+      return <DossierPage token={route.token} />;
+  }
+}
+
 /** The page an address asks for, each in a boundary of its own so nothing carries over from one page to the next. */
 export function PageView({ route }: { route: PageRoute }) {
-  if (isPaymentRoute(route)) {
-    return (
-      <ErrorBoundary key={paymentKey(route)} fallback={<Broken />}>
-        <PaymentPage route={route} />
-      </ErrorBoundary>
-    );
-  }
   return (
-    <ErrorBoundary key={route.page} fallback={<Broken />}>
-      {route.page === "places" ? <PlacesPage /> : <PrivacyPage />}
+    <ErrorBoundary key={pageUrl(route)} fallback={<Broken />}>
+      <Shown route={route} />
     </ErrorBoundary>
   );
 }

@@ -1,15 +1,43 @@
-import { Fragment, useEffect, useRef } from "react";
-import type { Focus, Intent, Kitchen, PlaceHit, Preset, Walk, WalkMinutes } from "../api/types";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { Ages, Focus, Intent, Kitchen, PlaceHit, Preset, Travel } from "../api/types";
+import { areaLabel, KM_PICKS, MINUTE_PICKS, TRAVEL_LABELS } from "../lib/area";
 import { cssVars } from "../lib/css";
-import { coords, floorArea, INTENTS, KITCHEN_LABELS } from "../lib/format";
+import { coords, floorArea, INTENTS } from "../lib/format";
 import { scrollBehavior } from "../lib/motion";
-import { BUSINESS_MAX, missing, type AreaUnit, type BriefForm, type Choice } from "../state/brief";
-import { walkNote, type Site } from "../state/site";
+import { walkLine, type WalkPreview } from "../lib/walk";
+import { isBigArea } from "../map/geometry";
+import {
+  AGES_LABELS,
+  areaProblem,
+  briefArea,
+  BUSINESS_MAX,
+  foodPrepAsked,
+  formArea,
+  missing,
+  type AreaUnit,
+  type BriefForm,
+  type Choice,
+} from "../state/brief";
+import type { Site } from "../state/site";
 import { PlaceSearch } from "./PlaceSearch";
 import { PresetIndex } from "./PresetIndex";
 import { SearchBox } from "./SearchBox";
 
-const WALKS: readonly WalkMinutes[] = [5, 10, 15];
+const TRAVELS: readonly { value: Travel; label: string }[] = (["walk", "drive", "distance"] as const).map((value) => ({
+  value,
+  label: TRAVEL_LABELS[value],
+}));
+/** How each way of measuring the area is traced. The walk's note also says how far people walk for what. */
+const AREA_NOTES: Record<Travel, string> = {
+  walk: "Traced over real streets, so rivers, parks and highways cut it. A café draws people from 5–10 minutes away; a destination from 15.",
+  drive: "Traced over real roads at driving speeds, so bridges, highways and one-way streets shape it.",
+  distance: "Measured along real roads from the site, not as the crow flies.",
+};
+const BIG_AREA =
+  "Big areas suit towns, suburbs and destination businesses. In a dense city a big area holds almost everything, so few gaps show.";
+const AGE_GROUPS: readonly { value: Ages; label: string }[] = (["all", "under_25", "25_34", "35_54", "55_plus"] as const).map(
+  (value) => ({ value, label: AGES_LABELS[value] }),
+);
 const FOCUSES: readonly { value: Focus; label: string }[] = [
   { value: "any", label: "Anything" },
   { value: "food_drink", label: "Food & drink" },
@@ -17,12 +45,15 @@ const FOCUSES: readonly { value: Focus; label: string }[] = [
   { value: "leisure", label: "Leisure & wellness" },
 ];
 const INTENT_ORDER: readonly Intent[] = ["explore", "open", "improve"];
-const KITCHENS: readonly { value: Kitchen | "unsure"; label: string }[] = [
-  { value: "full", label: KITCHEN_LABELS.full },
-  { value: "light", label: KITCHEN_LABELS.light },
-  { value: "none", label: KITCHEN_LABELS.none },
+/** What the unit can cook: it keeps a full restaurant off a unit that cannot, and matters only when food can be involved. */
+const FOOD_PREP: readonly { value: Kitchen | "unsure"; label: string }[] = [
+  { value: "full", label: "Full kitchen (with extraction)" },
+  { value: "light", label: "Light prep only" },
+  { value: "none", label: "None" },
   { value: "unsure", label: "Not sure" },
 ];
+/** The answer in the folded "+ Your unit" line, where "None" alone would not say of what. */
+const FOOD_PREP_SUMMARY: Record<Kitchen, string> = { full: "Full kitchen", light: "Light prep only", none: "No food prep" };
 const OUTDOOR: readonly { value: Choice; label: string }[] = [
   { value: "yes", label: "Yes" },
   { value: "no", label: "No" },
@@ -39,12 +70,27 @@ const QUESTIONS: Record<Intent, string> = {
   open: "Will your idea work on this block?",
   improve: "What would make people here choose you?",
 };
-const LEDES: Record<Intent, string> = {
-  explore:
-    "Drop a pin on a vacant unit. Walk-in reads what the people within a ten-minute walk love, what they leave the block for, and designs the business they would walk in for.",
-  open: "Drop a pin where you want to open. Walk-in judges your idea against everything the block is missing, then designs it to win here.",
-  improve:
+/** Each intent's lede; finding what is missing names the area it reads, "a 10-minute walk" until the owner picks another. */
+const LEDES: Record<Intent, (area: string) => string> = {
+  explore: (area) =>
+    `Drop a pin on an empty shop. Walk-in reads what the people within a ${area} love, what they leave the block for, and designs the business they would walk in for.`,
+  open: () =>
+    "Drop a pin where you want to open. Walk-in tests your idea against everything the block is missing, then designs it to win here.",
+  improve: () =>
     "Drop a pin near the place you run. Walk-in compares it with the places people here love in its category and lists what to change, each move with its evidence.",
+};
+/** Line icons for the three intents: find what is missing, an idea to test, a place to improve. */
+const INTENT_ICONS: Record<Intent, ReactNode> = {
+  explore: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.4 15.4 5.1 5.1M10.5 7.9v5.2M7.9 10.5h5.2" />
+    </>
+  ),
+  open: (
+    <path d="M9.6 18.2h4.8M10.4 21h3.2M12 3.2a5.6 5.6 0 0 0-3.4 10.1c.6.5 1 1.2 1 2v.6h4.8v-.6c0-.8.4-1.5 1-2A5.6 5.6 0 0 0 12 3.2Z" />
+  ),
+  improve: <path d="m3.5 16.8 5.6-5.6 4 4 7.4-7.4M15.2 7.8h5.3v5.3" />,
 };
 /** Two columns: the map stays pinned beside the sheet, so scrolling the sheet never hides it. */
 const SIDE_BY_SIDE = "(min-width: 981px)";
@@ -52,14 +98,19 @@ const SIDE_BY_SIDE = "(min-width: 981px)";
 interface ChipsProps<T extends string | number> {
   name: string;
   options: readonly { value: T; label: string }[];
+  /** The chosen option's value; one none of the options has leaves them all unchosen. */
   value: T;
   onChange: (value: T) => void;
   className?: string;
+  /** Names the group for screen readers when it shares its legend with another group. */
+  label?: string;
+  /** More in the same row, after the options: "Other". */
+  children?: ReactNode;
 }
 
-function Chips<T extends string | number>({ name, options, value, onChange, className = "chips" }: ChipsProps<T>) {
+function Chips<T extends string | number>({ name, options, value, onChange, className = "chips", label, children }: ChipsProps<T>) {
   return (
-    <div className={className}>
+    <div className={className} role={label ? "radiogroup" : undefined} aria-label={label}>
       {options.map((option) => (
         <label key={option.value} className="chip">
           <input
@@ -74,6 +125,7 @@ function Chips<T extends string | number>({ name, options, value, onChange, clas
           <span>{option.label}</span>
         </label>
       ))}
+      {children}
     </div>
   );
 }
@@ -96,14 +148,207 @@ function Headline({ intent }: { intent: Intent }) {
   );
 }
 
+interface IntentsProps {
+  intent: Intent;
+  onChange: (intent: Intent) => void;
+}
+
+/**
+ * What the owner wants, as three option cards: native radios, so the group is one tab stop and the arrow keys move
+ * between the cards. Each card is named by its title and described by its sentence; on phones only the chosen card
+ * shows its sentence, so the question and the search stay on the first screen (screen readers still hear them all).
+ */
+function Intents({ intent, onChange }: IntentsProps) {
+  const id = useId();
+  const [howOpen, setHowOpen] = useState(false);
+  return (
+    <div className="intents">
+      <div className="intents-head">
+        <p className="intents-q mono" id={`${id}-q`}>
+          What do you want to do?
+        </p>
+        <button
+          type="button"
+          className="how-toggle mono"
+          aria-expanded={howOpen}
+          aria-controls={`${id}-how`}
+          onClick={() => {
+            setHowOpen((open) => !open);
+          }}
+        >
+          How it works
+          <span className="how-sign" aria-hidden="true" />
+        </button>
+      </div>
+      <HowItWorks id={`${id}-how`} hidden={!howOpen} />
+      <div className="intent-cards" role="radiogroup" aria-labelledby={`${id}-q`}>
+        {INTENT_ORDER.map((value) => (
+          <label key={value} className="intent-card" data-on={intent === value ? "" : undefined}>
+            <input
+              type="radio"
+              name="intent"
+              value={value}
+              checked={intent === value}
+              aria-labelledby={`${id}-${value}-title`}
+              aria-describedby={`${id}-${value}-does`}
+              onChange={() => {
+                onChange(value);
+              }}
+            />
+            <svg className="intent-icon" viewBox="0 0 24 24" aria-hidden="true">
+              {INTENT_ICONS[value]}
+            </svg>
+            <span className="intent-title" id={`${id}-${value}-title`}>
+              {INTENTS[value].label}
+            </span>
+            <span className="intent-does" id={`${id}-${value}-does`}>
+              {INTENTS[value].does}
+            </span>
+            <span className="intent-check" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="m6.8 12.4 3.4 3.4 7-7.6" />
+              </svg>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The three steps and what a survey gives back: optional, folded away until asked for. */
+function HowItWorks({ id, hidden }: { id: string; hidden: boolean }) {
+  return (
+    <div className="how" id={id} hidden={hidden}>
+      <ol className="how-steps">
+        <li>
+          <b>Choose what you want.</b> Find what is missing, test an idea, or improve a place you run.
+        </li>
+        <li>
+          <b>Pick the storefront.</b> Search an address, <span className="say-click">click</span>
+          <span className="say-tap">tap</span> the map, or open the full-screen map.
+        </li>
+        <li>
+          <b>Run the survey.</b> In about a minute, it reads Qloo&apos;s taste data for the people in the area.
+        </li>
+      </ol>
+      <div className="how-get">
+        <p className="how-label mono">What you get</p>
+        <ul>
+          <li>Ranked gaps, each with its evidence</li>
+          <li>Concepts, each with its design sheet</li>
+          <li>A free launch kit</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+interface FieldProps {
+  form: BriefForm;
+  onForm: (patch: Partial<BriefForm>) => void;
+}
+
+/**
+ * How far customers come from: a walk, a drive or a road distance, each with five quick picks and "Other" for any number
+ * within the routing server's limits, which wins over the picks while it holds text. A big area says what it suits.
+ */
+function AreaField({ form, onForm }: FieldProps) {
+  const id = useId();
+  const distance = form.travel === "distance";
+  const unit = distance ? "km" : "min";
+  const other = distance ? form.otherKm : form.otherMinutes;
+  const typing = other.trim() !== "";
+  const problem = areaProblem(form);
+  const area = briefArea(form);
+  const noun = distance ? "road distance" : form.travel;
+  return (
+    <fieldset className="field area-field">
+      <legend className="mono label">How far do customers come from?</legend>
+      <Chips
+        name="travel"
+        className="chips seg"
+        label="Measured by"
+        options={TRAVELS}
+        value={form.travel}
+        onChange={(travel) => {
+          onForm({ travel });
+        }}
+      />
+      <Chips
+        name="reach"
+        className="chips reach"
+        label={distance ? "Road distance" : form.travel === "drive" ? "Drive time" : "Walking time"}
+        options={(distance ? KM_PICKS : MINUTE_PICKS).map((value) => ({ value, label: `${value} ${unit}` }))}
+        value={typing ? -1 : distance ? form.km : form.minutes}
+        onChange={(value) => {
+          onForm(distance ? { km: value, otherKm: "" } : { minutes: value, otherMinutes: "" });
+        }}
+      >
+        <label className="chip-other" data-on={typing && !problem ? "" : undefined} data-bad={problem ? "" : undefined}>
+          <input
+            type="text"
+            inputMode={distance ? "decimal" : "numeric"}
+            maxLength={5}
+            placeholder="Other"
+            aria-label={distance ? "Other road distance in km, 1 to 100" : `Other ${noun} in minutes, 5 to 60`}
+            aria-invalid={problem ? true : undefined}
+            aria-describedby={problem ? `${id}-problem` : undefined}
+            value={other}
+            onChange={(event) => {
+              const text = event.target.value;
+              onForm(distance ? { otherKm: text } : { otherMinutes: text });
+            }}
+          />
+          <span aria-hidden="true">{unit}</span>
+        </label>
+      </Chips>
+      {problem ? (
+        <p id={`${id}-problem`} className="area-problem mono">
+          {problem}
+        </p>
+      ) : null}
+      <p className="field-note serif">{AREA_NOTES[form.travel]}</p>
+      {area && isBigArea(area) ? <p className="area-hint">{BIG_AREA}</p> : null}
+    </fieldset>
+  );
+}
+
+/** Who the owner wants to serve: everyone, or an age group, which changes what counts as missing. */
+function AgesField({ form, onForm }: FieldProps) {
+  return (
+    <fieldset className="field">
+      <legend className="mono label">Who do you want to serve?</legend>
+      <Chips
+        name="ages"
+        options={AGE_GROUPS}
+        value={form.ages}
+        onChange={(ages) => {
+          onForm({ ages });
+        }}
+      />
+      <p className="field-note serif">An age group changes what counts as missing, and whose favorite places count.</p>
+    </fieldset>
+  );
+}
+
 function unitSummary(form: BriefForm): string {
   const size = floorArea(form.area, form.areaUnit);
   const parts = [
     size === null ? null : `${size.toLocaleString("en-US")} m²`,
-    form.kitchen === "unsure" ? null : KITCHEN_LABELS[form.kitchen],
+    form.kitchen === "unsure" || !foodPrepAsked(form) ? null : FOOD_PREP_SUMMARY[form.kitchen],
     form.outdoor === "unsure" ? null : form.outdoor === "yes" ? "Outdoor space" : "No outdoor space",
   ].filter(Boolean);
   return parts.length ? ` · ${parts.join(" · ")}` : " (optional)";
+}
+
+const RULES_SHOWN = 36;
+
+/** The owner's rules as the summary shows them while folded: what they typed, cut short, or that they are optional. */
+function rulesSummary(notes: string): string {
+  const text = notes.trim().replace(/\s+/g, " ");
+  if (!text) return " (optional)";
+  return ` · ${text.length > RULES_SHOWN ? `${text.slice(0, RULES_SHOWN - 1).trimEnd()}…` : text}`;
 }
 
 interface BriefProps {
@@ -111,7 +356,10 @@ interface BriefProps {
   /** Why the link the page was opened with shows the brief instead, say a survey that is no longer available. */
   notice: string | null;
   site: Site | null;
-  walk: Walk | null;
+  /** The site's walk as it is traced. */
+  trace: WalkPreview;
+  /** Counts "Use this spot" on the full-screen map: each one brings the brief's next step into view and focus. */
+  reveal: number;
   form: BriefForm;
   onForm: (patch: Partial<BriefForm>) => void;
   onSite: (site: Site) => void;
@@ -119,18 +367,24 @@ interface BriefProps {
   onSurvey: () => void;
 }
 
-export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlace, onSurvey }: BriefProps) {
+export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSite, onPlace, onSurvey }: BriefProps) {
+  const sheet = useRef<HTMLElement>(null);
   const go = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLDivElement>(null);
   const fromBrief = useRef(false);
   const { intent } = form;
   const blocker = missing(site, form);
+  /** The area to trace; none while "Other" holds a number out of the limits. */
+  const area = briefArea(form);
 
   // A chosen site reveals the survey brief under the search; bring its button into view. A pin dropped on the map of a
-  // phone stays put, since the map sits above the sheet there and the user may still be moving the pin.
+  // phone stays put, since the map sits above the sheet there and the user may still be moving the pin. Nor does the
+  // page move under the full-screen map: "Use this spot" brings the brief's next step into view once it shrinks.
   useEffect(() => {
     if (!site) return;
     const picked = fromBrief.current;
     fromBrief.current = false;
+    if (document.documentElement.classList.contains("map-full")) return;
     if (!picked && !window.matchMedia(SIDE_BY_SIDE).matches) return;
     const frame = requestAnimationFrame(() => {
       go.current?.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
@@ -139,6 +393,16 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
       cancelAnimationFrame(frame);
     };
   }, [site]);
+
+  // "Use this spot" on the full-screen map: the brief takes over at its next step, the survey's button, or the field
+  // that still stands in its way ("What do you want to open?", "Your place").
+  useEffect(() => {
+    if (!reveal) return;
+    const button = go.current;
+    const next = button && !button.disabled ? button : card.current?.querySelector<HTMLElement>("input:not([type=radio])");
+    next?.focus({ preventScroll: true });
+    (next ?? button)?.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
+  }, [reveal]);
 
   function choose(next: Site) {
     fromBrief.current = true;
@@ -149,39 +413,52 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
     choose({ id: preset.id, label: preset.label, lat: preset.lat, lon: preset.lon });
   };
 
+  /** "Try an example": the examples at the foot of the brief come into view, focus on the chosen one or the first. */
+  function toExamples() {
+    const examples = sheet.current?.querySelector<HTMLElement>(".index");
+    const chosen = examples?.querySelector<HTMLElement>('.site-btn[aria-pressed="true"]');
+    (chosen ?? examples?.querySelector<HTMLElement>(".site-btn"))?.focus({ preventScroll: true });
+    examples?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
+  }
+
   return (
-    <section id="s-brief" className="sec brief" hidden={hidden}>
+    <section ref={sheet} id="s-brief" className="sec brief" hidden={hidden}>
       {notice ? <p className="brief-notice">{notice}</p> : null}
-      <fieldset className="intents">
-        <legend className="mono">
-          <b>00</b>
-          <span className="sr-only">What do you want to do?</span>
-        </legend>
-        <Chips
-          name="intent"
-          className="intent-tabs mono"
-          options={INTENT_ORDER.map((value) => ({ value, label: INTENTS[value].label }))}
-          value={intent}
-          onChange={(value) => {
-            onForm({ intent: value });
-          }}
-        />
-      </fieldset>
+      <Intents
+        intent={intent}
+        onChange={(value) => {
+          onForm({ intent: value });
+        }}
+      />
       <Headline intent={intent} />
       <p className="lede" key={intent}>
-        {LEDES[intent]}
+        {LEDES[intent](areaLabel(formArea(form)))}
       </p>
 
-      <SearchBox onPick={choose} placeholder={intent === "improve" ? "Street or neighborhood of your place" : undefined} />
-      <p className="hint mono">or click anywhere on the map</p>
+      <div className="find">
+        <SearchBox
+          site={site}
+          siteLabel={site?.label ?? null}
+          onPick={choose}
+          placeholder={intent === "improve" ? "Street or neighborhood of your place" : undefined}
+        />
+        <p className="hint mono">
+          or <span className="say-click">click</span>
+          <span className="say-tap">tap</span> <span className="when-side">anywhere on the map</span>
+          <span className="when-stacked">the map above</span>, or{" "}
+          <button type="button" className="hint-link" onClick={toExamples}>
+            try an example
+          </button>
+        </p>
+      </div>
 
       {site ? (
-        <div className="brief-card">
+        <div ref={card} className="brief-card">
           <div className="chosen">
             <span className="mono label">{intent === "improve" ? (form.place ? "Place" : "Near") : "Site"}</span>
             <strong>{site.label}</strong>
             <span className="mono muted">{coords(site.lat, site.lon)}</span>
-            <span className="mono walk-note">{walkNote(walk, form.minutes)}</span>
+            <span className="mono walk-note">{area ? walkLine(trace, area) : ""}</span>
           </div>
 
           {intent === "improve" ? (
@@ -189,8 +466,8 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
               <p className="mono label">Your place</p>
               <PlaceSearch near={site} place={form.place} onPick={onPlace} />
               <p className="field-note serif">
-                Its Qloo record (reviews, price, hours and what it is known for) is set against the places people here love in
-                its category.
+                Its Qloo record (reviews, hours and what it is known for) is set against the places people here love in its
+                category.
               </p>
             </div>
           ) : null}
@@ -217,21 +494,7 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
             </label>
           ) : null}
 
-          <fieldset className="field">
-            <legend className="mono label">Walking catchment</legend>
-            <Chips
-              name="minutes"
-              options={WALKS.map((value) => ({ value, label: `${value} min` }))}
-              value={form.minutes}
-              onChange={(minutes) => {
-                onForm({ minutes });
-              }}
-            />
-            <p className="field-note serif">
-              Traced over real streets, so rivers, parks and highways cut it. Cafés live on 5–10 minutes; destinations
-              draw from 15.
-            </p>
-          </fieldset>
+          <AreaField form={form} onForm={onForm} />
 
           {intent === "explore" ? (
             <fieldset className="field">
@@ -246,6 +509,8 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
               />
             </fieldset>
           ) : null}
+
+          <AgesField form={form} onForm={onForm} />
 
           {intent !== "improve" ? (
             <>
@@ -278,17 +543,22 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
                       />
                     </div>
                   </div>
-                  <fieldset>
-                    <legend className="mono label">Kitchen</legend>
-                    <Chips
-                      name="kitchen"
-                      options={KITCHENS}
-                      value={form.kitchen}
-                      onChange={(kitchen) => {
-                        onForm({ kitchen });
-                      }}
-                    />
-                  </fieldset>
+                  {foodPrepAsked(form) ? (
+                    <fieldset>
+                      <legend className="mono label">
+                        Food prep
+                        {intent === "open" ? <span className="muted">only matters if it serves food</span> : null}
+                      </legend>
+                      <Chips
+                        name="kitchen"
+                        options={FOOD_PREP}
+                        value={form.kitchen}
+                        onChange={(kitchen) => {
+                          onForm({ kitchen });
+                        }}
+                      />
+                    </fieldset>
+                  ) : null}
                   <fieldset>
                     <legend className="mono label">Outdoor space</legend>
                     <Chips
@@ -302,16 +572,17 @@ export function Brief({ hidden, notice, site, walk, form, onForm, onSite, onPlac
                   </fieldset>
                 </div>
                 <p className="field-note serif">
-                  Categories the kitchen cannot serve are marked, and seating is sized with building-code occupant loads.
+                  Floor area sizes seating where people sit or stand. Food prep marks food ideas this space can&apos;t serve.
+                  Shops and services need neither.
                 </p>
               </details>
 
               <details className="notes">
-                <summary className="mono">+ Owner constraints</summary>
+                <summary className="mono">+ Your rules{rulesSummary(form.notes)}</summary>
                 <textarea
                   rows={2}
                   maxLength={300}
-                  aria-label="Owner constraints"
+                  aria-label="Your rules for the business"
                   placeholder="e.g. no alcohol, halal, family friendly, mid-range prices"
                   value={form.notes}
                   onChange={(event) => {

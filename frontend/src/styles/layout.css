@@ -39,15 +39,14 @@
 /* At the door while the agent works: ajar, the light glowing on and off through the gap. */
 .brand-mark[data-at-door] .bm-shut { transform: scaleX(.62); }
 .brand-mark[data-at-door] .bm-light { opacity: 1; animation: bmGlow 1.6s ease-in-out infinite; }
-/* The opening walk, played on load and again whenever the logo is hovered or focused: each step lands in turn, the
-   door closes behind the last one, then swings open and the light spills out. */
-:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-step {
-  animation: bmStep .4s var(--ease) backwards; animation-delay: calc(var(--i) * .2s + .2s);
-}
-:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-shut { animation: bmShut .45s var(--ease) 1s backwards; }
-:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-open { animation: bmOpen .5s var(--ease) 1.35s backwards; }
-:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-light { animation: bmFade .5s ease 1.05s backwards; }
-:is(.brand-mark.intro, .mark:hover .brand-mark, .mark:focus-visible .brand-mark) .bm-spill { animation: bmFade .6s ease 1.45s backwards; }
+/* The walk-in, played on load, on every click or tap of the mark, and previewed on a mouse hover or keyboard focus
+   (TopBar.tsx gives the mark a fresh element each time): each step lands in turn, the door closes behind the last one,
+   then swings open and the light spills out. Reduced motion shows the open door at once (responsive.css). */
+.brand-mark.intro .bm-step { animation: bmStep .4s var(--ease) backwards; animation-delay: calc(var(--i) * .2s + .2s); }
+.brand-mark.intro .bm-shut { animation: bmShut .45s var(--ease) 1s backwards; }
+.brand-mark.intro .bm-open { animation: bmOpen .5s var(--ease) 1.35s backwards; }
+.brand-mark.intro .bm-light { animation: bmFade .5s ease 1.05s backwards; }
+.brand-mark.intro .bm-spill { animation: bmFade .6s ease 1.45s backwards; }
 @keyframes bmStep { from { opacity: 0; transform: translateX(-3px); } }
 @keyframes bmShut { from { transform: none; } }
 @keyframes bmOpen { from { transform: scaleX(0); } }
@@ -77,6 +76,14 @@
 
 /* ---------- Stage: the sheet on the left, the map pinned on the right ---------- */
 .stage { display: grid; grid-template-columns: minmax(460px, 46%) minmax(0, 1fr); min-height: calc(100vh - var(--bar-h)); }
+/* Once a survey runs, the results take the width and the map docks beside them, small and sticky (map.css). On phones
+   and tablets it is a strip at the top of the results instead. The results sit above the map, so the sticky status
+   line covers the strip as it scrolls away rather than going under it. */
+@media (min-width: 981px) {
+  .stage[data-mode="survey"] { grid-template-columns: minmax(0, 1fr) 360px; }
+}
+.stage[data-mode="survey"] > .sheet { z-index: 1; }
+.stage[data-mode="survey"] > .map-frame { isolation: isolate; }
 .sheet {
   container: sheet / inline-size;
   position: relative;

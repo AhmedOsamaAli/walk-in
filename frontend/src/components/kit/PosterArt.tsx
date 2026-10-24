@@ -1,15 +1,18 @@
 import { useEffect, useId, useMemo, useState, type Ref } from "react";
 import type { KitPoster } from "../../api/kit";
-import { fitWalk, qrPath, shortLink } from "../../lib/kit";
-import { fitLines, layoutPoster, POSTER_H, POSTER_M, POSTER_W, roughMeasure, type Face, type Measure } from "../../lib/poster";
+import { qrPath, scanCaption } from "../../lib/kit";
+import { layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type Face, type Measure } from "../../lib/poster";
+import { posterMapOf } from "../../lib/sitemap";
+import { PosterSiteMap } from "./SiteMap";
 
 // A printed sheet keeps its own colors whatever the screen's theme: ink, highlighter yellow and the blue pen on paper.
 const INK = "#1d1d1f";
 const PAPER = "#fbfaf6";
 const YELLOW = "#ffcb00";
 const BLUE = "#0f68ea";
-const WASH = "#e8effc";
 const ASH = "#5f5f59";
+// The map's land, which the labels set over it are haloed in so streets never cross them.
+const LAND = "#f3f1ea";
 const FONTS: Record<Face, string> = {
   serif: '"Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif',
   sans: '"Geist Variable", Geist, Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -54,12 +57,34 @@ function useMeasure(): Measure {
 
 interface PosterArtProps {
   poster: KitPoster;
-  /** The poster's tracked link, drawn as the QR code; null until there is a page for it to open. */
+  /** The poster's tracked link to the owner's own page, drawn as the QR code; null prints the poster without one. */
   link: string | null;
   svgRef?: Ref<SVGSVGElement>;
 }
 
-/** The window poster as vector art: the name, the claim the evidence allows, the walk's real outline and a QR code. */
+/** A label set over the map, haloed in the map's land so no street crosses it. */
+function Halo({ x, y, size, fill, text }: { x: number; y: number; size: number; fill: string; text: string }) {
+  return (
+    <text
+      x={x}
+      y={y}
+      fontFamily={FONTS.mono}
+      fontSize={size}
+      fontWeight="500"
+      letterSpacing="1.4"
+      fill={fill}
+      stroke={LAND}
+      strokeWidth="4"
+      strokeLinejoin="round"
+      paintOrder="stroke"
+    >
+      {text}
+    </text>
+  );
+}
+
+/** The window poster as vector art: the name, the claim the evidence allows, the street map around the survey's area
+ * (where people here go now, when the plan may say so) and, when the owner gave a link of their own, a QR code to it. */
 export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
   const measure = useMeasure();
   const id = useId().replace(/[^\w-]/g, "");
@@ -75,16 +100,31 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
           proof: poster.claim?.proof ?? null,
         },
         measure,
+        { qr: link !== null },
       ),
-    [poster, measure],
+    [poster, measure, link],
   );
-  const walk = useMemo(() => fitWalk(poster.ring, poster.site, INNER, layout.map.height, 40), [poster, layout.map.height]);
+  const map = useMemo(() => posterMapOf(poster), [poster]);
   const code = useMemo(() => (link ? qrPath(link) : null), [link]);
   const hood = poster.neighborhoods[0] ?? "";
-  const { qr } = layout;
+  const { qr, hoursBox } = layout;
   const quiet = 10;
-  const caption = link ? fitLines(`SCAN · ${shortLink(link).toUpperCase()}`, qr.size + 24, (line) => measure(line, "mono", 9), 1)[0] : null;
+  // Set with 0.8 units between letters, which the measure leaves out.
+  const caption = link && qr ? scanCaption(link, qr.size + 20, (line) => measure(line, "mono", 9) + 0.8 * line.length) : null;
   const label = [poster.name, poster.headline, poster.subline].filter(Boolean).join(". ");
+  // The map's own words, set over it: who the area holds, and where people here go now when the plan may say so.
+  const areaLine = posterAreaLine(poster.area_label ?? `${poster.minutes}-minute walk`);
+  const areaWidth = measure(areaLine, "mono", 10.5) + 1.4 * areaLine.length;
+  const argument = map?.caption?.toUpperCase() ?? null;
+  const argumentWidth = argument ? measure(argument, "mono", 10) + 1.2 * argument.length : 0;
+  const mapHeight = layout.map.height;
+  const keepClear = useMemo(
+    () => [
+      { x: 8, y: 10, width: areaWidth + 16, height: 22 },
+      ...(argumentWidth ? [{ x: 8, y: mapHeight - 42, width: argumentWidth + 18, height: 24 }] : []),
+    ],
+    [areaWidth, argumentWidth, mapHeight],
+  );
 
   return (
     <svg
@@ -97,9 +137,6 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
     >
       <title id={`${id}-title`}>{`Window poster: ${label}`}</title>
       <defs>
-        <pattern id={`${id}-grid`} width="24" height="24" patternUnits="userSpaceOnUse">
-          <path d="M24 0H0V24" fill="none" stroke={BLUE} strokeOpacity="0.09" strokeWidth="1" />
-        </pattern>
         <clipPath id={`${id}-map`}>
           <rect width={INNER} height={layout.map.height} rx="14" />
         </clipPath>
@@ -142,38 +179,21 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
       })}
 
       <g transform={`translate(${POSTER_M} ${layout.map.y})`}>
-        <rect width={INNER} height={layout.map.height} rx="14" fill={WASH} />
         <g clipPath={`url(#${id}-map)`}>
-          <rect width={INNER} height={layout.map.height} fill={`url(#${id}-grid)`} />
-          {walk.path ? (
-            <path d={walk.path} fill={BLUE} fillOpacity="0.13" stroke={BLUE} strokeWidth="2.6" strokeLinejoin="round" />
-          ) : null}
+          <PosterSiteMap map={map} ring={poster.ring} site={poster.site} width={INNER} height={layout.map.height} keepClear={keepClear} />
         </g>
         <rect width={INNER} height={layout.map.height} rx="14" fill="none" stroke={INK} strokeWidth="1.4" />
-        <g transform={`translate(${walk.site[0]} ${walk.site[1]})`}>
-          <circle r="22" fill={YELLOW} fillOpacity="0.45" />
-          <rect x="-7" y="-19" width="14" height="19" fill={BLUE} stroke={INK} strokeWidth="1.5" />
-          <rect x="-4.6" y="-16.4" width="9.2" height="6.4" fill="#ffffff" fillOpacity="0.55" />
-          <circle cx="-3.8" cy="-8.2" r="1.2" fill={YELLOW} />
-          <path d="M-16 0H16" stroke={INK} strokeWidth="1.8" strokeLinecap="round" />
-          <text x="22" y="-6" fontFamily={FONTS.mono} fontSize="10" fontWeight="500" letterSpacing="1.4" fill={INK}>
-            YOU ARE HERE
-          </text>
-        </g>
-        <text x="18" y="28" fontFamily={FONTS.mono} fontSize="10.5" fontWeight="500" letterSpacing="1.6" fill={INK}>
-          {`EVERYONE INSIDE THE BLUE LINE IS A ${poster.minutes}-MINUTE WALK AWAY`}
-        </text>
-        {poster.neighborhoods.length ? (
-          <text x="18" y={layout.map.height - 18} fontFamily={FONTS.mono} fontSize="9.5" letterSpacing="1.2" fill={ASH}>
-            {poster.neighborhoods.slice(0, 3).join(" · ").toUpperCase()}
-          </text>
+        <Halo x={16} y={26} size={10.5} fill={INK} text={areaLine} />
+        {argument ? (
+          <g>
+            <rect x={12} y={layout.map.height - 38} width={argumentWidth + 10} height={17} rx="3" fill={YELLOW} stroke={INK} strokeWidth="0.8" />
+            <text x={17} y={layout.map.height - 26} fontFamily={FONTS.mono} fontSize="10" fontWeight="600" letterSpacing="1.2" fill={INK}>
+              {argument}
+            </text>
+          </g>
+        ) : poster.neighborhoods.length ? (
+          <Halo x={16} y={layout.map.height - 24} size={9.5} fill={ASH} text={poster.neighborhoods.slice(0, 3).join(" · ").toUpperCase()} />
         ) : null}
-        <g transform={`translate(${INNER - 26} ${layout.map.height - 34})`} aria-hidden="true">
-          <path d="M0 -12L5 4L0 1L-5 4Z" fill={INK} />
-          <text y="17" textAnchor="middle" fontFamily={FONTS.mono} fontSize="9" fontWeight="500" fill={INK}>
-            N
-          </text>
-        </g>
       </g>
 
       <rect x={POSTER_M} y={layout.bandTop} width={INNER} height="1.4" fill={INK} />
@@ -184,40 +204,33 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
       ))}
       {layout.hours && layout.hoursLabelY !== null ? (
         <>
-          <text x={POSTER_M} y={layout.hoursLabelY} fontFamily={FONTS.mono} fontSize="9.5" fontWeight="500" letterSpacing="1.6" fill={BLUE}>
+          {hoursBox ? (
+            <rect x={hoursBox.x} y={hoursBox.y} width={hoursBox.width} height={hoursBox.height} rx="10" fill="#ffffff" stroke={INK} strokeWidth="1.3" />
+          ) : null}
+          <text x={layout.hoursX} y={layout.hoursLabelY} fontFamily={FONTS.mono} fontSize="9.5" fontWeight="500" letterSpacing="1.6" fill={BLUE}>
             OPEN
           </text>
           {layout.hours.lines.map((line, index) => (
-            <text key={line} x={POSTER_M} y={layout.hours?.y[index]} fontFamily={FONTS.sans} fontSize={layout.hours?.size} fill={INK}>
+            <text key={line} x={layout.hoursX} y={layout.hours?.y[index]} fontFamily={FONTS.sans} fontSize={layout.hours?.size} fill={INK}>
               {line}
             </text>
           ))}
         </>
       ) : null}
 
-      <g transform={`translate(${qr.x} ${qr.y})`}>
-        <rect width={qr.size} height={qr.size} rx="10" fill="#ffffff" stroke={INK} strokeWidth="1.3" />
-        {code ? (
+      {qr && code ? (
+        <g transform={`translate(${qr.x} ${qr.y})`}>
+          <rect width={qr.size} height={qr.size} rx="10" fill="#ffffff" stroke={INK} strokeWidth="1.3" />
           <path
             d={code.path}
             transform={`translate(${quiet} ${quiet}) scale(${(qr.size - 2 * quiet) / code.size})`}
             fill={INK}
             shapeRendering="crispEdges"
           />
-        ) : (
-          <>
-            <rect x="12" y="12" width={qr.size - 24} height={qr.size - 24} rx="6" fill="none" stroke={ASH} strokeDasharray="4 4" />
-            <text x={qr.size / 2} y={qr.size / 2 - 4} textAnchor="middle" fontFamily={FONTS.mono} fontSize="9" letterSpacing="1" fill={ASH}>
-              QR CODE
-            </text>
-            <text x={qr.size / 2} y={qr.size / 2 + 10} textAnchor="middle" fontFamily={FONTS.mono} fontSize="8" letterSpacing="0.6" fill={ASH}>
-              ADD A LANDING PAGE
-            </text>
-          </>
-        )}
-      </g>
-      {caption ? (
-        <text x={qr.x + qr.size / 2} y={qr.y + qr.size + 17} textAnchor="middle" fontFamily={FONTS.mono} fontSize="9" fontWeight="500" letterSpacing="0.8" fill={INK}>
+        </g>
+      ) : null}
+      {qr && caption ? (
+        <text x={qr.x + qr.size / 2} y={qr.y - 9} textAnchor="middle" fontFamily={FONTS.mono} fontSize="9" fontWeight="500" letterSpacing="0.8" fill={INK}>
           {caption}
         </text>
       ) : null}

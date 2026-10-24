@@ -1,4 +1,5 @@
-import type { Verdict } from "../api/types";
+import type { ChainCheck, Verdict } from "../api/types";
+import { chainLine } from "../lib/audience";
 import { VERDICT_STAMPS } from "../lib/format";
 import { SectionHead } from "./SectionHead";
 
@@ -28,6 +29,16 @@ function Scale({ position, of }: { position: number; of: number }) {
   );
 }
 
+/** The brand's own stores already in the area, when the idea is a chain Qloo knows: competition no category count shows. */
+function Chain({ chain }: { chain: ChainCheck }) {
+  return (
+    <div className="verdict-chain">
+      <p className="verdict-chain-line">{chainLine(chain)}</p>
+      <p className="verdict-chain-basis">{chain.basis}</p>
+    </div>
+  );
+}
+
 export function VerdictSection({ no, verdict }: { no: string; verdict: Verdict }) {
   const subject = verdict.found && verdict.genre ? verdict.genre : verdict.query;
   return (
@@ -40,6 +51,7 @@ export function VerdictSection({ no, verdict }: { no: string; verdict: Verdict }
       <div className="verdict-card">
         <p className="stamp mono">{VERDICT_STAMPS[verdict.level]}</p>
         <p className="verdict-headline">{verdict.headline}</p>
+        {verdict.chain ? <Chain chain={verdict.chain} /> : null}
         {verdict.position && verdict.of ? <Scale position={verdict.position} of={verdict.of} /> : null}
         {verdict.evidence.length ? (
           <ul className="why-list">

@@ -195,7 +195,7 @@ describe("surveyReducer", () => {
     const improve = {
       place,
       genre: "Mexican",
-      moves: [{ title: "Own the high end", why: "Few of the Mexican places locals love are priced like Suerte." }],
+      moves: [{ title: "Own the high end", why: "Few of the Mexican places people here love are priced like Suerte: most are cheaper." }],
       experience: null,
       comparison: {
         peers: 10,
@@ -203,7 +203,6 @@ describe("surveyReducer", () => {
         comparable: false,
         peer_names: ["Tamale House"],
         rating: { place: 4.6, peers: 4.3 },
-        price: { place: 3, peers: 1 },
         hours: { place: null, peers: null },
         offer: {},
         known_for: ["suadero tacos"],

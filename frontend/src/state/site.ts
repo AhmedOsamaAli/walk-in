@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Walk, WalkMinutes } from "../api/types";
-import { circleWalk } from "../map/geometry";
+import { areaKey, asArea, type Area } from "../lib/area";
+import { failedWalk, isAbort, NO_WALK, TRACE_DELAY_MS, TRACING_WALK, type WalkPreview } from "../lib/walk";
 
 export interface Site {
   /** The preset's id, or null for a searched address or a dropped pin. */
@@ -11,32 +11,42 @@ export interface Site {
   lon: number;
 }
 
-const walkKey = (site: Site, minutes: number) => `${site.lat},${site.lon},${minutes}`;
+const traceKey = (site: Site, area: Area) => `${site.lat},${site.lon},${areaKey(area)}`;
 
-/** The site's walking catchment over the street network, or an estimated circle when tracing fails; null while tracing. */
-export function useSiteWalk(site: Site | null, minutes: WalkMinutes): Walk | null {
-  const [traced, setTraced] = useState<{ key: string; walk: Walk } | null>(null);
+/**
+ * The site's area over the street network (a walk, a drive or a road distance; a bare number of minutes is a walk),
+ * traced once the site and the area have stayed put a moment: being traced, traced (or an estimated circle when tracing
+ * fails), or resting after too many map requests, which keeps the site and draws nothing. No area (a number out of the
+ * limits typed in the brief) traces nothing.
+ */
+export function useSiteWalk(site: Site | null, asked: Area | number | null): WalkPreview {
+  const [traced, setTraced] = useState<{ key: string; preview: WalkPreview } | null>(null);
+  const area = asked === null ? null : asArea(asked);
+  // The trace follows the area's values, not its object, which each render makes anew.
+  const travel = area?.travel ?? null;
+  const amount = area === null ? null : area.travel === "distance" ? area.km : area.minutes;
 
   useEffect(() => {
-    if (!site) return;
+    if (!site || travel === null || amount === null) return;
+    const shape: Area = travel === "distance" ? { travel, km: amount } : { travel, minutes: amount };
     const abort = new AbortController();
-    const key = walkKey(site, minutes);
-    void api
-      .catchment(site.lat, site.lon, minutes, abort.signal)
-      .catch(() => circleWalk(site.lat, site.lon, minutes))
-      .then((walk) => {
-        if (!abort.signal.aborted) setTraced({ key, walk });
-      });
+    const key = traceKey(site, shape);
+    const timer = window.setTimeout(() => {
+      api.catchment(site.lat, site.lon, shape, abort.signal).then(
+        (walk) => {
+          if (!abort.signal.aborted) setTraced({ key, preview: { phase: "shown", walk } });
+        },
+        (error: unknown) => {
+          if (!abort.signal.aborted && !isAbort(error)) setTraced({ key, preview: failedWalk(error, site, shape) });
+        },
+      );
+    }, TRACE_DELAY_MS);
     return () => {
+      window.clearTimeout(timer);
       abort.abort();
     };
-  }, [site, minutes]);
+  }, [site, travel, amount]);
 
-  return site && traced?.key === walkKey(site, minutes) ? traced.walk : null;
-}
-
-export function walkNote(walk: Walk | null, minutes: WalkMinutes): string {
-  if (!walk) return `Tracing a ${minutes}-min walk…`;
-  const shape = walk.source === "circle" ? "estimated circle" : "street network";
-  return `${walk.minutes}-min walk · ${walk.area_km2} km² · ${shape}`;
+  if (!site || !area) return NO_WALK;
+  return traced?.key === traceKey(site, area) ? traced.preview : TRACING_WALK;
 }

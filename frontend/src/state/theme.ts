@@ -4,7 +4,7 @@ import { withViewTransition } from "../lib/motion";
 
 export type Theme = "light" | "dark";
 
-/** The theme on screen, for the parts drawn by others (Google's and PayPal's buttons) that must be told it. */
+/** The theme on screen, for the parts drawn by others (Google's sign-in button) that must be told it. */
 export const ThemeContext = createContext<Theme>("light");
 
 /** Shared with public/theme.js, which applies the theme before the first paint. */

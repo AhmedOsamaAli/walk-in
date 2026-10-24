@@ -1,29 +1,16 @@
+import type { Area } from "../lib/area";
 import { toRunRecord } from "./stream";
-import type {
-  Design,
-  GeocodeResult,
-  HeatCell,
-  PlaceHit,
-  Preset,
-  RenderResult,
-  RunRecord,
-  RunRequest,
-  Walk,
-  WalkMinutes,
-} from "./types";
+import type { Design, GeocodeResult, HeatCell, PlaceHit, Preset, RunRecord, RunRequest, Walk } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
-  /** The error's JSON body: some errors add fields to `detail`, such as a kit's link or the problems with a form. */
-  readonly body: unknown;
   /** Whether `message` is the server's own words rather than a sentence about the status. */
   readonly explained: boolean;
 
-  constructor(message: string, status: number, body: unknown = null, explained = false) {
+  constructor(message: string, status: number, explained = false) {
     super(message);
     this.name = "ApiError";
     this.status = status;
-    this.body = body;
     this.explained = explained;
   }
 }
@@ -43,7 +30,7 @@ export async function apiError(response: Response): Promise<ApiError> {
   const detail = detailOf(body);
   const message =
     detail ?? (response.status === 429 ? "Too many requests. Try again in a while." : `Request failed (${response.status}).`);
-  return new ApiError(message, response.status, body, detail !== null);
+  return new ApiError(message, response.status, detail !== null);
 }
 
 export function messageOf(error: unknown): string {
@@ -146,7 +133,7 @@ export async function fetchAwake(input: string, init: RequestInit = {}, deps: Wa
       return response;
     }
     const wait = retryAfterMs(response, deps.now());
-    if (deps.now() + wait - started > WAKE_BUDGET_MS) throw new ApiError(ENGINE_ASLEEP, 503, null, true);
+    if (deps.now() + wait - started > WAKE_BUDGET_MS) throw new ApiError(ENGINE_ASLEEP, 503, true);
     // Only a request that will wait says so: one giving up must not start the note again after the engine gave up.
     tell("waking");
     if (!(await deps.sleep(wait, init.signal))) throw new DOMException("The request was aborted.", "AbortError");
@@ -185,13 +172,11 @@ export const api = {
   geocode: (text: string) => request<GeocodeResult[]>(`/api/geocode?${query({ q: text })}`),
   places: (text: string, lat: number, lon: number, signal?: AbortSignal) =>
     request<PlaceHit[]>(`/api/places?${query({ q: text, lat: lat.toFixed(6), lon: lon.toFixed(6) })}`, { signal }),
-  catchment: (lat: number, lon: number, minutes: WalkMinutes, signal?: AbortSignal) =>
-    request<Walk>(`/api/catchment?${query({ lat, lon, minutes })}`, { signal }),
+  catchment: (lat: number, lon: number, area: Area, signal?: AbortSignal) =>
+    request<Walk>(`/api/catchment?${query({ lat, lon, ...areaParams(area) })}`, { signal }),
   heatmap: (lat: number, lon: number, tag: string) =>
     request<{ cells?: HeatCell[] }>(`/api/heatmap?${query({ lat, lon, tag })}`),
   design: (runId: string, index: number) => request<Design>("/api/design", post({ run_id: runId, index })),
-  render: (runId: string, index: number, shot: string) =>
-    request<RenderResult>("/api/render", post({ run_id: runId, index, shot })),
   /** A survey as the server recorded it; a 404 means it is gone. */
   run: async (id: string, signal?: AbortSignal): Promise<RunRecord> => {
     const record = toRunRecord(await request<unknown>(`/api/runs/${encodeURIComponent(id)}`, { signal }));
@@ -200,17 +185,27 @@ export const api = {
   },
 };
 
-/** The survey's query: what the owner wants, and the unit when they described it. */
+/** How far customers come from, as the server takes it: `travel` with `minutes` for a walk or a drive, `km` for a distance. */
+export function areaParams(area: Area): Record<string, string | number> {
+  return area.travel === "distance" ? { travel: area.travel, km: area.km } : { travel: area.travel, minutes: area.minutes };
+}
+
+/** The survey's query: what the owner wants, how far customers come from, for whom, and the unit when described. */
 export function runParams(run: RunRequest): string {
+  const travel = run.travel ?? "walk";
   const params: Record<string, string | number> = {
     lat: run.lat.toFixed(6),
     lon: run.lon.toFixed(6),
     label: run.label,
     focus: run.focus,
     notes: run.notes,
-    minutes: run.minutes,
+    travel,
     intent: run.intent,
   };
+  // A distance without its km goes without one, and the server says what is missing.
+  if (travel !== "distance") params.minutes = run.minutes;
+  else if (run.km !== undefined) params.km = run.km;
+  if (run.ages && run.ages !== "all") params.ages = run.ages;
   if (run.intent === "open" && run.business) params.business = run.business;
   if (run.intent === "improve" && run.placeId) params.place_id = run.placeId;
   if (run.intent !== "improve") {

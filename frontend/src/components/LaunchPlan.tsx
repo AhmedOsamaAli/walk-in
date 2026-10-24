@@ -1,10 +1,11 @@
 import { useRef } from "react";
 import type { LaunchChannel, LaunchPlan } from "../api/types";
 import { naturalList } from "../lib/format";
-import { CLAIM_KINDS, audienceRows, shareText } from "../lib/launch";
+import { CLAIM_KINDS, areaText, audienceRows, reachText, shareText } from "../lib/launch";
+import { PeopleStrip } from "./AudienceView";
 import { CopyButton } from "./CopyButton";
 import { HoursText } from "./Hours";
-import { PlaceLink } from "./Price";
+import { PlaceLink } from "./PlaceLink";
 
 function Channel({ channel, sites }: { channel: LaunchChannel; sites: LaunchPlan["where"]["sites_like"] }) {
   const setting = useRef<HTMLParagraphElement>(null);
@@ -22,7 +23,8 @@ function Channel({ channel, sites }: { channel: LaunchChannel; sites: LaunchPlan
         <p className="channel-why">
           Their sites:{" "}
           {sites.map((site, index) => (
-            <span key={site.url}>
+            // Branches of one chain can share a website: the key is the name and the place in the list.
+            <span key={`${site.name}-${index}`}>
               {index ? ", " : null}
               <PlaceLink name={site.name} url={site.url} />
             </span>
@@ -34,12 +36,16 @@ function Channel({ channel, sites }: { channel: LaunchChannel; sites: LaunchPlan
   );
 }
 
-/** Who to reach, where and when, and only what the evidence lets an ad say: settings to paste, not a picture. */
-export function LaunchPlanView({ plan }: { plan: LaunchPlan }) {
+/**
+ * Who to reach, where and when, and only what the evidence lets an ad say: settings to paste, not a picture.
+ * `peopleAbove`: the sheet already shows who the loved places draw, so the channels only point to it.
+ */
+export function LaunchPlanView({ plan, peopleAbove = false }: { plan: LaunchPlan; peopleAbove?: boolean }) {
   const { audience, where, when, claims, channels, cautions } = plan;
   const shared = new Set(audience.shared);
   const rows = audienceRows(audience);
-  const reach = where.reach_m ? `reaches ${where.reach_m} m at its farthest point` : null;
+  const area = areaText(where);
+  const reach = where.reach_m ? `reaches ${reachText(where.reach_m)} at its farthest point` : null;
   const hoods = where.neighborhoods.length ? `takes in parts of ${naturalList(where.neighborhoods)}` : null;
 
   return (
@@ -155,9 +161,10 @@ export function LaunchPlanView({ plan }: { plan: LaunchPlan }) {
           </h4>
           {reach || hoods ? (
             <p className="launch-note">
-              The {where.minutes}-minute walk {[reach, hoods].filter(Boolean).join(" and ")}.
+              The {area} {[reach, hoods].filter(Boolean).join(" and ")}.
             </p>
           ) : null}
+          {audience.people ? <PeopleStrip people={audience.people} above={peopleAbove} /> : null}
           <ol className="channels">
             {channels.map((channel) => (
               <Channel

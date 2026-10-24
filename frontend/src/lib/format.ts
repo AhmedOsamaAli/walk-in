@@ -18,21 +18,21 @@ export const FOCUS_LABELS: Record<Focus, string> = {
   leisure: "Leisure",
 };
 
-/** The three things an owner can ask, with what each survey does and its one action. */
+/** The three things an owner can ask: the option's title, what the survey does in one plain sentence, and its action. */
 export const INTENTS: Record<Intent, { label: string; does: string; action: string }> = {
   explore: {
-    label: "Find what fits",
-    does: "Ranks what the block is missing and designs the three businesses with the strongest evidence.",
+    label: "Find what's missing",
+    does: "See what this block is missing, ranked by evidence, and what to open there.",
     action: "Survey this site",
   },
   open: {
-    label: "Open a business",
-    does: "Judges the business you have in mind against everything the block is missing, then designs it to win here.",
-    action: "Judge this idea",
+    label: "Test my idea",
+    does: "See if your idea fits what this block is missing, and how to make it work.",
+    action: "Test this idea",
   },
   improve: {
     label: "Improve my place",
-    does: "Compares the place you run with the ones people here love in its category and lists what to change.",
+    does: "Compare your place with the ones people here love, and see what to change.",
     action: "Compare my place",
   },
 };
@@ -78,18 +78,6 @@ export const fmtLat = (lat: number) => `${lat >= 0 ? "N" : "S"} ${Math.abs(lat).
 export const fmtLon = (lon: number) => `${lon >= 0 ? "E" : "W"} ${Math.abs(lon).toFixed(4)}`;
 export const coords = (lat: number, lon: number) => `${fmtLat(lat)} · ${fmtLon(lon)}`;
 export const letter = (index: number) => String.fromCharCode(65 + index);
-
-/** "$" to "$$$$"; anything unreadable counts as mid-range. */
-export function price(level: unknown): string {
-  return "$".repeat(Math.max(1, Math.min(4, Number(level) || 2)));
-}
-
-const PRICE_WORDS = ["", "inexpensive", "moderate", "pricey", "high-end"];
-
-/** "$$ · moderate", or "" when Qloo lists no price: an unknown price is never shown as a guess. */
-export function priceLabel(level: number | null | undefined): string {
-  return level && level >= 1 && level <= 4 ? `${"$".repeat(level)} · ${PRICE_WORDS[level]}` : "";
-}
 
 /** Seconds as the log shows them: "4.2s". */
 export const secondsText = (seconds: number) => `${seconds.toFixed(1)}s`;

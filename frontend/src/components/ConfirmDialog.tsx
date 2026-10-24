@@ -5,7 +5,7 @@ interface ConfirmDialogProps {
   open: boolean;
   title: string;
   children: ReactNode;
-  /** The confirming button's words: "Close the campaign". */
+  /** The confirming button's words: "Delete my account". */
   confirm: string;
   /** The button that changes nothing: "Keep it open". */
   cancel: string;

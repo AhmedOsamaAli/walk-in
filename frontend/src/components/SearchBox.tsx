@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type SyntheticE
 import { api, messageOf } from "../api/client";
 import type { GeocodeResult } from "../api/types";
 import { shortLabel } from "../lib/format";
+import { searchText } from "../lib/fullmap";
+import type { MapPoint } from "../map/controller";
 import type { Site } from "../state/site";
 
 interface Results {
@@ -13,10 +15,23 @@ interface Results {
 interface SearchBoxProps {
   onPick: (site: Site) => void;
   placeholder?: string | undefined;
+  /**
+   * The site set, however it was set: by this search, on the map, from the examples or as the owner's place. Each new
+   * one replaces what the box says with the site's name, or empties the box for a pin placed by hand, so the box never
+   * names another site than the one set.
+   */
+  site?: MapPoint | null;
+  /** The site's name: "Dropped pin" for a pin placed by hand. */
+  siteLabel?: string | null;
 }
 
 /** Address search: results appear as you type; Enter picks the highlighted result, or the first one. */
-export function SearchBox({ onPick, placeholder = "Address or neighborhood" }: SearchBoxProps) {
+export function SearchBox({
+  onPick,
+  placeholder = "Address or neighborhood",
+  site = null,
+  siteLabel = null,
+}: SearchBoxProps) {
   const listId = useId();
   const form = useRef<HTMLFormElement>(null);
   const timer = useRef(0);
@@ -25,10 +40,28 @@ export function SearchBox({ onPick, placeholder = "Address or neighborhood" }: S
   const [results, setResults] = useState<Results | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
+  const [shownSite, setShownSite] = useState(site);
+  if (site !== shownSite) {
+    setShownSite(site);
+    setText(searchText(siteLabel));
+    setOpen(false);
+    setActive(-1);
+  }
+
+  // A new site also drops a search still waiting to run or to answer, so no list opens for words the box no longer says.
+  useEffect(() => {
+    window.clearTimeout(timer.current);
+    sequence.current += 1;
+  }, [site]);
 
   useEffect(() => {
+    // A click elsewhere closes the list, and drops a search still waiting to run or to answer, so its list does not
+    // open later over what the click was for (a pin placed on the map, say).
     const closeOutside = (event: MouseEvent) => {
-      if (!(event.target instanceof Node) || !form.current?.contains(event.target)) setOpen(false);
+      if (event.target instanceof Node && form.current?.contains(event.target)) return;
+      window.clearTimeout(timer.current);
+      sequence.current += 1;
+      setOpen(false);
     };
     document.addEventListener("click", closeOutside);
     return () => {
@@ -93,6 +126,8 @@ export function SearchBox({ onPick, placeholder = "Address or neighborhood" }: S
 
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
+      // An open list closes first; only the next Escape reaches a dialog the search sits in.
+      if (showList) event.preventDefault();
       setOpen(false);
       setActive(-1);
       return;

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ExperienceCard, ExperiencePlan } from "../api/types";
 import { safeUrl } from "../lib/format";
+import { initials } from "../lib/initials";
 
 const GROUPS = [
   { key: "soundtrack", title: "Soundtrack", what: "Artists to play" },
@@ -25,7 +26,9 @@ function Card({ card }: { card: ExperienceCard }) {
           }}
         />
       ) : (
-        <span className="ph" />
+        <span className="ph" aria-hidden="true">
+          {initials(card.name)}
+        </span>
       )}
       <span className="xp-name">{card.name}</span>
       <span className="xp-meta mono">

@@ -1,9 +1,11 @@
 import { useId, useRef, useState } from "react";
 import type { KitLink } from "../../api/kit";
-import { absoluteUrl, trackedUrl, websiteUrl } from "../../lib/commerce";
+import { absoluteUrl, LINK_KINDS, linkKind, trackedUrl, websiteUrl, type LinkKind } from "../../lib/kit";
 import { CopyButton } from "../CopyButton";
 
 const KEY = "walk-in-site:";
+/** The field for the owner's link, which the poster's note sends them to. */
+export const OWN_LINK_ID = "kit-own-link";
 
 function savedWebsite(token: string): string {
   try {
@@ -18,25 +20,21 @@ function saveWebsite(token: string, text: string): void {
     if (text.trim()) window.localStorage.setItem(KEY + token, text.trim());
     else window.localStorage.removeItem(KEY + token);
   } catch {
-    // Private browsing can refuse storage; the website then lasts for this visit.
+    // Private browsing can refuse storage; the link then lasts for this visit.
   }
 }
 
-/** Where the tracked links land: the owner's website, else their pledge page, else the survey with the concept open. */
-export interface Landing {
-  url: string;
-  kind: "website" | "campaign" | "survey";
-}
+/**
+ * Where the tracked links land: the owner's own page, or else the survey with the concept open. The survey is no use
+ * to a passer-by or an ad's audience, so the links and the poster's QR code are only shown for the owner's own page.
+ */
+export type Landing = { url: string; kind: "own"; page: LinkKind } | { url: string; kind: "survey" };
 
-/** The owner's website for this kit, remembered in this browser, and the landing page it makes. */
-export function useLanding(token: string, campaignUrl: string | null, surveyUrl: string) {
+/** The owner's link for this kit, remembered in this browser, and the landing page it makes. */
+export function useLanding(token: string, surveyUrl: string) {
   const [website, setWebsite] = useState(() => savedWebsite(token));
   const typed = websiteUrl(website);
-  const landing: Landing = typed
-    ? { url: typed, kind: "website" }
-    : campaignUrl
-      ? { url: absoluteUrl(campaignUrl), kind: "campaign" }
-      : { url: absoluteUrl(surveyUrl), kind: "survey" };
+  const landing: Landing = typed ? { url: typed, kind: "own", page: linkKind(typed) } : { url: absoluteUrl(surveyUrl), kind: "survey" };
   return {
     website,
     invalid: website.trim() !== "" && typed === null,
@@ -48,11 +46,7 @@ export function useLanding(token: string, campaignUrl: string | null, surveyUrl:
   };
 }
 
-const LANDS: Record<Landing["kind"], string> = {
-  website: "The links and the poster's QR code open your website, tagged per channel.",
-  campaign: "No website yet: the links and the QR code open your founding-supporter page, tagged per channel.",
-  survey: "No website yet: the links and the QR code open this concept in the survey, tagged per channel. Add your website, or start a campaign, to change that.",
-};
+const ASK = "A website, an Instagram or Facebook page, a Google Maps listing or a WhatsApp link. It stays in this browser.";
 
 function LinkRow({ link, url }: { link: KitLink; url: string }) {
   const box = useRef<HTMLElement>(null);
@@ -78,20 +72,23 @@ interface TrackedLinksProps {
   onWebsite: (text: string) => void;
 }
 
-/** Every channel's tagged link to the landing page, and the website they land on. */
+/** The owner's link, and every channel's tagged link to it; none until there is a page of theirs to open. */
 export function TrackedLinks({ links, landing, website, invalid, onWebsite }: TrackedLinksProps) {
   const id = useId();
-  const campaign = links[0]?.utm_campaign;
+  const tag = links[0]?.utm_campaign;
+  const own = landing.kind === "own" ? landing : null;
+  const kind = own ? LINK_KINDS[own.page] : null;
   return (
     <div className="links-panel">
-      <label className="cf-field links-site">
-        <span className="mono label">Your website</span>
+      <label className="kit-field links-site">
+        <span className="mono label">Your link</span>
         <input
+          id={OWN_LINK_ID}
           className="field-input"
           type="url"
           inputMode="url"
           autoComplete="url"
-          placeholder="https://your-business.com"
+          placeholder="your-business.com"
           value={website}
           aria-invalid={invalid}
           aria-describedby={`${id}-lands`}
@@ -99,21 +96,36 @@ export function TrackedLinks({ links, landing, website, invalid, onWebsite }: Tr
             onWebsite(event.target.value);
           }}
         />
-        <span className={invalid ? "cf-hint bad" : "cf-hint"} id={`${id}-lands`}>
-          {invalid ? "That isn't a web address yet: try your-business.com." : LANDS[landing.kind]}
+        <span className={invalid ? "kit-hint bad" : "kit-hint"} id={`${id}-lands`}>
+          {invalid
+            ? "That isn't a link yet: try your-business.com or instagram.com/your-business."
+            : kind
+              ? `The links and the poster's QR code open ${kind.page}, tagged per channel. It stays in this browser.`
+              : ASK}
         </span>
       </label>
-      <ol className="link-list">
-        {links.map((link) => (
-          <LinkRow key={link.key} link={link} url={trackedUrl(landing.url, link.query)} />
-        ))}
-      </ol>
-      {campaign ? (
-        <p className="links-note">
-          Every link carries <code>utm_campaign={campaign}</code>: compare visits per channel in your analytics after a month,
-          and move the budget to the channels that bring people in.
+      {own ? (
+        <>
+          <ol className="link-list">
+            {links.map((link) => (
+              <LinkRow key={link.key} link={link} url={trackedUrl(own.url, link.query)} />
+            ))}
+          </ol>
+          {tag ? (
+            <p className="links-note">
+              Every link carries <code>utm_campaign={tag}</code>
+              {own.page === "website"
+                ? ": compare visits per channel in your analytics after a month, and move the budget to the channels that bring people in."
+                : `. ${kind?.service ?? "That page"} doesn't show you these tags; a website with analytics does, so it can tell which channel brought each visit.`}
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="links-empty">
+          No tracked links yet: each one needs a page of yours to open, and so does the poster&apos;s QR code. Add your
+          link above and every channel gets its own.
         </p>
-      ) : null}
+      )}
     </div>
   );
 }

@@ -1,18 +1,46 @@
 import type { LatLon, Walk } from "../api/types";
+import { areaLabel, areaShort, asArea, type Area } from "../lib/area";
 
 const METERS_PER_DEGREE = 111_320;
 export const WALK_M_PER_MIN = 80;
+/** A drive's reach per minute when it cannot be traced: about 24 km/h, with the lights, the turns and the parking. */
+export const DRIVE_M_PER_MIN = 400;
+/** A road distance's reach per km when it cannot be traced: roads wind, so a km of road gets about 700 m away. */
+export const ROAD_M_PER_KM = 700;
 
-/** A circle of the distance walked in `minutes`, used when the street network cannot be traced. */
-export function circleWalk(lat: number, lon: number, minutes: number): Walk {
-  const radius = minutes * WALK_M_PER_MIN;
+/** How far from the site the area reaches when it cannot be traced, in meters. The server draws the same circle. */
+export function reachM(area: Area): number {
+  if (area.travel === "distance") return area.km * ROAD_M_PER_KM;
+  return area.minutes * (area.travel === "drive" ? DRIVE_M_PER_MIN : WALK_M_PER_MIN);
+}
+
+/** Wider than the widest walk Walk-in offered before drives (15 minutes): the brief says what such an area suits. */
+export const isBigArea = (area: Area): boolean => reachM(area) > 15 * WALK_M_PER_MIN;
+
+/**
+ * A circle of the area's reach, used when the street network cannot be traced. A bare number of minutes is a walk. For a
+ * road distance, `minutes` is the drive at DRIVE_M_PER_MIN; it is never shown.
+ */
+export function circleWalk(lat: number, lon: number, area: Area | number): Walk {
+  const shape = asArea(area);
+  const radius = reachM(shape);
   const dLat = radius / METERS_PER_DEGREE;
   const dLon = radius / (METERS_PER_DEGREE * Math.cos((lat * Math.PI) / 180));
   const ring = Array.from({ length: 41 }, (_, i): LatLon => {
     const angle = (2 * Math.PI * (i % 40)) / 40;
     return [lat + dLat * Math.sin(angle), lon + dLon * Math.cos(angle)];
   });
-  return { minutes, source: "circle", ring, area_km2: +(Math.PI * (radius / 1000) ** 2).toFixed(3), radius_m: radius };
+  return {
+    minutes: shape.travel === "distance" ? Math.ceil(radius / DRIVE_M_PER_MIN) : shape.minutes,
+    source: "circle",
+    ring,
+    area_km2: +(Math.PI * (radius / 1000) ** 2).toFixed(3),
+    radius_m: radius,
+    travel: shape.travel,
+    km: shape.travel === "distance" ? shape.km : null,
+    label: areaLabel(shape),
+    short: areaShort(shape),
+  };
 }
 
 /** A quadratic curve from one point to another, bowed to one side so overlapping trips stay apart. */

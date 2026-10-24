@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { PlaceHit, RunRequest, Verdict } from "./api/types";
+import type { PlaceHit, RunRequest, Verdict, Walk } from "./api/types";
 import { BlockSection } from "./components/BlockSection";
 import { Brief } from "./components/Brief";
 import { ConceptsSection } from "./components/ConceptsSection";
@@ -16,10 +16,12 @@ import { SurveyLog } from "./components/SurveyLog";
 import { TasteSection } from "./components/TasteSection";
 import { TopBar } from "./components/TopBar";
 import { VerdictSection } from "./components/VerdictSection";
+import { areaLabel, areaOf, walkLabel, type Area } from "./lib/area";
 import { markState } from "./lib/brand";
+import { DROPPED_PIN } from "./lib/fullmap";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
 import { scrollBehavior, Settled, withViewTransition } from "./lib/motion";
-import { NavigateContext, type Navigate } from "./lib/navigation";
+import { homeMove, NavigateContext, type Navigate, type Showing } from "./lib/navigation";
 import {
   BRIEF_URL,
   currentAddress,
@@ -34,9 +36,20 @@ import {
 } from "./lib/routes";
 import { posterButtonId, sectionNo, sectionsFor, useSectionSpy, type SectionId } from "./lib/sections";
 import type { MapPoint } from "./map/controller";
-import { SurveyMap } from "./map/SurveyMap";
+import { SurveyMap, type PlacedSpot } from "./map/SurveyMap";
 import { PageView } from "./pages/PageView";
-import { askedLine, briefOf, initialBrief, missing, runRequest, unitLine, type BriefForm } from "./state/brief";
+import {
+  askedLine,
+  briefArea,
+  briefOf,
+  catchmentLines,
+  formArea,
+  initialBrief,
+  missing,
+  runRequest,
+  unitLine,
+  type BriefForm,
+} from "./state/brief";
 import { RUN_GONE } from "./state/record";
 import { engine } from "./state/engine";
 import { session } from "./state/session";
@@ -52,9 +65,10 @@ interface Surveyed {
   fields: TitleField[];
 }
 
-/** A survey started here, with the site it surveys: the brief may move on to another site while it runs. */
+/** A survey started here, with the site and the area it surveys: the brief may move on to another site while it runs. */
 interface Started extends Surveyed {
   site: Site;
+  area: Area;
 }
 
 /** What the window shows: the brief, a survey's link while it loads, the survey in memory, or another page. */
@@ -71,14 +85,17 @@ interface OpenSheet {
 const NOTES_SHOWN = 60;
 const EYEBROWS = { explore: "Site under survey", open: "Idea under test", improve: "Place under review" } as const;
 
-/** Four fields, like a drawing's title block; the unit rides under the constraints. */
-function briefFields(run: RunRequest, area: number | null, place: PlaceHit | null): TitleField[] {
+/**
+ * Four fields, like a drawing's title block; the unit rides under the constraints. The catchment names the area in the
+ * server's words once it is traced (`walk`), its size, and the age focus ("For 25–34").
+ */
+function briefFields(run: RunRequest, walk: Walk | null, place: PlaceHit | null): TitleField[] {
   const notes = run.notes.length > NOTES_SHOWN ? `${run.notes.slice(0, NOTES_SHOWN - 1).trimEnd()}…` : run.notes;
   const asked = askedLine(run, place);
   const unit = unitLine(run);
   return [
     { label: "Coordinates", lines: [fmtLat(run.lat), fmtLon(run.lon)], mono: true },
-    { label: "Catchment", lines: area == null ? [`${run.minutes}-min walk`] : [`${run.minutes}-min walk`, `${area} km²`] },
+    { label: "Catchment", lines: catchmentLines(run, walk) },
     { label: asked.label, lines: [asked.line] },
     run.intent === "improve"
       ? { label: "Compared with", lines: ["The places people here love in its category"] }
@@ -118,7 +135,7 @@ function recordedTitle(survey: SurveyState): Surveyed {
   const brief = briefOf(survey.site, survey.place);
   const run = runRequest(brief.site, brief.form);
   const label = run.intent === "improve" ? (survey.place?.name ?? brief.site.label) : brief.site.label;
-  const fields = briefFields(run, survey.catchment?.area_km2 ?? null, brief.form.place);
+  const fields = briefFields(run, survey.catchment, brief.form.place);
   return { label, eyebrow: EYEBROWS[run.intent], fields };
 }
 
@@ -145,10 +162,20 @@ export function App() {
   const [announcement, setAnnouncement] = useState("");
   /** The survey on screen was restored or brought back rather than streamed here, so nothing on it animates in again. */
   const [settled, setSettled] = useState(false);
+  /**
+   * Counts fresh starts: each one draws a new brief, its search box empty, and a new map, with no pin, where a reload of
+   * the page would have opened them.
+   */
+  const [mapEpoch, setMapEpoch] = useState(0);
+  /** The map fills the screen: the bar and the sheet under it are inert meanwhile. */
+  const [mapFull, setMapFull] = useState(false);
+  /** Counts "Use this spot" on the full-screen map; the brief brings its next step into view and focus each time. */
+  const [reveal, setReveal] = useState(0);
   /** The address last shown, to tell Back and Forward from a section link, which moves only the hash. */
   const address = useRef<string | null>(null);
   const focusTitle = useRef(false);
-  const briefWalk = useSiteWalk(site, form.minutes);
+  const briefTrace = useSiteWalk(site, briefArea(form));
+  const briefWalk = briefTrace.phase === "shown" ? briefTrace.walk : null;
   const { survey, start, restore, reset, toggleGap } = useSurvey();
 
   const title = started ?? (survey.recorded === null ? null : recordedTitle(survey));
@@ -159,8 +186,16 @@ export function App() {
   const openGap = survey.openGap === null ? null : (survey.gaps?.[survey.openGap] ?? null);
   const surveySite: MapPoint | null = started?.site ?? survey.site;
   const surveyWalk = survey.catchment ?? (started?.site === site ? briefWalk : null);
+  /** The area the survey asked for: as started here, or as its record holds it (an older survey's is a walk). */
+  const surveyArea: Area = started?.area ?? areaOf(survey.site ?? {});
+  /** The area inside a sentence, in the server's words once traced ("30-minute drive"), else as asked. */
+  const surveyAreaLabel = survey.catchment ? walkLabel(survey.catchment) : areaLabel(surveyArea);
   const sheetConcept = surveying && sheet?.runId === survey.runId ? survey.concepts?.concepts?.[sheet.index] : undefined;
   const design: DesignTarget | null = sheet && sheetConcept ? { ...sheet, concept: sheetConcept } : null;
+  const showing: Showing = surveying ? "survey" : screen.name === "opening" ? "opening" : screen.name === "page" ? "page" : "brief";
+  /** The map grows to fill the screen on the brief, and from its dock beside a survey. */
+  const expandable = showing === "brief" || showing === "survey";
+  const pageInert = mapFull && expandable;
 
   const titleRef = useCallback((node: HTMLHeadingElement | null) => {
     if (!node || !focusTitle.current) return;
@@ -213,11 +248,11 @@ export function App() {
   function startSurvey() {
     if (!site || surveying || missing(site, form)) return;
     const run = runRequest(site, form);
-    const fields = briefFields(run, briefWalk?.area_km2 ?? null, form.place);
+    const fields = briefFields(run, briefWalk, form.place);
     const label = run.intent === "improve" ? (form.place?.name ?? site.label) : site.label;
     withViewTransition(() => {
       flushSync(() => {
-        setStarted({ label, eyebrow: EYEBROWS[run.intent], fields, site });
+        setStarted({ label, eyebrow: EYEBROWS[run.intent], fields, site, area: areaOf(run) });
         setScreen({ name: "survey" });
         setSettled(false);
         setSheet(null);
@@ -242,6 +277,31 @@ export function App() {
     });
     if (!onBriefUrl()) navigate(BRIEF_URL);
     window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
+
+  /**
+   * The mark from a survey: a fresh brief and map, as a reload of "/" gave, without the reload. The survey stays saved
+   * at its link, which Back returns to; one still running goes on without this page.
+   */
+  function startOver() {
+    withViewTransition(() => {
+      flushSync(() => {
+        reset();
+        setStarted(null);
+        setSheet(null);
+        setNotice(null);
+        setSettled(false);
+        setSite(null);
+        setForm(initialBrief);
+        setScreen({ name: "brief" });
+        setMapEpoch((epoch) => epoch + 1);
+        setMapFull(false);
+        setReveal(0);
+      });
+    });
+    if (!onBriefUrl()) navigate(BRIEF_URL);
+    window.scrollTo({ top: 0 });
+    announce("Started over. The survey stays saved at its link.");
   }
 
   /** Shows a survey's recorded copy once it has loaded, or the brief with a notice when it cannot be shown. */
@@ -278,7 +338,7 @@ export function App() {
     if (now === address.current) return;
     address.current = now;
     const route = currentRoute();
-    // Another page starts at its top; a page's own query changing (a withdraw link answered) keeps its place.
+    // Another page starts at its top; the same page with only its query changed keeps its place.
     const toTop = isPage(route) ? !(screen.name === "page" && samePage(screen.route, route)) : screen.name === "page";
     flushSync(() => {
       setNotice(null);
@@ -329,6 +389,26 @@ export function App() {
     else window.history.pushState(null, "", target);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, []);
+
+  /** The mark, clicked or tapped: the brief, in place (lib/navigation.ts says which way). */
+  function goHome() {
+    const move = homeMove(showing);
+    if (move === "fresh") {
+      startOver();
+      return;
+    }
+    if (move === "brief") {
+      go(BRIEF_URL);
+      return;
+    }
+    // Already on the brief: back to its top with the form as it is. A brief shown at another address, such as a survey
+    // link that is gone, takes "/" and drops its notice.
+    if (!onBriefUrl()) {
+      setNotice(null);
+      navigate(BRIEF_URL, true);
+    }
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
 
   const openFirstLink = useEffectEvent(() => {
     address.current = currentAddress();
@@ -392,8 +472,9 @@ export function App() {
     if (!closing.opener) document.getElementById(posterButtonId(closing.index))?.focus();
   }
 
-  function pickFromMap({ lat, lon }: MapPoint) {
-    chooseSite({ id: null, label: "Dropped pin", lat, lon });
+  /** A spot placed on the map: by hand, or found by the full-screen map's search, which knows the place's name. */
+  function pickFromMap({ lat, lon, label }: PlacedSpot) {
+    chooseSite({ id: null, label: label ?? DROPPED_PIN, lat, lon });
   }
 
   const page = screen.name === "page" ? screen.route : null;
@@ -404,21 +485,26 @@ export function App() {
         <TopBar
           mark={markState(surveying, survey.status)}
           progress={surveyProgress(survey)}
+          home={homeMove(showing)}
+          onHome={goHome}
           sections={page ? [] : sectionsFor(intent)}
           ready={ready}
           current={current}
           theme={theme}
           onToggleTheme={toggleTheme}
+          inert={pageInert}
         />
         {page ? <PageView route={page} /> : null}
         {stageOn ? (
           <main className="stage" data-mode={surveying ? "survey" : "brief"} hidden={page !== null}>
-            <article className="sheet" data-settled={surveying && settled ? "" : undefined}>
+            <article className="sheet" data-settled={surveying && settled ? "" : undefined} inert={pageInert}>
               <Brief
+                key={mapEpoch}
                 hidden={surveying || screen.name === "opening"}
                 notice={notice}
                 site={site}
-                walk={briefWalk}
+                trace={briefTrace}
+                reveal={reveal}
                 form={form}
                 onForm={patchForm}
                 onSite={chooseSite}
@@ -447,7 +533,7 @@ export function App() {
                   </SectionBoundary>
                   {survey.block ? (
                     <SectionBoundary key={`block-${survey.run}`} label="The block">
-                      <BlockSection block={survey.block} />
+                      <BlockSection block={survey.block} area={surveyAreaLabel} />
                     </SectionBoundary>
                   ) : null}
                   {survey.gaps ? (
@@ -470,6 +556,7 @@ export function App() {
                       <ConceptsSection
                         no={sectionNo(intent, "s-concepts")}
                         data={survey.concepts}
+                        rules={survey.understood}
                         baseline={survey.baseline}
                         onOpen={openDesign}
                       />
@@ -498,16 +585,25 @@ export function App() {
               </footer>
             </article>
             <SurveyMap
+              key={mapEpoch}
               theme={theme}
               site={surveying ? surveySite : site}
+              label={surveying ? null : (site?.label ?? null)}
               walk={surveying ? surveyWalk : briefWalk}
-              minutes={surveying ? (survey.site?.minutes ?? form.minutes) : form.minutes}
+              trace={briefTrace}
+              area={surveying ? surveyArea : formArea(form)}
               surveying={surveying}
               run={surveying ? survey.run : 0}
               streaming={surveying && survey.streaming}
               places={surveying ? (survey.block?.places ?? null) : null}
               gap={surveying ? openGap : null}
+              gapsReady={surveying && (survey.gaps?.length ?? 0) > 0}
+              expandable={expandable}
               onPick={pickFromMap}
+              onExpand={setMapFull}
+              onUse={() => {
+                setReveal((count) => count + 1);
+              }}
             />
           </main>
         ) : null}

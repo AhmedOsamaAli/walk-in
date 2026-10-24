@@ -1,6 +1,6 @@
-/* ---------- Design sheet: the broadsheet page for one concept ---------- */
+/* ---------- Design sheet: one column, read top to bottom like a document ---------- */
 .design {
-  width: min(1220px, 95vw); height: min(90vh, 980px); max-width: none; max-height: none;
+  width: min(960px, 95vw); height: min(90vh, 980px); max-width: none; max-height: none;
   padding: 0; overflow: hidden;
   background: var(--paper); color: var(--ink);
   border: var(--rule); border-radius: 28px;
@@ -15,28 +15,62 @@
   transition: background .35s var(--ease), color .35s;
 }
 .design-close:hover { background: var(--ink); color: var(--on-ink); }
-.design-body { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); height: 100%; overflow-y: auto; }
-.d-main { padding: 46px 46px 56px; }
-.d-side { background: var(--card); border-left: var(--rule); }
-.d-side-inner { position: sticky; top: 0; display: grid; align-content: start; gap: 14px; padding: 76px 28px 28px; }
-.d-eyebrow { margin-bottom: 16px; color: var(--blue); }
+.design-body { display: block; height: 100%; overflow-y: auto; }
+.d-main { max-width: 860px; margin: 0 auto; padding: 46px 46px 56px; }
+.d-eyebrow { margin-bottom: 16px; padding-right: 96px; color: var(--blue); }
 .d-title { margin-bottom: 16px; font: 400 clamp(40px, 4.6vw, 72px)/1 var(--f-serif); letter-spacing: -.028em; text-wrap: balance; }
-.d-tagline { max-width: 42ch; margin-bottom: 18px; font: 400 21px/1.36 var(--f-serif); }
-.d-statement { max-width: 46ch; font-size: 18px; line-height: 1.42; color: var(--text-2); }
+.d-tagline { max-width: 46ch; margin-bottom: 18px; font: 400 21px/1.36 var(--f-serif); text-wrap: pretty; }
 .d-h { margin: 36px 0 12px; font: 500 26px/1.1 var(--f-serif); letter-spacing: -.015em; }
 .d-p { max-width: 54ch; font-size: 15.5px; line-height: 1.55; }
-.d-sound { margin-top: 12px; }
 .spec { border-top: var(--rule); }
 .spec div { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 14px; padding: 12px 0; border-bottom: var(--hair); }
 .spec dt { padding-top: 3px; font: 500 11px var(--f-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--text-4); }
 .spec-basis { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4; color: var(--text-4); }
-.offer { counter-reset: of; border-top: var(--rule); }
-.offer li { display: grid; grid-template-columns: 36px minmax(0, 1fr); padding: 10px 0; border-bottom: var(--hair); font-size: 16px; }
-.offer li::before { content: counter(of, decimal-leading-zero); counter-increment: of; padding-top: 4px; font: 500 11px var(--f-mono); color: var(--blue); }
-.partners li { padding: 10px 0; border-bottom: var(--hair); }
-.partners b { font-weight: 600; }
-.partners span { display: block; font-size: 13.5px; color: var(--text-4); }
 
+/* The offer: what Qloo measured is blue, what stands out on the block is the highlighter's yellow. */
+.offer { counter-reset: of; border-top: var(--rule); }
+.offer li {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: baseline;
+  padding: 10px 0; border-bottom: var(--hair); font-size: 16px; line-height: 1.35;
+}
+.offer li::before { content: counter(of, decimal-leading-zero); counter-increment: of; font: 500 11px var(--f-mono); color: var(--blue); }
+/* The item and its mark share a line while they fit; a long item sends the mark to the next one, still on the right. */
+.offer-line { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; min-width: 0; }
+.offer-item { min-width: 0; overflow-wrap: anywhere; }
+.offer-mark {
+  margin-left: auto; padding: 3px 9px 2px; border: 1px solid transparent; border-radius: 999px;
+  font-size: 10px; line-height: 1.4; white-space: nowrap;
+}
+.offer-mark[data-mark="loved"] { background: var(--blue-wash); color: var(--blue); }
+.offer-mark[data-mark="new"] { background: var(--yellow); border-color: var(--on-yellow); color: var(--on-yellow); }
+.offer-key { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 8px 12px; margin-top: 14px; }
+.offer-key div { display: contents; }
+.offer-key .offer-mark { display: inline-block; margin-left: 0; }
+.offer-key dd { max-width: 64ch; font-size: 13.5px; line-height: 1.45; color: var(--text-3); }
+@media (max-width: 560px) {
+  .offer-key { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .offer-key div + div dt { margin-top: 8px; }
+}
+
+/* Two runs of the experience plan: the soundtrack with its licensing note, then the screenings and talks. */
+.d-xp { display: grid; gap: 26px; }
+
+/* On a phone a spec's label sits above its value, so the value has the width. */
+@media (max-width: 560px) {
+  .spec div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .spec dt { padding-top: 0; }
+}
+
+/* How the concept keeps each of the owner's rules: a tick, then the rule in words. */
+.d-rules { border-top: var(--rule); }
+.d-rules li {
+  position: relative; padding: 10px 0 10px 30px; border-bottom: var(--hair);
+  font-size: 15.5px; line-height: 1.45;
+}
+.d-rules li::before {
+  content: ""; position: absolute; top: 15px; left: 4px; width: 11px; height: 6px;
+  border-left: 2px solid var(--blue); border-bottom: 2px solid var(--blue); transform: rotate(-45deg);
+}
 /* ---------- Launch: what an ad can say (yellow, the recommendation), proved by what Qloo measured (blue) ---------- */
 .launch { display: grid; gap: 30px; margin-top: 18px; }
 .launch-spec dd { font-size: 15px; line-height: 1.5; }
@@ -81,51 +115,73 @@
 .launch-cautions li + li { margin-top: 7px; }
 .launch-cautions li::before { content: "!"; position: absolute; top: 1px; left: 2px; font: 600 12px var(--f-mono); color: var(--red); }
 
-/* ---------- Renders ---------- */
-.renders { display: grid; gap: 14px; }
-.render { display: grid; gap: 8px; }
-.render-frame {
-  position: relative; overflow: hidden; aspect-ratio: 16 / 9;
-  background: var(--bone); border: var(--rule); border-radius: var(--r-m);
+/* ---------- Who you'd win (AudienceView.tsx): each age band against everyone, the middle of its bar ---------- */
+.aud { display: grid; gap: 12px; }
+.aud-line { max-width: 60ch; font: 400 19px/1.4 var(--f-serif); text-wrap: pretty; }
+.aud-bars { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; padding: 14px 0 4px; border-top: var(--rule); }
+.aud-band { display: grid; gap: 7px; justify-items: center; min-width: 0; }
+.aud-track { position: relative; width: 100%; height: 12px; background: var(--bone); border-radius: 3px; box-shadow: inset 0 0 0 1px var(--edge); }
+.aud-track::before { content: ""; position: absolute; top: -3px; bottom: -3px; left: calc(50% - .5px); width: 1px; background: var(--ink); }
+.aud-track i { position: absolute; top: 0; bottom: 0; left: var(--from); width: var(--size); border-radius: 2px; background: var(--ash); }
+.aud-band[data-lean="more"] .aud-track i { background: var(--blue-fill); }
+.aud-band[data-lean="even"] .aud-track i { background: var(--edge); }
+.aud-band-name { font-size: 10px; line-height: 1.25; text-align: center; color: var(--text-4); }
+.aud-band[data-top] .aud-band-name { font-weight: 600; color: var(--ink); }
+.aud-band[data-top] .aud-track { box-shadow: inset 0 0 0 1px var(--blue); }
+.aud-key { font-size: 12.5px; line-height: 1.4; color: var(--text-4); }
+.aud-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 6px 14px; padding-top: 4px; }
+.aud-facts div { display: contents; }
+.aud-facts dt { font-size: 10.5px; color: var(--text-4); }
+.aud-facts dd { font-size: 15.5px; line-height: 1.4; }
+.aud-basis { max-width: 64ch; font-size: 13px; line-height: 1.45; color: var(--text-4); }
+/* The positioning tip (Contract 10-23b), right under the line: a quiet accent in the highlighter's yellow. */
+.aud-tip { max-width: 60ch; padding: 1px 0 1px 12px; border-left: 3px solid var(--yellow); font-size: 15px; line-height: 1.45; color: var(--text-2); text-wrap: pretty; }
+/* With the places of this kind already inside the area: two rows of tracks on one scale, the band names once under
+   both. The loved places' bars stay filled; the inside row's are outlined, so the two read apart at a glance. */
+.aud-compare { row-gap: 7px; align-items: center; }
+.aud-row-name { grid-column: 1 / -1; font-size: 10px; line-height: 1.3; color: var(--text-4); }
+.aud-compare .aud-row-name:not(:first-child) { margin-top: 5px; }
+.aud-compare .aud-band-name { margin-top: 1px; }
+.aud-compare .aud-band-name[data-top] { font-weight: 600; color: var(--ink); }
+.aud-band[data-row="inside"] .aud-track i { background: color-mix(in srgb, var(--ink) 16%, transparent); box-shadow: inset 0 0 0 1.5px var(--ink); }
+.aud-band[data-row="inside"][data-lean="even"] .aud-track i { background: none; box-shadow: inset 0 0 0 1.5px var(--edge); }
+/* Small, beside the launch plan's channels: the six bars at half size, then one line. */
+.aud-strip { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 16px; margin: 0 0 12px; }
+.aud-strip p { max-width: 52ch; font-size: 13.5px; line-height: 1.45; color: var(--text-3); }
+.aud-bars.compact { grid-template-columns: repeat(6, 40px); gap: 4px; padding: 0; border-top: 0; }
+.aud-bars.compact .aud-band { gap: 4px; }
+.aud-bars.compact .aud-track { height: 8px; border-radius: 2px; }
+.aud-bars.compact .aud-track::before { top: -2px; bottom: -2px; }
+.aud-bars.compact .aud-band-name { font-size: 8.5px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .aud-bars { gap: 4px; }
+  .aud-compare { row-gap: 6px; }
+  .aud-band-name { font-size: 9.5px; }
+  .aud-strip { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .aud-bars.compact { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
-.render-frame img {
-  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-  opacity: 0; transform: scale(1.04); transition: opacity 1s var(--ease), transform 1.6s var(--ease);
-}
-.render.ready img { opacity: 1; transform: none; }
-.render.loading .render-frame {
-  background: linear-gradient(110deg, var(--bone) 0 40%, var(--shimmer) 50%, var(--bone) 60% 100%);
-  background-size: 300% 100%; animation: shimmer 1.6s linear infinite;
-}
-.render-wait {
-  position: absolute; left: 14px; bottom: 12px; max-width: calc(100% - 28px); padding: 6px 10px;
-  background: var(--card); border: var(--rule); border-radius: 12px; font-size: 10.5px; line-height: 1.4;
-}
-.render.loading .render-wait::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
-.render.ready .render-wait { display: none; }
-.render.failed .render-wait { color: var(--ash); }
-.render figcaption { display: flex; justify-content: space-between; gap: 10px; font-size: 10.5px; color: var(--ash); }
-.render figcaption span:first-child { color: var(--ink); }
 
-/* ---------- The plate: the favorites' design DNA as a color plate ---------- */
-.plate { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.plate > div {
-  display: flex; flex-direction: column; justify-content: space-between; gap: 18px;
-  min-height: 124px; padding: 15px 17px; border: var(--rule); border-radius: var(--r-m);
-  animation: fadeUp .8s var(--ease) both;
+/* ---------- The verdict's chain check (VerdictSection.tsx): the brand's own stores already in the area ---------- */
+.verdict-chain { display: grid; gap: 5px; padding: 2px 0 2px 14px; border-left: 3px solid var(--blue); }
+.verdict-chain-line { max-width: 60ch; font-size: 17px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
+.verdict-chain-basis { max-width: 64ch; font-size: 13px; line-height: 1.45; color: var(--text-4); }
+
+/* ---------- Taste by use (TasteSection.tsx): each list says where Walk-in puts it to work ---------- */
+/* Side by side, the lists share their rows, so the names start level however long each list's uses run. */
+.taste-grid:has(> .taste-list) { grid-template-rows: repeat(3, auto); }
+.taste-list { display: grid; grid-row: span 3; grid-template-rows: subgrid; align-content: start; }
+.taste-list .label { margin-bottom: 8px; }
+.taste-uses { display: grid; gap: 3px; margin-bottom: 12px; }
+.taste-uses li { position: relative; padding-left: 16px; font-size: 13px; line-height: 1.4; color: var(--text-3); }
+.taste-uses li::before { content: ""; position: absolute; top: .66em; left: 0; width: 8px; height: 2px; background: var(--blue); }
+.taste-uses b { font-weight: 600; color: var(--ink); }
+
+/* ---------- The block's stats (BlockSection.tsx): three since prices left, two and one on a narrow sheet ---------- */
+.stats.stats-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@container sheet (max-width: 520px) {
+  .stats.stats-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats-3 .stat:nth-child(3) { grid-column: 1 / -1; }
 }
-.plate > div:nth-child(2) { animation-delay: .08s; }
-.plate > div:nth-child(3) { animation-delay: .16s; }
-.plate > div:nth-child(4) { animation-delay: .24s; }
-.plate > div:nth-child(5) { animation-delay: .32s; }
-.plate .pl-a { grid-column: span 2; min-height: 170px; background: var(--blue-fill); border-color: var(--blue-fill); color: var(--on-blue); }
-.plate .pl-b { background: var(--yellow); border-color: var(--on-yellow); color: var(--on-yellow); }
-.plate .pl-c { background: var(--card); }
-.plate .pl-d { background: var(--ink); color: var(--on-ink); }
-.plate .pl-e { grid-column: span 2; background: var(--bone); }
-.plate .big { font: 400 36px/1.02 var(--f-serif); letter-spacing: -.02em; }
-.plate .ser { font: italic 380 21px/1.12 var(--f-serif); }
-.d-source { color: var(--ash); line-height: 1.6; text-transform: none; letter-spacing: .01em; }
 
 /* ---------- Drafting placeholders ---------- */
 .sk {
@@ -136,5 +192,21 @@
 .sk-line { height: 20px; width: 72%; }
 .sk-line + .sk-line { width: 54%; margin-top: 10px; }
 .sk-block { height: 240px; margin-top: 34px; }
-.sk-card { height: 124px; border-radius: var(--r-m); }
-.sk-card.tall { height: 170px; }
+.sk-block.short { height: 140px; margin-top: 18px; }
+
+/* ---------- On paper: the open design sheet prints as a document, without the page behind it or its controls ---------- */
+@media print {
+  #root:has(> .design[open]) > :not(.design) { display: none !important; }
+  .design[open] {
+    position: static; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0;
+    overflow: visible; background: none; border: 0; border-radius: 0; box-shadow: none; animation: none;
+  }
+  .design::backdrop { display: none; }
+  .design-close { display: none !important; }
+  .design-body { display: block; height: auto; overflow: visible; }
+  .d-main { max-width: none; padding: 0; }
+  .d-eyebrow { padding-right: 0; }
+  .d-h { break-after: avoid; }
+  .offer li, .d-rules li, .spec > div { break-inside: avoid; }
+  .offer-mark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

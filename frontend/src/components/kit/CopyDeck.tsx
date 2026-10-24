@@ -17,7 +17,7 @@ const ORDER: readonly ChannelKey[] = ["spotify", "nextdoor", "google_search", "m
 
 const WHERE: Record<ChannelKey, string> = {
   spotify: "Read aloud in a Spotify audio ad, with its companion banner",
-  nextdoor: "A post for the neighborhoods of the walk",
+  nextdoor: "A post for the neighborhoods around you",
   google_search: "A responsive search ad: Google mixes the headlines and descriptions",
   meta: "A radius ad on Facebook and Instagram",
   poster: "The lines on the window poster",

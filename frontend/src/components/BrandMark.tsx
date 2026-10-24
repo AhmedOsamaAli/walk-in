@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { cssVars, cx } from "../lib/css";
-import { litSteps, MARK_STEPS, type MarkState } from "../lib/brand";
+import { litSteps, MARK_STEPS, WALK_IN_MS, type MarkState } from "../lib/brand";
 
 /** Where each footstep falls on the way to the door: the ball of the foot, then the heel behind it. */
 const STEPS = [
@@ -9,30 +9,40 @@ const STEPS = [
   { ball: [13.4, 30.8], heel: [10.4, 30.8] },
   { ball: [17.8, 34.2], heel: [14.8, 34.2] },
 ] as const;
-/** How long the opening walk plays, in ms, before the mark follows the survey's state. */
-const INTRO_MS = 2000;
+
+interface BrandMarkProps {
+  state: MarkState;
+  progress: number;
+  /** Counts the walks asked for after the one played on load; each new count plays the walk-in again from the start. */
+  replay?: number;
+}
 
 /**
  * Footsteps that end at a door. On the brief the door stands open, swung out on its hinge, with light spilling onto
  * the sidewalk. A survey closes it and lights one step per fifth of its progress, the next one pulsing; at the door,
- * while the agent works, the door stands ajar with the light glowing; it swings open when the survey is done.
+ * while the agent works, the door stands ajar with the light glowing; it swings open when the survey is done. The
+ * walk-in plays on load and on each replay, then the mark follows the survey's state.
  */
-export function BrandMark({ state, progress }: { state: MarkState; progress: number }) {
-  const [intro, setIntro] = useState(true);
+export function BrandMark({ state, progress, replay = 0 }: BrandMarkProps) {
+  // The walk that has played to its end: the mark plays the walk-in while a newer one is asked for.
+  const [played, setPlayed] = useState(-1);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setIntro(false);
-    }, INTRO_MS);
+      setPlayed(replay);
+    }, WALK_IN_MS);
     return () => {
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [replay]);
+  const intro = played !== replay;
   const lit = litSteps(state, progress);
   const atDoor = state === "walking" && lit === MARK_STEPS;
   const spill = `bm-spill${useId().replace(/[^\w-]/g, "")}`;
 
   return (
+    // A new element for each walk, so its animations start again from the first step.
     <svg
+      key={replay}
       className={cx("brand-mark", intro && "intro")}
       data-state={state}
       data-at-door={atDoor ? "" : undefined}

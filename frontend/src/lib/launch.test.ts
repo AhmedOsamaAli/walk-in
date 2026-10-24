@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LaunchPlan } from "../api/types";
-import { audienceRows, hasLaunchPlan, shareText } from "./launch";
+import { areaText, audienceRows, hasLaunchPlan, reachText, shareText } from "./launch";
 
 const plan: LaunchPlan = {
   audience: { crowd: [], artists: [], podcasts: [], screen: [], brands: [], shared: [] },
@@ -38,5 +38,19 @@ describe("hasLaunchPlan", () => {
     expect(hasLaunchPlan({ ...plan, claims: [{ kind: "new", line: "Kouign amann", proof: "2 of 3" }] })).toBe(true);
     expect(hasLaunchPlan({ ...plan, channels: [{ channel: "Nextdoor", setting: "Holly", why: "" }] })).toBe(true);
     expect(hasLaunchPlan({ ...plan, audience: { ...plan.audience, podcasts: ["Stassi"] } })).toBe(true);
+  });
+});
+
+describe("the plan's area", () => {
+  it("says the server's name for the area, and a walk for plans made before drives", () => {
+    expect(areaText({ ...plan.where, label: "30-minute drive" })).toBe("30-minute drive");
+    expect(areaText({ ...plan.where, label: "25 km drive" })).toBe("25 km drive");
+    expect(areaText(plan.where)).toBe("10-minute walk");
+  });
+
+  it("says how far it reaches in metres, then kilometres", () => {
+    expect(reachText(883)).toBe("883 m");
+    expect(reachText(999)).toBe("999 m");
+    expect(reachText(14_240)).toBe("14.2 km");
   });
 });

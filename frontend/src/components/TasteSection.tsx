@@ -1,7 +1,27 @@
 import { Fragment, useState } from "react";
 import type { TasteEntity, TastePayload } from "../api/types";
 import { safeUrl } from "../lib/format";
+import { initials } from "../lib/initials";
 import { SectionHead } from "./SectionHead";
+
+/** Where Walk-in puts a list to work: the launch plan's ad settings (launch.py) or the experience plan (experience.py). */
+interface Use {
+  where: string;
+  what: string;
+}
+
+const USES = {
+  artists: [
+    { where: "Spotify Ads", what: "the launch plan targets their fans" },
+    { where: "Soundtrack", what: "what the room plays" },
+  ],
+  podcasts: [
+    { where: "Spotify Ads", what: "the launch plan targets their listeners" },
+    { where: "Talks", what: "podcasts to host or play, at bars, venues and cafés" },
+  ],
+  screen: [{ where: "Screenings", what: "for bars and venues only" }],
+  brands: [{ where: "Who to reach", what: "listed in each launch plan's audience" }],
+} satisfies Record<string, Use[]>;
 
 function NameItem({ entity }: { entity: TasteEntity }) {
   const [broken, setBroken] = useState(false);
@@ -20,7 +40,9 @@ function NameItem({ entity }: { entity: TasteEntity }) {
           }}
         />
       ) : (
-        <span className="ph" />
+        <span className="ph" aria-hidden="true">
+          {initials(entity.name)}
+        </span>
       )}
       <span className="nm">
         {entity.name}
@@ -30,11 +52,26 @@ function NameItem({ entity }: { entity: TasteEntity }) {
   );
 }
 
-function Names({ title, entities, empty }: { title: string; entities: TasteEntity[]; empty: string }) {
+interface NamesProps {
+  title: string;
+  uses: Use[];
+  entities: TasteEntity[];
+  empty: string;
+}
+
+/** One list, labelled with where Walk-in uses it. */
+function Names({ title, uses, entities, empty }: NamesProps) {
   const shown = entities.slice(0, 8);
   return (
-    <div>
+    <div className="taste-list">
       <h3 className="label mono">{title}</h3>
+      <ul className="taste-uses" aria-label={`Where Walk-in uses the ${title.toLowerCase()}`}>
+        {uses.map((use) => (
+          <li key={use.where}>
+            <b>{use.where}:</b> {use.what}
+          </li>
+        ))}
+      </ul>
       <ol className="names">
         {shown.length ? (
           shown.map((entity, k) => <NameItem key={`${entity.name ?? ""}-${k}`} entity={entity} />)
@@ -64,11 +101,15 @@ interface TasteSectionProps {
   cues: string[];
 }
 
+/**
+ * What people here over-index on, by what Walk-in does with it. Only the distinctive names are shown: the area's plain
+ * favorites are everyone's, and nothing uses them.
+ */
 export function TasteSection({ no, taste, cues }: TasteSectionProps) {
-  const brands = taste.distinctive_brands?.length ? taste.distinctive_brands : (taste.brands ?? []);
-  const artists = taste.distinctive_artists?.length ? taste.distinctive_artists : (taste.artists ?? []);
-  const screen = [...(taste.distinctive_movies ?? []).slice(0, 4), ...(taste.distinctive_tv ?? []).slice(0, 4)];
+  const artists = taste.distinctive_artists ?? [];
   const podcasts = taste.distinctive_podcasts ?? [];
+  const screen = [...(taste.distinctive_movies ?? []).slice(0, 4), ...(taste.distinctive_tv ?? []).slice(0, 4)];
+  const brands = taste.distinctive_brands ?? [];
   const words = marqueeWords(brands, artists);
   return (
     <section id="s-taste" className="sec reveal">
@@ -90,13 +131,13 @@ export function TasteSection({ no, taste, cues }: TasteSectionProps) {
         </div>
       ) : null}
       <div className="taste-grid">
-        <Names title="Brands" entities={brands} empty="No brand data." />
-        <Names title="Artists" entities={artists} empty="No artist data." />
+        <Names title="Artists" uses={USES.artists} entities={artists} empty="No artist stands out here." />
+        <Names title="Podcasts" uses={USES.podcasts} entities={podcasts} empty="No podcast stands out here." />
       </div>
-      {screen.length || podcasts.length ? (
+      {screen.length || brands.length ? (
         <div className="taste-grid">
-          <Names title="On screen here" entities={screen} empty="No film or show data." />
-          <Names title="Listening here" entities={podcasts} empty="No podcast data." />
+          <Names title="Films and shows" uses={USES.screen} entities={screen} empty="No film or show stands out here." />
+          <Names title="Brands" uses={USES.brands} entities={brands} empty="No brand stands out here." />
         </div>
       ) : null}
       <h3 className="label mono">Passions around here, not storefronts</h3>

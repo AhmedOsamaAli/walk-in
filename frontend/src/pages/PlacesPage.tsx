@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { account, type Places, type PlacesSurvey, type User } from "../api/account";
 import { ApiError } from "../api/client";
+import type { PlacesKit } from "../api/kit";
 import { Avatar } from "../components/Avatar";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Link } from "../components/Link";
@@ -8,9 +9,10 @@ import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components
 import { SectionHead } from "../components/SectionHead";
 import { SignInOptions } from "../components/SignIn";
 import { dateText, plainError, SURVEY_STATUS, surveyOutcome } from "../lib/account";
-import { INTENTS } from "../lib/format";
+import { INTENTS, letter } from "../lib/format";
 import { forgetGoogleChoice } from "../lib/google";
-import { BRIEF_URL, PRIVACY_URL } from "../lib/routes";
+import { KIT_OUTCOME, KIT_STATUS } from "../lib/kit";
+import { BRIEF_URL, kitUrl, PRIVACY_URL } from "../lib/routes";
 import { useEngine } from "../state/engine";
 import { session, useSession } from "../state/session";
 
@@ -57,29 +59,46 @@ function Empty({ children }: { children: ReactNode }) {
   return <div className="places-empty">{children}</div>;
 }
 
+/** A launch kit: its business, the survey it was made from, what it holds or is doing, and when it was made. */
+function KitRow({ kit, survey }: { kit: PlacesKit; survey: string | null }) {
+  const concept = `Concept ${letter(kit.index)}`;
+  return (
+    <li>
+      <Link className="place-row" href={kitUrl(kit.token)}>
+        <span className="place-main">
+          <span className="place-kicker mono">Launch kit · {concept}</span>
+          <span className="place-name">{kit.name || concept}</span>
+          <span className="place-sub">
+            {survey ? `${survey} · ` : ""}
+            {KIT_OUTCOME[kit.status]}
+          </span>
+        </span>
+        <span className="place-meta mono">
+          <span className="state" data-state={kit.status}>
+            {KIT_STATUS[kit.status]}
+          </span>
+          <time dateTime={kit.created_at}>{dateText(kit.created_at)}</time>
+        </span>
+        <span className="place-arrow" aria-hidden="true">
+          →
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="place-list" aria-hidden="true">
+      <div className="sk sk-row" />
+      <div className="sk sk-row" />
+      <div className="sk sk-row" />
+    </div>
+  );
+}
+
 /** The account's surveys, newest first. */
-function Surveys({ userId }: { userId: string }) {
-  const [load, setLoad] = useState<PlacesLoad>({ state: "loading" });
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const abort = new AbortController();
-    account.places(abort.signal).then(
-      (places) => {
-        setLoad({ state: "shown", places });
-      },
-      (error: unknown) => {
-        if (abort.signal.aborted) return;
-        // A session that ended elsewhere turns the page into the sign-in prompt.
-        if (error instanceof ApiError && error.status === 401) void session.refresh();
-        setLoad({ state: "failed", message: plainError(error, "Your surveys could not be loaded.") });
-      },
-    );
-    return () => {
-      abort.abort();
-    };
-  }, [userId, attempt]);
-
+function Surveys({ load, onRetry }: { load: PlacesLoad; onRetry: () => void }) {
   const surveys = load.state === "shown" ? load.places.surveys : [];
   const note =
     load.state !== "shown"
@@ -91,24 +110,11 @@ function Surveys({ userId }: { userId: string }) {
   return (
     <section className="pg-sec" aria-labelledby="places-surveys" aria-busy={load.state === "loading"}>
       <SectionHead id="places-surveys" no="01" title="Surveys" note={note} />
-      {load.state === "loading" ? (
-        <div className="place-list" aria-hidden="true">
-          <div className="sk sk-row" />
-          <div className="sk sk-row" />
-          <div className="sk sk-row" />
-        </div>
-      ) : null}
+      {load.state === "loading" ? <Loading /> : null}
       {load.state === "failed" ? (
         <p className="page-alert" role="alert">
           {load.message}{" "}
-          <button
-            type="button"
-            className="text-button"
-            onClick={() => {
-              setLoad({ state: "loading" });
-              setAttempt((count) => count + 1);
-            }}
-          >
+          <button type="button" className="text-button" onClick={onRetry}>
             Try again
           </button>
         </p>
@@ -133,6 +139,78 @@ function Surveys({ userId }: { userId: string }) {
   );
 }
 
+/** The launch kits made for the account's surveys, newest first. */
+function Kits({ load }: { load: PlacesLoad }) {
+  const kits = load.state === "shown" ? load.places.kits : [];
+  const surveys = new Map(load.state === "shown" ? load.places.surveys.map((survey) => [survey.id, survey.label]) : []);
+  const note =
+    load.state === "shown" && kits.length
+      ? `${kits.length} made for your surveys, newest first. Anyone with a kit's link can open it.`
+      : "The launch kits made for your surveys: ad copy, a window poster, tracked links and a report.";
+
+  return (
+    <section className="pg-sec" aria-labelledby="places-kits" aria-busy={load.state === "loading"}>
+      <SectionHead id="places-kits" no="02" title="Launch kits" note={note} />
+      {load.state === "loading" ? <Loading /> : null}
+      {load.state === "failed" ? (
+        <Empty>
+          <p>Your kits load with your surveys.</p>
+        </Empty>
+      ) : null}
+      {load.state === "shown" ? (
+        kits.length ? (
+          <ol className="place-list">
+            {kits.map((kit) => (
+              <KitRow key={kit.token} kit={kit} survey={surveys.get(kit.survey_id) ?? null} />
+            ))}
+          </ol>
+        ) : (
+          <Empty>
+            <p>No launch kits yet.</p>
+            <span className="places-empty-note">Make one from any concept&apos;s design sheet, under Launch kit.</span>
+          </Empty>
+        )
+      ) : null}
+    </section>
+  );
+}
+
+/** What the account has saved: its surveys and their launch kits, read in one request. */
+function Saved({ userId }: { userId: string }) {
+  const [load, setLoad] = useState<PlacesLoad>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    account.places(abort.signal).then(
+      (places) => {
+        setLoad({ state: "shown", places });
+      },
+      (error: unknown) => {
+        if (abort.signal.aborted) return;
+        // A session that ended elsewhere turns the page into the sign-in prompt.
+        if (error instanceof ApiError && error.status === 401) void session.refresh();
+        setLoad({ state: "failed", message: plainError(error, "Your surveys could not be loaded.") });
+      },
+    );
+    return () => {
+      abort.abort();
+    };
+  }, [userId, attempt]);
+
+  const retry = () => {
+    setLoad({ state: "loading" });
+    setAttempt((count) => count + 1);
+  };
+
+  return (
+    <>
+      <Surveys load={load} onRetry={retry} />
+      <Kits load={load} />
+    </>
+  );
+}
+
 /** How the reader left their account from this page. */
 type Left = "deleted" | "signed-out";
 
@@ -144,8 +222,8 @@ function Farewell({ left }: { left: Left }) {
   return (
     <p className="page-notice" ref={focus} tabIndex={-1} role="status">
       {left === "deleted"
-        ? "Your account and the surveys saved to it are deleted, and their share links no longer work."
-        : "You're signed out. Your surveys stay saved to your account."}
+        ? "Your account, the surveys saved to it and their launch kits are deleted, and their links no longer work."
+        : "You're signed out. Your surveys and their kits stay saved to your account."}
     </p>
   );
 }
@@ -168,7 +246,7 @@ function AccountSection({ user, onLeft }: { user: User; onLeft: (how: Left) => v
 
   return (
     <section className="pg-sec" aria-labelledby="places-account">
-      <SectionHead id="places-account" no="02" title="Your account" note="What Walk-in keeps about you, and how to remove it." />
+      <SectionHead id="places-account" no="03" title="Your account" note="What Walk-in keeps about you, and how to remove it." />
       <div className="account-card">
         <div className="account-id">
           <Avatar user={user} className="avatar-large" />
@@ -179,7 +257,7 @@ function AccountSection({ user, onLeft }: { user: User; onLeft: (how: Left) => v
         </div>
         <p className="account-keeps">
           Walk-in keeps your account id, email, name and picture link, only to show you&apos;re signed in and to list your
-          surveys here. Nothing about you is sent to Qloo or the AI providers.{" "}
+          surveys and their kits here. Nothing about you is sent to Qloo or the AI providers.{" "}
           <Link className="text-link" href={PRIVACY_URL}>
             How Walk-in handles your data
           </Link>
@@ -234,14 +312,14 @@ function AccountSection({ user, onLeft }: { user: User; onLeft: (how: Left) => v
           setAsking(false);
         }}
       >
-        <p>Deletes your account and the surveys saved to it; their share links stop working.</p>
+        <p>Deletes your account, the surveys saved to it and their launch kits; their links stop working.</p>
         <p>This can&apos;t be undone.</p>
       </ConfirmDialog>
     </section>
   );
 }
 
-/** My places: the signed-in user's surveys and account, or the ways to sign in. */
+/** My places: the signed-in user's surveys, their launch kits and the account, or the ways to sign in. */
 export function PlacesPage() {
   const { phase, user } = useSession();
   const { note } = useEngine();
@@ -263,13 +341,13 @@ export function PlacesPage() {
         titleRef={titleRef}
         standfirst={
           user
-            ? `Signed in as ${user.email}. Your surveys, saved to your account and open on any device.`
-            : "Your surveys, saved to your account and open on any device."
+            ? `Signed in as ${user.email}. Your surveys and their launch kits, saved to your account and open on any device.`
+            : "Your surveys and their launch kits, saved to your account and open on any device."
         }
       />
       {user ? (
         <>
-          <Surveys key={user.id} userId={user.id} />
+          <Saved key={user.id} userId={user.id} />
           <AccountSection user={user} onLeft={setLeft} />
         </>
       ) : phase === "loading" ? (

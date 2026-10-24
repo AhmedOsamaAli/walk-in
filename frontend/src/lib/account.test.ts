@@ -18,7 +18,7 @@ describe("account helpers", () => {
   });
 
   it("says what went wrong in plain words", () => {
-    expect(plainError(new ApiError("That Google sign-in has expired.", 400, null, true))).toBe("That Google sign-in has expired.");
+    expect(plainError(new ApiError("That Google sign-in has expired.", 400, true))).toBe("That Google sign-in has expired.");
     expect(plainError(new ApiError("Request failed (401).", 401))).toBe("You're signed out. Sign in and try again.");
     expect(plainError(new ApiError("Request failed (403).", 403))).toBe("The server refused this request. Reload the page and try again.");
     expect(plainError(new ApiError("Request failed (502).", 502))).toBe("Walk-in's server had a problem. Try again in a moment.");

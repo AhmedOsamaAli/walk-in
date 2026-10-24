@@ -1,6 +1,6 @@
 import type { Comparison, ImprovePayload, OfferDiff } from "../api/types";
 import { ExperiencePlanView } from "./ExperiencePlan";
-import { PlaceLink } from "./Price";
+import { PlaceLink } from "./PlaceLink";
 import { SectionHead } from "./SectionHead";
 
 const FAMILIES: readonly { key: string; label: string }[] = [
@@ -10,7 +10,6 @@ const FAMILIES: readonly { key: string; label: string }[] = [
   { key: "activities", label: "Activities" },
 ];
 
-const dollars = (level: number | null) => (level ? "$".repeat(level) : "Not listed");
 const rating = (value: number | null) => (value == null ? "Not listed" : value.toFixed(1));
 
 /** Day groups in the order the server wrote them, from the place's hours and then the peers'. */
@@ -102,21 +101,15 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
               <td>{rating(c.rating.place)}</td>
               <td>{rating(c.rating.peers)} median</td>
             </tr>
-            <tr>
-              <th scope="row">Price</th>
-              <td>{dollars(c.price.place)}</td>
-              <td>{dollars(c.price.peers)} median</td>
-            </tr>
             {c.peer_links?.some((peer) => peer.url) ? (
               <tr>
                 <th scope="row">Their menus</th>
-                <td className="versus-note">Check their prices against yours</td>
+                <td className="versus-note">Set their offer beside yours</td>
                 <td>
                   {c.peer_links.map((peer, index) => (
                     <span key={peer.name}>
                       {index ? ", " : null}
                       <PlaceLink name={peer.name} url={peer.url} kind={peer.link} />
-                      {peer.price_level ? <small className="mono"> {"$".repeat(peer.price_level)}</small> : null}
                     </span>
                   ))}
                 </td>

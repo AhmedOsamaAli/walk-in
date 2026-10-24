@@ -1,31 +1,62 @@
-import type { KitView } from "../api/commerce";
+import { useEffect, useMemo } from "react";
 import type { Kit } from "../api/kit";
-import { DOSSIER_TITLES, DossierBody, dossierContents, dossierGist } from "../components/kit/DossierView";
-import { WalkDrawing } from "../components/kit/WalkDrawing";
+import { DOSSIER_TITLES, DossierBody, dossierArea, dossierContents, dossierGist } from "../components/kit/DossierView";
+import { SiteMap } from "../components/kit/SiteMap";
 import { Link } from "../components/Link";
 import { useDocumentTitle, useFocusOnMount } from "../components/Page";
-import { dateText } from "../lib/commerce";
+import { dateText } from "../lib/account";
 import { fmtLat, fmtLon } from "../lib/format";
-import { kitUrl, PLACES_URL } from "../lib/routes";
-import { useKit } from "../state/kit";
-import { useSession } from "../state/session";
+import { reportPageCss } from "../lib/kit";
+import { reachText } from "../lib/launch";
+import { BRIEF_URL, kitUrl, PLACES_URL } from "../lib/routes";
+import { coverMapOf } from "../lib/sitemap";
+import { useKit, useKitNews } from "../state/kit";
 
-function Toolbar({ token, name }: { token: string; name: string | null }) {
+const NEWS = {
+  building: "The report is still being written. This page shows it as soon as the kit is ready.",
+  ready: "The report is ready.",
+  failed: "The kit could not be built, so there is no report yet.",
+};
+const UTC = { timeZone: "UTC" };
+
+/** The paper the report prints on, as a <style> in the head for as long as the report shows. */
+function usePaper(css: string | null): void {
+  useEffect(() => {
+    if (!css) return;
+    const style = document.createElement("style");
+    style.id = "report-paper";
+    style.textContent = css;
+    document.head.append(style);
+    return () => {
+      style.remove();
+    };
+  }, [css]);
+}
+
+/** Opens the print dialog once the typefaces have loaded, so the PDF is set in them rather than in a fallback. */
+function printReport(): void {
+  void document.fonts.ready.then(() => {
+    window.print();
+  });
+}
+
+function Toolbar({ token, title, printable }: { token: string; title: string; printable: boolean }) {
   return (
     <div className="dz-toolbar no-print">
       <Link className="ghost mono" href={kitUrl(token)}>
         <span aria-hidden="true">←</span> Back to the kit
       </Link>
-      <p className="dz-toolbar-title mono">{name ? `${name} · Decision dossier` : "Decision dossier"}</p>
-      <button
-        type="button"
-        className="ink-button"
-        onClick={() => {
-          window.print();
-        }}
-      >
-        Save as PDF
-      </button>
+      <p className="dz-toolbar-title mono">{title}</p>
+      {printable ? (
+        <div className="dz-toolbar-print">
+          <p className="dz-toolbar-hint" id="dz-print-hint">
+            Opens the print dialog: choose “Save as PDF”, on A4 or Letter.
+          </p>
+          <button type="button" className="ink-button" aria-describedby="dz-print-hint" onClick={printReport}>
+            Save as PDF
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -34,80 +65,105 @@ function Document({ kit, titleRef }: { kit: Kit; titleRef: (node: HTMLElement | 
   const { dossier } = kit;
   const cover = dossier.cover;
   const contents = dossierContents(dossier);
-  const walk = cover ? [`${cover.walk_minutes}-minute walk`, cover.walk_source, cover.area_km2 != null ? `${cover.area_km2} km²` : null, cover.reach_m ? `reaching ${cover.reach_m} m` : null] : [];
+  const area = dossierArea(dossier);
+  const map = useMemo(() => coverMapOf(cover), [cover]);
+  const catchment = cover
+    ? [
+        area,
+        cover.walk_source,
+        cover.area_km2 != null ? `${cover.area_km2} km²` : null,
+        cover.reach_m ? `reaching ${reachText(cover.reach_m)}` : null,
+      ]
+    : [];
   return (
     <article className="dz-doc" aria-labelledby="dz-title">
       <header className="dz-cover">
-        <p className="dz-kicker mono">Decision dossier{cover ? ` · ${cover.genre}` : ""}</p>
-        <h1 className="dz-name" id="dz-title" ref={titleRef} tabIndex={-1}>
-          {cover?.concept ?? kit.concept.name}
-        </h1>
-        {cover?.tagline ? <p className="dz-tagline">{cover.tagline}</p> : null}
-        <div className="dz-cover-grid">
-          {cover ? <WalkDrawing ring={cover.ring} site={[cover.lat, cover.lon]} minutes={cover.walk_minutes} /> : null}
+        <div className="dz-cover-page">
+          <p className="dz-kicker mono">
+            <b>Walk-in report</b>
+            {cover ? ` · ${cover.genre}` : ""}
+          </p>
+          <h1 className="dz-name" id="dz-title" ref={titleRef} tabIndex={-1}>
+            {cover?.concept ?? kit.concept.name}
+          </h1>
+          {cover?.tagline ? <p className="dz-tagline">{cover.tagline}</p> : null}
           {cover ? (
-            <dl className="dz-facts">
-              <div>
-                <dt className="mono">Site</dt>
-                <dd>
-                  {cover.site_label}
-                  <small className="mono">
-                    {fmtLat(cover.lat)} · {fmtLon(cover.lon)}
-                  </small>
-                </dd>
+            <>
+              <figure className="dz-map">
+                <SiteMap
+                  map={map}
+                  ring={cover.ring}
+                  site={[cover.lat, cover.lon]}
+                  area={area}
+                />
+              </figure>
+              <div className="dz-cover-grid">
+                <dl className="dz-facts">
+                  <div>
+                    <dt className="mono">Site</dt>
+                    <dd>
+                      {cover.site_label}
+                      <small className="mono">
+                        {fmtLat(cover.lat)} · {fmtLon(cover.lon)}
+                      </small>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="mono">Catchment</dt>
+                    <dd>{catchment.filter(Boolean).join(", ")}</dd>
+                  </div>
+                </dl>
+                <dl className="dz-facts">
+                  {cover.neighborhoods.length ? (
+                    <div>
+                      <dt className="mono">Neighborhoods</dt>
+                      <dd>{cover.neighborhoods.join(", ")}</dd>
+                    </div>
+                  ) : null}
+                  <div>
+                    <dt className="mono">Evidence</dt>
+                    <dd>Surveyed {dateText(cover.evidence_date, UTC)}</dd>
+                  </div>
+                  <div>
+                    <dt className="mono">Prepared</dt>
+                    <dd>{dateText(cover.prepared_date, UTC)}, with Walk-in</dd>
+                  </div>
+                </dl>
               </div>
-              <div>
-                <dt className="mono">Catchment</dt>
-                <dd>{walk.filter(Boolean).join(", ")}</dd>
-              </div>
-              {cover.neighborhoods.length ? (
-                <div>
-                  <dt className="mono">Neighborhoods</dt>
-                  <dd>{cover.neighborhoods.join(", ")}</dd>
-                </div>
-              ) : null}
-              <div>
-                <dt className="mono">Evidence</dt>
-                <dd>Surveyed {dateText(cover.evidence_date, { timeZone: "UTC" })}</dd>
-              </div>
-              <div>
-                <dt className="mono">Prepared</dt>
-                <dd>{dateText(cover.prepared_date, { timeZone: "UTC" })}, with Walk-in</dd>
-              </div>
-            </dl>
+            </>
+          ) : null}
+          {cover?.sources.length ? (
+            <div className="dz-sources">
+              <h2 className="dz-kicker mono">Sources</h2>
+              <ul>
+                {cover.sources.map((source) => (
+                  <li key={source.name}>
+                    <b>{source.name}</b>: {source.used_for}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {cover?.basis ? (
+            <p className="dz-basis">
+              <span className="mono">Basis</span> {cover.basis}
+            </p>
           ) : null}
         </div>
         <nav className="dz-contents" aria-label="Contents">
-          <p className="dz-kicker mono">Contents</p>
+          <h2 className="dz-kicker mono">Contents</h2>
           <ol>
             {contents.map(({ key, no, title }) => (
               <li key={key}>
                 <a href={`#dz-${key}`}>
-                  <span className="mono">{no}</span>
-                  <span>{title}</span>
+                  <span className="dz-no mono">{no}</span>
+                  <span className="dz-contents-title">{title}</span>
                   <small>{dossierGist(dossier, key)}</small>
                 </a>
               </li>
             ))}
           </ol>
         </nav>
-        {cover?.sources.length ? (
-          <div className="dz-sources">
-            <p className="dz-kicker mono">Sources</p>
-            <ul>
-              {cover.sources.map((source) => (
-                <li key={source.name}>
-                  <b>{source.name}</b>: {source.used_for}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {cover?.basis ? (
-          <p className="dz-basis">
-            <span className="mono">Basis</span> {cover.basis}
-          </p>
-        ) : null}
       </header>
       {contents.map(({ key, no }) => (
         <section className="dz-sec" id={`dz-${key}`} key={key} aria-labelledby={`dz-${key}-title`} data-section={key}>
@@ -118,69 +174,111 @@ function Document({ kit, titleRef }: { kit: Kit; titleRef: (node: HTMLElement | 
             </h2>
           </header>
           <div className="dz-doc-body">
-            <DossierBody dossier={dossier} part={key} level={2} />
+            <DossierBody dossier={dossier} part={key} level={2} map={map} />
           </div>
         </section>
       ))}
       <footer className="dz-end mono">
-        {kit.concept.name} · Decision dossier · Prepared with Walk-in
-        {cover ? ` on ${dateText(cover.prepared_date, { timeZone: "UTC" })} from evidence surveyed ${dateText(cover.evidence_date, { timeZone: "UTC" })}` : ""}.
-        Taste data by Qloo.
+        {kit.concept.name} · Walk-in report
+        {cover ? ` · Prepared ${dateText(cover.prepared_date, UTC)} from evidence surveyed ${dateText(cover.evidence_date, UTC)}` : ""}{" "}
+        · Taste data by Qloo
       </footer>
     </article>
   );
 }
 
-function Waiting({ view, message, titleRef }: { view: KitView | null; message: string; titleRef: (node: HTMLElement | null) => void }) {
+interface WaitingProps {
+  token: string;
+  message: string;
+  /** Whether the kit exists, so its page is worth opening. */
+  found: boolean;
+  titleRef: (node: HTMLElement | null) => void;
+  onRetry?: () => void;
+}
+
+function Waiting({ token, message, found, titleRef, onRetry }: WaitingProps) {
   return (
-    <div className="dz-wait" role="status">
+    <div className="dz-wait">
       <h1 className="dz-kicker mono" ref={titleRef} tabIndex={-1}>
-        Decision dossier
+        Walk-in report
       </h1>
       <p className="dz-wait-text">{message}</p>
-      {view ? (
-        <Link className="ghost mono" href={kitUrl(view.token)}>
-          Open the kit
-        </Link>
-      ) : (
-        <Link className="ghost mono" href={PLACES_URL}>
-          My places
-        </Link>
-      )}
+      <div className="dz-wait-links">
+        {onRetry ? (
+          <button type="button" className="ink-button" onClick={onRetry}>
+            Try again
+          </button>
+        ) : null}
+        {found ? (
+          <Link className={onRetry ? "ghost mono" : "ink-button"} href={kitUrl(token)}>
+            Open the kit
+          </Link>
+        ) : (
+          <>
+            <Link className="ink-button" href={BRIEF_URL}>
+              Survey a storefront
+            </Link>
+            <Link className="ghost mono" href={PLACES_URL}>
+              My places
+            </Link>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-/** The dossier as a document: read on screen, printed or saved as a PDF with the page's print styles. */
+/** The kit's report as a document: read on screen, printed, or saved as a PDF with the page's print styles. */
 export function DossierPage({ token }: { token: string }) {
-  const { user } = useSession();
-  const { load } = useKit(token, user?.id ?? null);
+  const { load, restart } = useKit(token);
   const titleRef = useFocusOnMount();
-  const waitRef = useFocusOnMount();
   const view = load.state === "shown" ? load.view : null;
   const kit = view?.status === "ready" ? view.kit : null;
-  useDocumentTitle(kit ? `${kit.concept.name} dossier` : "Dossier");
+  const news = useKitNews(view?.status ?? null, NEWS);
+  const prepared = kit?.dossier.cover ? dateText(kit.dossier.cover.prepared_date, UTC) : null;
+  usePaper(
+    kit ? reportPageCss(kit.concept.name, `Prepared with Walk-in${prepared ? ` on ${prepared}` : ""} · Taste data by Qloo`) : null,
+  );
+  useDocumentTitle(kit ? `${kit.concept.name} report` : "Report");
 
   let body;
   if (kit) body = <Document kit={kit} titleRef={titleRef} />;
-  else if (load.state === "loading") body = <div className="dz-wait sk" aria-busy="true" />;
-  else {
+  else if (load.state === "loading") body = <div className="dz-wait sk" aria-busy="true" aria-label="Loading the report" />;
+  else if (load.state === "missing") {
+    body = (
+      <Waiting
+        token={token}
+        found={false}
+        titleRef={titleRef}
+        message="This report's link isn't valid, or its kit was deleted with its survey."
+      />
+    );
+  } else if (load.state === "failed") {
+    body = <Waiting token={token} found titleRef={titleRef} message={load.message} onRetry={restart} />;
+  } else {
     const message =
-      load.state === "missing"
-        ? "This dossier's link isn't valid, or its kit is no longer available."
-        : load.state === "failed"
-          ? load.message
-          : view?.status === "building"
-            ? "The dossier is still being written. This page shows it as soon as the kit is ready."
-            : view?.status === "refunded"
-              ? "This kit was refunded, so its dossier is closed."
-              : (view?.error ?? "The kit could not be built, so there is no dossier yet.");
-    body = <Waiting view={view} message={message} titleRef={waitRef} />;
+      view?.status === "building"
+        ? (load.stalled ?? NEWS.building)
+        : view?.status === "ready"
+          ? "The kit is ready but came without its report. Load it again."
+          : `${view?.error ?? "The kit could not be built."} Open the kit to build it again.`;
+    body = (
+      <Waiting
+        token={token}
+        found
+        titleRef={titleRef}
+        message={message}
+        onRetry={view?.status === "ready" || load.stalled ? restart : undefined}
+      />
+    );
   }
 
   return (
     <main className="page dossier-page" id="main">
-      <Toolbar token={token} name={kit?.concept.name ?? view?.name ?? null} />
+      <p className="sr-only" role="status" aria-live="polite">
+        {news}
+      </p>
+      <Toolbar token={token} title={kit ? `${kit.concept.name} · Walk-in report` : "Walk-in report"} printable={kit !== null} />
       {body}
     </main>
   );

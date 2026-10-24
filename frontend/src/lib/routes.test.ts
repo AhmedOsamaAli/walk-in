@@ -1,18 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  dossierUrl,
-  isPage,
-  isPaymentRoute,
-  kitUrl,
-  pageUrl,
-  parseRoute,
-  pledgeUrl,
-  PLACES_URL,
-  PRIVACY_URL,
-  samePage,
-  surveyUrl,
-  type PageRoute,
-} from "./routes";
+import { dossierUrl, isPage, kitUrl, pageUrl, parseRoute, PLACES_URL, PRIVACY_URL, samePage, surveyUrl } from "./routes";
 
 describe("routes", () => {
   it("reads a survey's id and its open design sheet", () => {
@@ -39,6 +26,17 @@ describe("routes", () => {
     expect(isPage({ page: "survey", id: "r1", sheet: null })).toBe(false);
   });
 
+  it("reads a launch kit and its report by the kit's token, whatever the query", () => {
+    const token = "Zq3_x-9KpL0aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV";
+    expect(parseRoute(`/k/${token}`, "")).toEqual({ page: "kit", token });
+    expect(parseRoute(`/k/${token}/`, "?utm_source=poster&utm_medium=qr")).toEqual({ page: "kit", token });
+    expect(parseRoute(`/k/${token}/dossier`, "")).toEqual({ page: "dossier", token });
+    expect(parseRoute(`/k/${token}/dossier/`, "?sheet=1")).toEqual({ page: "dossier", token });
+    expect(parseRoute(`/k/${"a".repeat(64)}`, "")).toEqual({ page: "kit", token: "a".repeat(64) });
+    expect(isPage({ page: "kit", token })).toBe(true);
+    expect(isPage({ page: "dossier", token })).toBe(true);
+  });
+
   it("shows the brief for every other address", () => {
     for (const path of [
       "/",
@@ -55,16 +53,20 @@ describe("routes", () => {
       "/k",
       "/k/",
       "/k/a.b",
-      "/k/abc/print",
-      "/k/abc/dossier/x",
-      "/p",
-      "/p/",
-      "/p/a/b",
+      "/k/a%20b",
+      "/k/tok_1/extra",
+      "/k/tok_1/dossier/extra",
+      "/k/tok_1/report",
+      "/k//dossier",
+      "/kits/tok_1",
+      "/p/c4f1e2",
       "/elsewhere",
     ]) {
       expect(parseRoute(path, "?sheet=1")).toEqual({ page: "brief" });
     }
     expect(parseRoute(`/s/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
+    expect(parseRoute(`/k/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
+    expect(parseRoute(`/k/${"a".repeat(65)}/dossier`, "")).toEqual({ page: "brief" });
   });
 
   it("builds a survey's address, with the open sheet, and reads it back", () => {
@@ -87,54 +89,26 @@ describe("routes", () => {
     expect(samePage({ page: "privacy" }, { page: "privacy" })).toBe(true);
     expect(samePage({ page: "places" }, { page: "privacy" })).toBe(false);
   });
-});
 
-// Payments only: these leave with the payment UI.
-describe("payment routes", () => {
-  it("reads the kit, dossier and pledge pages", () => {
-    const token = "Zk3_q9-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
-    expect(parseRoute(`/k/${token}`, "")).toEqual({ page: "kit", token });
-    expect(parseRoute(`/k/${token}/`, "?utm_source=poster")).toEqual({ page: "kit", token });
-    expect(parseRoute(`/k/${token}/dossier`, "")).toEqual({ page: "dossier", token });
-    expect(parseRoute(`/k/${token}/dossier/`, "")).toEqual({ page: "dossier", token });
-    expect(parseRoute("/p/c4f1e2", "")).toEqual({ page: "pledge", id: "c4f1e2", withdraw: null });
-    expect(parseRoute("/p/c4f1e2", "?utm_source=poster&utm_medium=qr")).toEqual({ page: "pledge", id: "c4f1e2", withdraw: null });
-    expect(parseRoute("/p/c4f1e2", "?withdraw=w_T0k-en")).toEqual({ page: "pledge", id: "c4f1e2", withdraw: "w_T0k-en" });
-    expect(parseRoute(`/p/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
-    expect(parseRoute(`/k/${"a".repeat(129)}`, "")).toEqual({ page: "brief" });
-  });
-
-  it("drops a withdraw token that is not one", () => {
-    for (const search of ["?withdraw=", "?withdraw=a%20b", "?withdraw=a.b", `?withdraw=${"w".repeat(129)}`]) {
-      expect(parseRoute("/p/c4f1e2", search)).toEqual({ page: "pledge", id: "c4f1e2", withdraw: null });
-    }
-  });
-
-  it("builds every payment page's address and reads it back", () => {
-    const pages: PageRoute[] = [
-      { page: "kit", token: "tok_1" },
-      { page: "dossier", token: "tok_1" },
-      { page: "pledge", id: "c1", withdraw: null },
-      { page: "pledge", id: "c1", withdraw: "w-1" },
-    ];
-    for (const route of pages) {
-      const url = new URL(pageUrl(route), "https://walk-in.example");
-      const read = parseRoute(url.pathname, url.search);
-      expect(read).toEqual(route);
-      expect(isPage(read) && isPaymentRoute(read)).toBe(true);
-    }
+  it("builds a kit's and its report's addresses and reads them back", () => {
     expect(kitUrl("tok_1")).toBe("/k/tok_1");
     expect(dossierUrl("tok_1")).toBe("/k/tok_1/dossier");
-    expect(pledgeUrl("c1", "w-1")).toBe("/p/c1?withdraw=w-1");
-    expect(isPaymentRoute({ page: "places" })).toBe(false);
+    expect(pageUrl({ page: "kit", token: "tok_1" })).toBe("/k/tok_1");
+    expect(pageUrl({ page: "dossier", token: "tok_1" })).toBe("/k/tok_1/dossier");
+    for (const route of [
+      { page: "kit", token: "tok_1" },
+      { page: "dossier", token: "A-b_9" },
+    ] as const) {
+      const url = new URL(pageUrl(route), "https://walk-in.example");
+      expect(parseRoute(url.pathname, url.search)).toEqual(route);
+    }
   });
 
-  it("tells a payment page from another, whatever its query", () => {
-    expect(samePage({ page: "pledge", id: "c1", withdraw: "w" }, { page: "pledge", id: "c1", withdraw: null })).toBe(true);
-    expect(samePage({ page: "pledge", id: "c1", withdraw: null }, { page: "pledge", id: "c2", withdraw: null })).toBe(false);
+  it("tells one kit's pages from another's, so Back and Forward between them change the page", () => {
     expect(samePage({ page: "kit", token: "a" }, { page: "kit", token: "a" })).toBe(true);
-    expect(samePage({ page: "kit", token: "a" }, { page: "dossier", token: "a" })).toBe(false);
     expect(samePage({ page: "kit", token: "a" }, { page: "kit", token: "b" })).toBe(false);
-    expect(samePage({ page: "places" }, { page: "kit", token: "a" })).toBe(false);
+    expect(samePage({ page: "kit", token: "a" }, { page: "dossier", token: "a" })).toBe(false);
+    expect(samePage({ page: "dossier", token: "a" }, { page: "dossier", token: "a" })).toBe(true);
+    expect(samePage({ page: "kit", token: "a" }, { page: "places" })).toBe(false);
   });
 });

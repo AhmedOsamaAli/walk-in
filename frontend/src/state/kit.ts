@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api/client";
-import { commerce, type KitView } from "../api/commerce";
-import { plainError } from "../lib/commerce";
+import { kits, type KitStatus, type KitView } from "../api/kit";
+import { plainError } from "../lib/account";
 
 export const KIT_POLL_MS = 2000;
 /** Polls that fail in a row before the page stops asking and says so. */
@@ -69,11 +69,8 @@ export type KitLoad =
   | { state: "missing" }
   | { state: "failed"; message: string };
 
-/**
- * A kit by its token, followed every two seconds while it is being built. `restart` follows it again (after a retry);
- * `replace` shows a copy the page already has (after a refund).
- */
-export function useKit(token: string, signedIn: string | null) {
+/** A kit by its token, followed every two seconds while it is being built; `restart` follows it again (after a retry). */
+export function useKit(token: string) {
   const [load, setLoad] = useState<{ token: string; load: KitLoad }>({ token, load: { state: "loading" } });
   const [run, setRun] = useState(0);
 
@@ -85,7 +82,7 @@ export function useKit(token: string, signedIn: string | null) {
     void (async () => {
       let view: KitView;
       try {
-        view = await commerce.kit(token, abort.signal);
+        view = await kits.get(token, abort.signal);
       } catch (error) {
         if (abort.signal.aborted) return;
         show(error instanceof ApiError && error.status === 404 ? { state: "missing" } : { state: "failed", message: plainError(error, "The kit could not be loaded.") });
@@ -94,7 +91,7 @@ export function useKit(token: string, signedIn: string | null) {
       show({ state: "shown", view, stalled: null });
       if (view.status !== "building") return;
       await followKit({
-        load: () => commerce.kit(token, abort.signal),
+        load: () => kits.get(token, abort.signal),
         wait: () => pause(KIT_POLL_MS, abort.signal),
         cancelled: () => abort.signal.aborted,
         update: (next) => {
@@ -109,19 +106,35 @@ export function useKit(token: string, signedIn: string | null) {
     return () => {
       abort.abort();
     };
-    // Signing in or out changes whether the reader owns the kit, so it is read again.
-  }, [token, run, signedIn]);
+  }, [token, run]);
 
   const restart = useCallback(() => {
     setRun((count) => count + 1);
   }, []);
 
-  const replace = useCallback(
-    (view: KitView) => {
-      setLoad({ token, load: { state: "shown", view, stalled: null } });
-    },
-    [token],
-  );
+  return { load: load.token === token ? load.load : ({ state: "loading" } as const), restart };
+}
 
-  return { load: load.token === token ? load.load : ({ state: "loading" } as const), restart, replace };
+/** What a page says aloud about its kit: that it is being built, then that it is ready or could not be built. */
+export interface KitWords {
+  building: string;
+  ready: string;
+  failed: string;
+}
+
+/**
+ * The news in a change of the kit's status, for a live region: a build starting, and how a build ended. A kit that is
+ * already ready or failed when the page opens is news to nobody: the page's title says it.
+ */
+export function kitNews(before: KitStatus | null, now: KitStatus | null, words: KitWords): string {
+  if (now === null || now === before) return "";
+  if (now === "building") return words.building;
+  return before === "building" ? words[now] : "";
+}
+
+/** The latest news about the kit's status, kept until the status changes again. */
+export function useKitNews(status: KitStatus | null, words: KitWords): string {
+  const [news, setNews] = useState<{ status: KitStatus | null; text: string }>({ status, text: "" });
+  if (news.status !== status) setNews({ status, text: kitNews(news.status, status, words) });
+  return news.text;
 }

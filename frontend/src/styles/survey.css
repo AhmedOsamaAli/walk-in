@@ -185,6 +185,8 @@
 .pips, .dots { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; min-height: 12px; }
 .pips i { width: 9px; height: 9px; background: var(--ink); }
 .pips i.more { width: auto; height: auto; background: none; font: 600 11px/1 var(--f-mono); }
+/* Places only OpenStreetMap shows inside the walk. */
+.pips i.osm { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
 .dots { gap: 4px; }
 .dots i { width: 10px; height: 10px; border: 1.5px solid var(--blue); border-radius: 50%; }
 .dots i.on { background: var(--blue); }
@@ -205,6 +207,16 @@
 .mini .n { font-weight: 500; line-height: 1.25; }
 .mini .s { font-size: 12.5px; color: var(--text-4); }
 .mini .km { font: 500 11px var(--f-mono); color: var(--blue); }
+/* ---------- The OpenStreetMap cross-check, under the competitors (GapItem.tsx) ---------- */
+.osm-check { margin-top: 12px; padding: 10px 12px; border: 1.5px dashed var(--edge); border-radius: 8px; }
+.osm-check.unchecked { padding: 0; border: 0; font-size: 10.5px; color: var(--ash); }
+.osm-also { font-size: 13.5px; line-height: 1.5; color: var(--text-2); }
+.osm-also > .mono:first-child { font-size: 10.5px; color: var(--text-4); }
+p.osm-also.mono { font-size: 10.5px; line-height: 1.5; color: var(--text-4); }
+.osm-why { color: var(--text-4); }
+.osm-credit { margin-top: 6px; font-size: 9.5px; color: var(--text-4); text-transform: none; letter-spacing: .02em; }
+.osm-credit a { color: inherit; text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 2px; }
+.osm-credit a:hover { color: var(--blue); }
 
 @container sheet (min-width: 640px) {
   .meter { grid-template-columns: 230px minmax(0, 1fr); gap: 12px; align-items: center; }
@@ -269,6 +281,48 @@
   border: 1px dashed var(--on-yellow); border-radius: var(--r-m); background: var(--marker);
   font-size: 15px; line-height: 1.45; color: var(--ink);
 }
+
+/* The wild card: two things people here love, combined. Untested, so never ranked: a dashed edge, and a stamp where a
+   ranked card has its score. */
+.poster.wild { border-style: dashed; }
+.poster .stamp.untested { align-self: center; margin: 4px 0; padding: 7px 12px 6px; font-size: 13px; color: var(--ink); border-style: dashed; }
+.poster-pair { display: grid; gap: 8px; }
+.poster-combines { font-size: 18px; line-height: 1.3; }
+.poster-combines .mono { margin-right: 4px; font-size: 10.5px; color: var(--text-4); }
+.poster-combines b { font-weight: 500; }
+.poster-loves { display: grid; gap: 6px; max-width: 66ch; }
+.poster-loves li { position: relative; padding-left: 18px; font-size: 14px; line-height: 1.45; color: var(--text-2); }
+.poster-loves li::before {
+  content: ""; position: absolute; left: 1px; top: .5em;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--blue-fill);
+}
+.poster-loves b { font-weight: 500; color: var(--ink); }
+.poster-caution { padding: 10px 14px; border: 1px dashed var(--edge); border-radius: 12px; }
+/* How the concept keeps each of the owner's rules. */
+.poster-rules ul { display: grid; gap: 4px; }
+.poster-rules li { position: relative; padding-left: 20px; }
+.poster-rules li::before { content: "\2713" / ""; position: absolute; left: 1px; top: 0; font: 600 12px/1.6 var(--f-mono); }
+
+/* ---------- The owner's rules, and what was dropped or changed to keep them, above the cards ---------- */
+.kept {
+  display: grid; gap: 14px; margin: -6px 0 22px; padding: 16px 18px 18px;
+  background: var(--card); border: 1px solid var(--edge); border-radius: var(--r-m);
+}
+.kept-part + .kept-part { padding-top: 14px; border-top: var(--hair); }
+.kept-label { display: flex; align-items: center; gap: 8px; margin: 0 0 9px; font-size: 10.5px; color: var(--text-4); }
+.kept-rules { display: flex; flex-wrap: wrap; gap: 6px; }
+.kept-rules li { padding: 4px 12px 5px; border: 1px solid var(--ink); border-radius: 999px; font-size: 13.5px; font-weight: 500; line-height: 1.3; }
+.kept-how { margin-top: 9px; font-size: 14px; line-height: 1.45; color: var(--text-3); }
+.kept-notes { display: grid; gap: 7px; }
+.kept-notes li { position: relative; max-width: 72ch; padding-left: 16px; font-size: 14.5px; line-height: 1.45; color: var(--text-2); }
+.kept-notes li::before { content: "\2013" / ""; position: absolute; left: 0; color: var(--text-4); }
+details.kept-changes summary { width: max-content; max-width: 100%; margin: 0; cursor: pointer; list-style: none; }
+details.kept-changes summary::-webkit-details-marker { display: none; }
+details.kept-changes summary::after { content: "+" / ""; font-size: 14px; line-height: 1; transition: transform .4s var(--ease); }
+details.kept-changes[open] summary { margin-bottom: 9px; }
+details.kept-changes[open] summary::after { transform: rotate(45deg); }
+details.kept-changes summary:hover { color: var(--ink); }
+.kept-count { padding: 1px 7px 0; border: 1px solid currentColor; border-radius: 999px; font-variant-numeric: tabular-nums; }
 .without { margin-top: 22px; padding: 20px 22px; border: 1px dashed var(--edge); border-radius: var(--r-l); color: var(--text-5); }
 .without .label { margin: 0 0 12px; color: var(--text-5); }
 .without li { font: italic 380 21px/1.35 var(--f-serif); }
@@ -282,6 +336,9 @@
   .poster.p0 .poster-line, .poster.p0 .poster-why { max-width: 68ch; }
   .poster:not(.p0) .poster-head { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .poster:not(.p0) .poster-score { font-size: 72px; }
+  /* The wild card takes a row of its own when the ranked cards above it fill theirs. */
+  .poster:is(.p0, .p2) + .poster.wild { grid-column: 1 / -1; }
+  .poster.wild .poster-head { justify-items: start; }
 }
 @container sheet (max-width: 440px) {
   .poster { padding: 20px 18px 18px; }
@@ -311,6 +368,8 @@
   width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--bone);
   filter: var(--img-filter); mix-blend-mode: var(--img-blend); transition: filter .5s;
 }
+/* No photo: the name's initials, never an empty circle. */
+.names .ph { display: grid; place-items: center; font: 600 11.5px/1 var(--f-mono); letter-spacing: .04em; color: var(--text-3); }
 .names li:hover img { filter: none; }
 .names .nm { font-size: 14.5px; font-weight: 500; line-height: 1.25; }
 .names .muted .nm { grid-column: 2 / -1; font-weight: 400; }

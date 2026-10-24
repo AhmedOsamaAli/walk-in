@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { KitPoster } from "../../api/kit";
-import { shortLink } from "../../lib/kit";
-import type { Landing } from "./TrackedLinks";
+import { LINK_KINDS, shortLink } from "../../lib/kit";
+import { OWN_LINK_ID, type Landing } from "./TrackedLinks";
 import { PosterArt } from "./PosterArt";
 
 /** "golden-hour-poster.svg". */
@@ -37,21 +37,41 @@ interface PosterSectionProps {
   landing: Landing;
 }
 
-/** The poster on screen, printed on its own (the page's print styles hide everything else), or saved as an SVG file. */
+/** Takes the owner to the field for their link, below, and puts the cursor in it. */
+function toLinkField(event: MouseEvent<HTMLAnchorElement>): void {
+  const field = document.getElementById(OWN_LINK_ID);
+  if (!field) return;
+  event.preventDefault();
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  field.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+  field.focus({ preventScroll: true });
+}
+
+/**
+ * The poster on screen, printed on its own (the page's print styles hide everything else), or saved as an SVG file. Its
+ * QR code needs a page of the owner's to send a passer-by to: without one, the poster has none and asks for the link.
+ */
 export function PosterSection({ poster, link, landing }: PosterSectionProps) {
   const svg = useRef<SVGSVGElement>(null);
   const [printing, setPrinting] = useState(false);
+  const own = landing.kind === "own" ? landing : null;
+  const code = own ? link : null;
 
   useEffect(() => {
     if (!printing) return;
     const root = document.documentElement;
     root.dataset.print = "poster";
+    let live = true;
     const done = () => {
       setPrinting(false);
     };
     window.addEventListener("afterprint", done);
-    window.print();
+    // The print copy is set in the page's typefaces: wait for them, or the sheet prints in a fallback.
+    void document.fonts.ready.then(() => {
+      if (live) window.print();
+    });
     return () => {
+      live = false;
       window.removeEventListener("afterprint", done);
       delete root.dataset.print;
     };
@@ -60,30 +80,45 @@ export function PosterSection({ poster, link, landing }: PosterSectionProps) {
   return (
     <div className="poster-section">
       <figure className="poster-frame">
-        <PosterArt poster={poster} link={link} svgRef={svg} />
+        <PosterArt poster={poster} link={code} svgRef={svg} />
       </figure>
       <div className="poster-side">
+        {own ? null : (
+          <div className="poster-ask" role="note">
+            <p>
+              <b>No QR code yet.</b> A QR code needs somewhere useful to send a passer-by: your website, an Instagram or
+              Facebook page, a Google Maps listing or a WhatsApp link. Add yours and the poster carries one; until then it
+              prints without.
+            </p>
+            <a className="ghost mono" href={`#${OWN_LINK_ID}`} onClick={toLinkField}>
+              Add your link <span aria-hidden="true">↓</span>
+            </a>
+          </div>
+        )}
         <p className="poster-side-lead">
-          A sheet for the window, set from the kit&apos;s checked lines and drawn from the walk&apos;s real outline: the people who
+          A sheet for the window, set from the kit&apos;s checked lines and drawn on the streets around the door: the people who
           pass it are the people it is about.
         </p>
         <dl className="spec poster-spec">
+          {own && code ? (
+            <div>
+              <dt>QR code opens</dt>
+              <dd>
+                <span className="poster-link">{shortLink(code)}</span>
+                <small className="spec-basis">
+                  {`${LINK_KINDS[own.page].page.charAt(0).toUpperCase()}${LINK_KINDS[own.page].page.slice(1)}, tagged as the poster's channel.`}
+                </small>
+              </dd>
+            </div>
+          ) : null}
           <div>
-            <dt>QR code opens</dt>
+            <dt>Paper</dt>
             <dd>
-              {link ? <span className="poster-link">{shortLink(link)}</span> : "Nothing yet"}
+              {code ? "One page of A4 or US Letter, portrait, with the QR code about 4 cm wide." : "One page of A4 or US Letter, portrait."}
               <small className="spec-basis">
-                {landing.kind === "website"
-                  ? "Your website, tagged as the poster channel."
-                  : landing.kind === "campaign"
-                    ? "Your founding-supporter page, tagged as the poster channel."
-                    : "This concept in the survey, tagged as the poster channel. Add your website below to change it."}
+                {code ? "Print at 100% (the default scale) so the code scans from across the pavement." : "Print at 100% (the default scale)."}
               </small>
             </dd>
-          </div>
-          <div>
-            <dt>Size</dt>
-            <dd>A4 or US Letter, portrait. Print at 100% for a sharp QR code.</dd>
           </div>
         </dl>
         <div className="poster-actions">
@@ -91,7 +126,9 @@ export function PosterSection({ poster, link, landing }: PosterSectionProps) {
             type="button"
             className="ink-button"
             onClick={() => {
-              setPrinting(true);
+              // The print copy is already out when a browser never said the last print ended.
+              if (printing) window.print();
+              else setPrinting(true);
             }}
           >
             Print the poster
@@ -106,12 +143,14 @@ export function PosterSection({ poster, link, landing }: PosterSectionProps) {
             Download SVG
           </button>
         </div>
-        <p className="poster-tip mono">Print, then “Save as PDF”, keeps the page&apos;s typefaces; the SVG uses your own.</p>
+        <p className="poster-tip">
+          To keep a PDF, print it and choose “Save as PDF”: that keeps the page&apos;s typefaces, where the SVG uses your own.
+        </p>
       </div>
       {printing
         ? createPortal(
-            <div className="print-only print-poster">
-              <PosterArt poster={poster} link={link} />
+            <div className="print-only print-poster" aria-hidden="true">
+              <PosterArt poster={poster} link={code} />
             </div>,
             document.body,
           )

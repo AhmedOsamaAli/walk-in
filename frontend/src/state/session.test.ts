@@ -76,7 +76,7 @@ describe("session", () => {
 
   it("keeps the server's reason when a sign-in fails", async () => {
     const api = fakeApi({
-      signInGoogle: vi.fn(() => Promise.reject(new ApiError("That Google sign-in has expired.", 400, null, true))),
+      signInGoogle: vi.fn(() => Promise.reject(new ApiError("That Google sign-in has expired.", 400, true))),
     });
     const store = createSessionStore(api);
     await store.load();

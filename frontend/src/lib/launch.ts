@@ -28,3 +28,10 @@ export function hasLaunchPlan(plan: LaunchPlan | null | undefined): plan is Laun
   if (!plan) return false;
   return Boolean(plan.claims.length || plan.channels.length || plan.audience.crowd.length || audienceRows(plan.audience).length);
 }
+
+/** The plan's area in words, as the server names it ("30-minute drive"); plans made before drives were walks. */
+export const areaText = (where: Pick<LaunchPlan["where"], "label" | "minutes">): string =>
+  where.label ?? `${where.minutes}-minute walk`;
+
+/** How far the area reaches: "556 m", or "14.2 km" from a kilometre on. */
+export const reachText = (meters: number): string => (meters < 1000 ? `${meters} m` : `${(meters / 1000).toFixed(1)} km`);

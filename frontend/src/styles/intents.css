@@ -1,19 +1,78 @@
 /* ---------- What the owner wants: intents in the brief, the verdict, the moves, the experience plan ---------- */
 
-/* The hero's section strip: three intents set like a broadsheet's sections, the current one underlined in blue pen. */
-.intents { margin: 0 0 clamp(12px, 2.2vh, 20px); animation: fadeUp .9s var(--ease) .05s both; }
-.intents legend { float: left; margin-right: 16px; padding-top: 9px; }
-.intents legend b { font-weight: 500; color: var(--blue); }
-.intent-tabs { display: flex; flex-wrap: wrap; gap: 0 22px; border-bottom: var(--hair); }
-.intent-tabs .chip { margin-bottom: -1px; }
-.intent-tabs .chip span {
-  padding: 9px 0 8px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
-  font: 500 11.5px/1.2 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--text-4);
-  transition: color .3s, border-color .45s var(--ease);
+/* The three intents as option cards: calm, one chosen at a time, the chosen one drawn in ink with a check. */
+.intents { margin: 0 0 clamp(16px, 2.8vh, 26px); animation: fadeUp .9s var(--ease) .05s both; }
+.intents-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 16px; margin-bottom: 10px; }
+.intents-q { color: var(--text-4); }
+.how-toggle {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 2px;
+  color: var(--text-3); transition: color .3s;
 }
-.intent-tabs .chip:hover span { color: var(--ink); border-bottom-color: var(--edge); }
-.intent-tabs .chip input:checked + span { background: none; color: var(--ink); border-bottom-color: var(--blue-fill); }
-.intent-tabs .chip input:focus-visible + span { outline-offset: 4px; }
+.how-toggle:hover, .how-toggle[aria-expanded="true"] { color: var(--ink); }
+.how-sign { position: relative; width: 11px; height: 11px; }
+.how-sign::before, .how-sign::after {
+  content: ""; position: absolute; left: 0; top: 5px; width: 11px; height: 1.5px; background: currentColor;
+  transition: transform .4s var(--ease);
+}
+.how-sign::after { transform: rotate(90deg); }
+.how-toggle[aria-expanded="true"] .how-sign::after { transform: rotate(0deg); }
+
+.intent-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.intent-card {
+  position: relative;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "icon check" "title title" "does does";
+  align-content: start; row-gap: 6px;
+  padding: 14px 14px 15px;
+  background: var(--card); border: 1px solid var(--edge); border-radius: var(--r-m);
+  cursor: pointer;
+  transition: border-color .25s, background-color .25s, box-shadow .25s;
+}
+.intent-card input { position: absolute; opacity: 0; pointer-events: none; }
+.intent-icon {
+  grid-area: icon; width: 24px; height: 24px; margin-bottom: 4px;
+  fill: none; stroke: var(--text-3); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round;
+  transition: stroke .25s;
+}
+.intent-title { grid-area: title; font-size: 15.5px; font-weight: 500; line-height: 1.25; letter-spacing: -.005em; }
+.intent-does { grid-area: does; font-size: 13.5px; line-height: 1.42; color: var(--text-3); }
+/* The radio's own mark: an empty ring, filled with ink and a check once chosen. */
+.intent-check {
+  grid-area: check; display: grid; place-items: center; width: 22px; height: 22px;
+  border: 1.5px solid var(--edge); border-radius: 50%;
+  transition: background-color .25s, border-color .25s;
+}
+.intent-check svg { width: 16px; height: 16px; fill: none; stroke: var(--on-ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity .25s; }
+.intent-card:hover { border-color: var(--ink); }
+.intent-card[data-on] { background: var(--blue-wash); border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.intent-card[data-on] .intent-icon { stroke: var(--ink); }
+.intent-card[data-on] .intent-check { background: var(--ink); border-color: var(--ink); }
+.intent-card[data-on] .intent-check svg { opacity: 1; }
+.intent-card:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 3px; }
+@supports not selector(:has(*)) {
+  .intent-card:focus-within { outline: 2px solid var(--blue); outline-offset: 3px; }
+}
+
+/* How it works: three steps and what comes back, folded away until asked for. */
+.how {
+  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px 26px;
+  margin-bottom: 10px; padding: 16px 18px 17px;
+  background: var(--card); border: 1px solid var(--edge); border-radius: var(--r-m);
+  animation: fadeUp .45s var(--ease) both;
+}
+.how-steps { display: grid; gap: 9px; counter-reset: how; }
+.how-steps li { position: relative; padding-left: 30px; font-size: 14.5px; line-height: 1.42; color: var(--text-3); }
+.how-steps li::before {
+  content: counter(how); counter-increment: how;
+  position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 20px; height: 20px;
+  border: 1px solid var(--blue); border-radius: 50%;
+  font: 500 11px/1 var(--f-mono); color: var(--blue);
+}
+.how-steps b { font-weight: 500; color: var(--ink); }
+.how-get { padding-left: 22px; border-left: var(--hair); }
+.how-label { margin-bottom: 8px; color: var(--text-4); }
+.how-get ul { display: grid; gap: 7px; }
+.how-get li { position: relative; padding-left: 16px; font-size: 14.5px; line-height: 1.42; color: var(--text-2); }
+.how-get li::before { content: "\2013" / ""; position: absolute; left: 0; color: var(--text-4); }
 
 /* Text fields in the brief: paper wells, like the notes. */
 label.field > span { display: block; }
@@ -126,6 +185,7 @@ label.field > span { display: block; }
   grid-row: span 2; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--bone);
   filter: var(--img-filter); mix-blend-mode: var(--img-blend); transition: filter .5s;
 }
+.xp-card .ph { display: grid; place-items: center; font: 600 12px/1 var(--f-mono); letter-spacing: .04em; color: var(--text-3); }
 .xp-card:hover img { filter: none; }
 .xp-name { align-self: end; font-size: 14px; font-weight: 500; line-height: 1.22; overflow-wrap: anywhere; }
 .xp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; align-self: start; margin-top: 3px; font-size: 10px; color: var(--text-4); }
@@ -136,11 +196,24 @@ label.field > span { display: block; }
 
 .names .nm small { display: block; margin-top: 2px; font-size: 10px; font-weight: 500; color: var(--text-4); }
 
+@container sheet (max-width: 560px) {
+  /* Phones: the cards are compact rows, the icon, the title and the check on one line. Only the chosen card shows its
+     sentence, so the question and the search below stay on the first screen. */
+  .intent-cards { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .intent-card {
+    grid-template-columns: 22px minmax(0, 1fr) 22px; grid-template-areas: "icon title check" ". does .";
+    column-gap: 12px; row-gap: 0; align-items: center; min-height: 46px; padding: 10px 12px;
+  }
+  .intent-card[data-on] { row-gap: 2px; padding-bottom: 11px; }
+  .intent-icon { width: 22px; height: 22px; margin: 0; }
+  .intent-title { font-size: 15px; }
+  .intent-does { display: none; font-size: 13px; line-height: 1.38; }
+  .intent-card[data-on] .intent-does { display: block; animation: fade .3s ease both; }
+  .how { grid-template-columns: minmax(0, 1fr); padding: 14px 14px 15px; }
+  .how-get { padding: 12px 0 0; border-left: 0; border-top: var(--hair); }
+}
+
 @container sheet (max-width: 520px) {
-  .intents legend { margin-right: 0; }
-  .intents legend b { display: none; }
-  .intent-tabs { gap: 0 12px; }
-  .intent-tabs .chip span { font-size: 10.5px; letter-spacing: .04em; }
   .verdict-card { padding: 20px 18px; }
   .moves li { grid-template-columns: 36px minmax(0, 1fr); gap: 12px; padding: 16px 16px 16px 14px; }
   .move-no { font-size: 40px; }

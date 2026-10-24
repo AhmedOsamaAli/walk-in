@@ -12,8 +12,8 @@
 
 /* Sized by the viewport's width and height, so the search below it stays above the fold on short laptop screens. */
 .headline {
-  margin-bottom: clamp(14px, 2.6vh, 24px);
-  font: 400 clamp(38px, min(5.5vw, 8.6vh), 92px)/.98 var(--f-serif);
+  margin-bottom: clamp(14px, 2.4vh, 22px);
+  font: 400 clamp(36px, min(5vw, 7.4vh), 84px)/.98 var(--f-serif);
   letter-spacing: -.03em;
   text-wrap: balance;
 }
@@ -60,10 +60,37 @@
 .results [role="option"]:not(.empty):hover,
 .results [role="option"][aria-selected="true"] { background: var(--yellow); color: var(--on-yellow); }
 .results .empty { color: var(--ash); cursor: default; }
+/* The search sits above what follows it, the lede on phones, the brief and the examples, and the capsule above its own
+   hint: they fade in with their own layers, which would otherwise paint over the list of results. */
+.find { position: relative; z-index: 2; }
+.find .capsule { z-index: 1; }
 .hint { margin: 12px 0 0 24px; color: var(--ash); animation: fadeUp .9s var(--ease) .7s both; }
+/* "Try an example": a link in the hint's own words, with a taller target than its line. */
+.hint-link {
+  margin: -6px 0; padding: 6px 0;
+  letter-spacing: inherit; text-transform: inherit; color: var(--ink);
+  text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px;
+  transition: color .3s, text-decoration-color .3s;
+}
+.hint-link:hover { color: var(--blue); text-decoration-color: currentColor; }
+/* The hint names the map where it is: beside the sheet, or above it on narrower screens. */
+.when-stacked { display: none; }
+@media (max-width: 980px) {
+  .when-side { display: none; }
+  .when-stacked { display: inline; }
+}
+/* Words for the pointer in hand, "click" with a mouse or trackpad and "tap" on a touch screen: the brief, its How it
+   works, and the map's hint (SurveyMap.tsx). */
+.say-tap { display: none; }
+@media (pointer: coarse) {
+  .say-click { display: none; }
+  .say-tap { display: inline; }
+}
 
 /* ---------- The survey brief, revealed under the search ---------- */
+/* Above the examples under it, so the list of its place search covers them. */
 .brief-card {
+  position: relative; z-index: 1;
   display: grid; gap: 22px; margin-top: 26px; padding: 22px 22px 24px;
   background: var(--card); border: 1px solid var(--ink); border-radius: var(--r-l);
   box-shadow: var(--shadow-s);
@@ -94,7 +121,49 @@
 .chip input:checked + span { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
 .chip input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
 
-.notes summary { cursor: pointer; list-style: none; width: max-content; }
+/* ---------- How far customers come from: the way it is measured, its quick picks and "Other" ---------- */
+/* The way it is measured is one switch, drawn as a segmented pill so it reads apart from the picks under it. */
+.chips.seg {
+  display: inline-flex; flex-wrap: nowrap; gap: 0; max-width: 100%; padding: 3px;
+  border: 1px solid var(--edge); border-radius: 999px;
+}
+.seg .chip span { padding: 7px 18px; border-color: transparent; }
+.seg .chip:hover span { border-color: transparent; background: var(--bone); }
+.seg .chip input:checked + span { background: var(--ink); color: var(--on-ink); }
+.chips.reach { margin-top: 12px; }
+.reach .chip span { padding-inline: 14px; }
+/* "Other": a pill of the same size as the picks, dashed until a number in it wins over them. */
+.chip-other {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; min-height: 37px;
+  border: 1px dashed var(--edge); border-radius: 999px;
+  font-size: 14px; font-weight: 500; line-height: 1.2; cursor: text;
+  transition: background .3s var(--ease), color .3s, border-color .3s, box-shadow .35s var(--ease);
+}
+.chip-other:hover { border-color: var(--ink); }
+.chip-other input {
+  width: 3.4em; padding: 0; border: 0; outline: 0; background: transparent;
+  font: inherit; color: inherit;
+}
+@supports (field-sizing: content) {
+  .chip-other input { width: auto; min-width: 1.2em; field-sizing: content; }
+}
+.chip-other input::placeholder { color: var(--ash); opacity: 1; }
+.chip-other > span { color: var(--ash); transition: color .3s; }
+/* The unit follows a number, not the word "Other". */
+.chip-other input:placeholder-shown + span { display: none; }
+.chip-other:focus-within { border-style: solid; border-color: var(--ink); box-shadow: 0 0 0 4px var(--yellow); }
+.chip-other[data-on] { border-style: solid; border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
+.chip-other[data-on] > span { color: inherit; opacity: .75; }
+.chip-other[data-bad] { border-style: solid; border-color: var(--red); color: var(--red); }
+.area-problem { margin-top: 8px; color: var(--red); text-transform: none; letter-spacing: .01em; }
+/* What a big area suits, said under its note: the highlighter, as for what to look at first. */
+.area-hint {
+  max-width: 52ch; margin-top: 10px; padding: 9px 13px;
+  border-radius: 10px; background: var(--marker); color: var(--ink);
+  font-size: 14px; line-height: 1.42;
+}
+
+.notes summary { cursor: pointer; list-style: none; width: max-content; max-width: 100%; }
 .notes summary::-webkit-details-marker { display: none; }
 .notes summary:hover { color: var(--blue); }
 .notes textarea {
@@ -154,4 +223,6 @@
   .site-btn { grid-template-columns: 26px minmax(0, 1fr) 18px; }
   .site-btn .coords { display: none; }
   .brief-card { padding: 18px 16px 20px; }
+  /* Phones: the map above already takes a third of the screen, so the brief starts close under it. */
+  .brief { padding-top: 22px; }
 }

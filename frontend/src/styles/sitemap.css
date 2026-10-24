@@ -1,0 +1,133 @@
+/* The kit's maps (components/kit/SiteMap.tsx). The report's map takes its colors from here: the drafting table by day,
+   blueprint film by night, and light ink on paper whatever the screen's theme. The poster's map writes its own. */
+
+.site-map {
+  --sm-land: #f3f1ea;
+  --sm-beyond: #fbfaf6;
+  --sm-edge: #b9b6ab;
+  --sm-water: #c9dcf0;
+  --sm-park: #dfe8d3;
+  --sm-casing: #d3cfc4;
+  --sm-street: #ffffff;
+  --sm-walk: #0f68ea;
+  --sm-walk-fill: rgba(15, 104, 234, .09);
+  --sm-ink: #1d1d1f;
+  --sm-paper: #ffffff;
+  --sm-ash: #5f5f59;
+  --sm-yellow: #ffcb00;
+  --sm-on-yellow: #1d1d1f;
+  --sm-blue: #0f68ea;
+  --sm-on-blue: #ffffff;
+  display: grid;
+  gap: 10px;
+}
+:root[data-theme="dark"] .site-map {
+  --sm-land: #161d2d;
+  --sm-beyond: #10151f;
+  --sm-edge: #3e465e;
+  --sm-water: #1d3557;
+  --sm-park: #1a2a24;
+  --sm-casing: #0d111c;
+  --sm-street: #2c3650;
+  --sm-walk: #6ea2ff;
+  --sm-walk-fill: rgba(110, 162, 255, .12);
+  --sm-ink: #ecebe6;
+  --sm-paper: #141a29;
+  --sm-ash: #99a0b5;
+  --sm-yellow: #ffcb00;
+  --sm-on-yellow: #14161c;
+  --sm-blue: #2f6fe0;
+  --sm-on-blue: #ffffff;
+}
+
+/* The map on the report's cover, between the title and the facts. */
+.dz-map { margin-top: 30px; padding-top: 24px; border-top: var(--rule); }
+
+.sm-frame { position: relative; }
+.sm-svg { display: block; width: 100%; height: auto; border: var(--rule); border-radius: 12px; overflow: hidden; }
+.sm-paper { display: none; }
+.site-map text { font-family: var(--f-mono); }
+
+.sm-land { fill: var(--sm-land); }
+.sm-beyond { fill: var(--sm-beyond); }
+.sm-edge { fill: none; stroke: var(--sm-edge); stroke-width: .8; stroke-dasharray: 3 3; }
+.sm-water { fill: var(--sm-water); }
+.sm-park { fill: var(--sm-park); }
+.sm-casing { fill: none; stroke: var(--sm-casing); }
+.sm-street { fill: none; stroke: var(--sm-street); }
+.sm-walkFill { fill: var(--sm-walk-fill); }
+.sm-walkLine { fill: none; stroke: var(--sm-walk); stroke-width: 2.4; }
+.sm-cross { stroke: var(--sm-walk); stroke-width: 1; }
+.sm-siteFill { fill: var(--sm-blue); }
+.sm-siteRing { fill: var(--sm-paper); }
+.sm-tag { fill: var(--sm-blue); }
+.sm-tagText { fill: var(--sm-on-blue); font-weight: 500; }
+.sm-pinMain { fill: var(--sm-ink); stroke: var(--sm-paper); stroke-width: 1.2; }
+.sm-pinMainText { fill: var(--sm-paper); font-weight: 600; }
+.sm-pinSide { fill: var(--sm-paper); stroke: var(--sm-ink); stroke-width: 1.2; }
+.sm-pinSideText { fill: var(--sm-ink); font-weight: 600; }
+.sm-leader { stroke: var(--sm-ink); stroke-width: .8; }
+.sm-shaft { stroke: var(--sm-on-yellow); stroke-width: 1.5; }
+.sm-head { fill: var(--sm-on-yellow); }
+.sm-pill { fill: var(--sm-yellow); stroke: var(--sm-ink); stroke-width: .8; }
+.sm-pillText { fill: var(--sm-on-yellow); font-weight: 600; }
+.sm-spot { fill: var(--sm-yellow); stroke: var(--sm-ink); stroke-width: 1.2; }
+.sm-spotText { fill: var(--sm-on-yellow); font-weight: 600; }
+.sm-note { fill: var(--sm-ash); }
+.sm-scale { fill: var(--sm-ink); stroke: var(--sm-ink); }
+.sm-scaleText { fill: var(--sm-ink); font-weight: 500; }
+
+.site-map {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas: "map key" "caption caption";
+  align-items: start;
+  column-gap: 22px;
+}
+.sm-frame { grid-area: map; }
+.sm-key { grid-area: key; display: grid; align-content: start; gap: 14px; }
+.sm-caption { grid-area: caption; font: 400 17px/1.4 var(--f-serif); color: var(--ink); text-wrap: pretty; }
+.sm-key-part { display: grid; align-content: start; gap: 6px; }
+.sm-key-head { font-size: 10px; color: var(--text-4); }
+.sm-key-list { display: grid; gap: 4px; }
+.sm-key-list li { display: flex; align-items: baseline; gap: 7px; min-width: 0; font-size: 13px; line-height: 1.35; color: var(--text-2); }
+.sm-key-name { min-width: 0; overflow-wrap: anywhere; }
+.sm-key-more { font-size: 12px; line-height: 1.4; color: var(--text-4); }
+.sm-km { margin-left: auto; padding-left: 6px; font: 400 11px/1.35 var(--f-mono); color: var(--text-4); white-space: nowrap; }
+.sm-badge {
+  flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  border: 1.2px solid var(--sm-ink); background: var(--sm-paper); color: var(--sm-ink);
+  font: 600 9.5px/1 var(--f-mono); transform: translateY(3px);
+}
+.sm-badge-main { background: var(--sm-ink); color: var(--sm-paper); }
+.sm-badge-trip { background: var(--sm-yellow); color: var(--sm-on-yellow); }
+@container page (max-width: 640px) {
+  .site-map { grid-template-columns: minmax(0, 1fr); grid-template-areas: "map" "caption" "key"; }
+  .sm-key-list { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); column-gap: 14px; }
+  .sm-caption { font-size: 16px; }
+}
+@media print {
+  /* Light ink on white whatever the screen's theme, and the map laid out for the page rather than the screen: two
+     thirds of the text block for the map (480 units: 116 mm), the key beside it, the claim under both. */
+  :root .site-map, :root[data-theme="dark"] .site-map {
+    --sm-land: #f3f1ea; --sm-beyond: #fbfaf6; --sm-edge: #b9b6ab; --sm-water: #c9dcf0; --sm-park: #dfe8d3;
+    --sm-casing: #d3cfc4; --sm-street: #ffffff; --sm-walk: #0f68ea; --sm-walk-fill: rgba(15, 104, 234, .09);
+    --sm-ink: #1d1d1f; --sm-paper: #ffffff; --sm-ash: #5f5f59; --sm-yellow: #ffcb00; --sm-on-yellow: #1d1d1f;
+    --sm-blue: #0f68ea; --sm-on-blue: #ffffff;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); grid-template-areas: "map key" "caption caption";
+    gap: 2.6mm 5mm; break-inside: avoid;
+  }
+  .site-map, .site-map * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dz-map { margin-top: 5mm; padding-top: 4mm; border-top-width: .75pt; }
+  /* The map takes the room the cover's grid gave the walk's outline: the facts below it sit closer. */
+  .dz-map + .dz-cover-grid { margin-top: 5mm; padding-top: 4mm; }
+  .sm-screen { display: none; }
+  .sm-paper { display: block; border-width: .75pt; border-radius: 3mm; }
+  .sm-caption { font-size: 11pt; line-height: 1.35; color: #111111; }
+  .sm-key { gap: 3mm; }
+  .sm-key-part { gap: 1.4mm; }
+  .sm-key-head { font-size: 6.5pt; color: #44443f; }
+  .sm-key-list { grid-template-columns: minmax(0, 1fr); gap: .9mm; }
+  .sm-key-list li { gap: 1.6mm; font-size: 7.5pt; line-height: 1.3; color: #111111; }
+  .sm-key-more, .sm-km { font-size: 6.5pt; color: #44443f; }
+  .sm-badge { width: 3.4mm; height: 3.4mm; border-width: .6pt; font-size: 5.5pt; transform: translateY(.7mm); }
+}

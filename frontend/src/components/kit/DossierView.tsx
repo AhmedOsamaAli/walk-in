@@ -14,11 +14,15 @@ import type {
   DossierRoom,
   DossierTravel,
 } from "../../api/kit";
+import type { CoverMap } from "../../api/sitemap";
 import { cx } from "../../lib/css";
-import { distanceText, list, naturalList } from "../../lib/format";
-import { CLAIM_KINDS } from "../../lib/launch";
+import { distanceText, naturalList } from "../../lib/format";
+import { travelLetters } from "../../lib/kit";
+import { CLAIM_KINDS, areaText, reachText } from "../../lib/launch";
+import { unitText } from "../../lib/sheet";
+import { tableNumbers } from "../../lib/sitemap";
 import { HoursText } from "../Hours";
-import { PlaceLink, PriceAnchors, PriceLadder } from "../Price";
+import { PlaceLink } from "../PlaceLink";
 
 /** The sections after the cover, as the dossier titles them. */
 export const DOSSIER_TITLES: Record<DossierKey, string> = {
@@ -27,7 +31,7 @@ export const DOSSIER_TITLES: Record<DossierKey, string> = {
   alternatives: "The alternatives",
   competition: "The competition",
   travel: "Where customers go now",
-  offer: "Offer and prices",
+  offer: "The offer",
   room: "The room",
   experience: "The experience",
   launch: "The launch",
@@ -43,8 +47,20 @@ export function dossierContents(dossier: Dossier): { key: DossierKey; no: string
     .map((key, index) => ({ key, no: String(index + 1).padStart(2, "0"), title: DOSSIER_TITLES[key] }));
 }
 
+/** "1 place", "3 places". */
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** The survey's area in words, as the server names it ("30-minute drive"); kits made before drives were walks. */
+export function dossierArea(dossier: Dossier): string {
+  const cover = dossier.cover;
+  if (cover) return cover.area_label ?? `${cover.walk_minutes}-minute walk`;
+  const where = dossier.launch?.where;
+  return where ? areaText(where) : "area";
+}
+
 /** One line on what a section holds, for the contents. */
 export function dossierGist(dossier: Dossier, key: DossierKey): string {
+  const area = dossierArea(dossier);
   switch (key) {
     case "cover":
       return dossier.cover?.site_label ?? "";
@@ -53,31 +69,42 @@ export function dossierGist(dossier: Dossier, key: DossierKey): string {
       return decision ? `${decision.stamp}: ${decision.reason}` : "";
     }
     case "alternatives":
-      return `${dossier.alternatives?.items.length ?? 0} categories set side by side`;
+      return `${count(dossier.alternatives?.items.length ?? 0, "category", "categories")} set side by side`;
     case "competition": {
       const competition = dossier.competition;
-      return competition ? `${competition.count}${competition.capped ? "+" : ""} places of this kind inside the walk` : "";
+      if (!competition) return "";
+      return competition.capped
+        ? `${competition.count}+ places of this kind inside the ${area}`
+        : `${count(competition.count, "place", "places")} of this kind inside the ${area}`;
     }
     case "travel": {
       const travel = dossier.travel;
-      return travel ? `${travel.outside} of ${travel.of} loved places are outside the walk` : "";
+      return travel
+        ? `${travel.outside} of ${travel.of} loved places ${travel.outside === 1 ? "is" : "are"} outside the ${area}`
+        : "";
     }
     case "offer": {
       const offer = dossier.offer;
-      return offer ? `${offer.items.length} items people here love${offer.price.label ? `, priced at ${offer.price.label}` : ""}` : "";
+      if (!offer) return "";
+      const fresh = offer.items.filter((item) => item.new_here).length;
+      return `${count(offer.items.length, "thing", "things")} the places people here love are known for${fresh ? `, ${fresh} new to the block` : ""}`;
     }
-    case "room":
-      return dossier.room?.capacity ?? (dossier.room?.hours ? `Open ${dossier.room.hours}` : "The interior, the unit and the hours");
+    case "room": {
+      const room = dossier.room;
+      return room?.capacity ?? (room?.hours ? `Open ${room.hours}` : "The unit, what it holds and the hours");
+    }
     case "experience":
       return "What to play, screen and host";
     case "launch": {
       const launch = dossier.launch;
-      return launch ? `${launch.claims.length} claims the ads can make, ${launch.channels.length} channels` : "";
+      return launch
+        ? `${count(launch.claims.length, "claim", "claims")} the ads can make, ${count(launch.channels.length, "channel", "channels")}`
+        : "";
     }
     case "first_90_days":
-      return `${dossier.first_90_days?.steps.length ?? 0} steps, from before signing to day 60`;
+      return `${count(dossier.first_90_days?.steps.length ?? 0, "step", "steps")}, from before signing to day 60`;
     case "before_you_sign":
-      return `${dossier.before_you_sign?.questions.length ?? 0} questions for the landlord`;
+      return `${count(dossier.before_you_sign?.questions.length ?? 0, "question", "questions")} for the landlord`;
     case "method":
       return "How each number is measured, and where it stops";
   }
@@ -95,6 +122,26 @@ function Basis({ text }: { text: string | null | undefined }) {
     <p className="dz-basis">
       <span className="mono">Basis</span> {text}
     </p>
+  );
+}
+
+/** A place's mark on the cover map, before its name: its pin's number (filled when it competes in earnest) or its
+    trip's letter. A place the map leaves out keeps the room blank, so the names start level. */
+function Mark({ mark, main = false, trip = false }: { mark: number | string | null; main?: boolean; trip?: boolean }) {
+  if (mark === null) {
+    return (
+      <span className="dz-mark dz-mark-none" aria-hidden="true">
+        {"\u00a0"}
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className={cx("dz-mark", main && "dz-mark-main", trip && "dz-mark-trip")} aria-hidden="true">
+        {mark}
+      </span>
+      <span className="sr-only">{`${mark} on the cover map: `}</span>
+    </>
   );
 }
 
@@ -165,7 +212,7 @@ function Alternatives({ data }: { data: DossierAlternatives }) {
           </thead>
           <tbody>
             {data.items.map((item) => (
-              <tr key={item.genre} className={cx(item.chosen && "chosen")}>
+              <tr key={item.genre} className={cx(item.chosen && "dz-chosen")}>
                 <td className="mono">{item.position ?? "—"}</td>
                 <th scope="row">
                   {item.genre}
@@ -188,13 +235,15 @@ function Alternatives({ data }: { data: DossierAlternatives }) {
   );
 }
 
-function Competition({ data, level }: { data: DossierCompetition; level: Level }) {
+function Competition({ data, level, area, numbers }: { data: DossierCompetition; level: Level; area: string; numbers: (number | null)[] }) {
+  const numbered = numbers.some((n) => n !== null);
   return (
     <>
       <p className="dz-p">
         {data.count}
-        {data.capped ? "+" : ""} {data.count === 1 ? "place" : "places"} of this kind inside the walk
+        {data.capped ? "+" : ""} {data.count === 1 ? "place" : "places"} of this kind inside the {area}
         {data.places.some((place) => !place.main) ? "; the ones that compete in earnest come first" : ""}.
+        {numbered ? " The numbers match the cover map." : ""}
       </p>
       <div className="dz-table-wrap">
         <table className="dz-table">
@@ -202,20 +251,25 @@ function Competition({ data, level }: { data: DossierCompetition; level: Level }
             <tr>
               <th scope="col">Place</th>
               <th scope="col">Rating</th>
-              <th scope="col">Price</th>
               <th scope="col">Distance</th>
               <th scope="col">Known for</th>
               <th scope="col">What reviews hold against it</th>
             </tr>
           </thead>
           <tbody>
-            {data.places.map((place) => (
-              <tr key={place.name}>
+            {data.places.map((place, index) => (
+              <tr key={`${place.name}-${index}`}>
                 <th scope="row">
-                  <PlaceLink name={place.name} url={place.url} kind={place.link} />
+                  {numbered ? (
+                    <span className="dz-marked">
+                      <Mark mark={numbers[index] ?? null} main={place.main} />
+                      <PlaceLink name={place.name} url={place.url} kind={place.link} />
+                    </span>
+                  ) : (
+                    <PlaceLink name={place.name} url={place.url} kind={place.link} />
+                  )}
                 </th>
                 <td className="dz-num">{place.rating ?? "—"}</td>
-                <td className="mono">{place.price ?? "—"}</td>
                 <td className="mono">{distanceText(place.distance_m) || "—"}</td>
                 <td>{place.known_for.length ? place.known_for.join(", ") : "—"}</td>
                 <td>
@@ -256,20 +310,23 @@ function Competition({ data, level }: { data: DossierCompetition; level: Level }
   );
 }
 
-function Travel({ data }: { data: DossierTravel }) {
+function Travel({ data, area, letters }: { data: DossierTravel; area: string; letters: (string | null)[] }) {
+  const lettered = letters.some((letter) => letter !== null);
   return (
     <>
       <p className="dz-p">
-        {data.outside} of the {data.of} places of this kind that people here love are outside the walk
+        {data.outside} of the {data.of} places of this kind that people here love are outside the {area}
         {data.median_km != null ? `; the median one is ${data.median_km} km from the site` : ""}.
+        {lettered ? " The letters match the cover map." : ""}
       </p>
-      <ol className="dz-places">
-        {data.places.map((place) => (
-          <li key={place.name}>
+      <ol className={cx("dz-places", lettered && "dz-places-marked")}>
+        {data.places.map((place, index) => (
+          <li key={`${place.name}-${index}`}>
             <span className="dz-place-name">
+              {lettered ? <Mark mark={letters[index] ?? null} trip /> : null}
               <PlaceLink name={place.name} url={place.url} kind={place.link} />
             </span>
-            <span className="mono">{[place.km != null ? `${place.km} km` : null, place.price].filter(Boolean).join(" · ")}</span>
+            {place.km != null ? <span className="mono">{place.km} km</span> : null}
             {place.known_for.length ? <span className="dz-known">Known for {naturalList(place.known_for)}</span> : null}
           </li>
         ))}
@@ -280,7 +337,6 @@ function Travel({ data }: { data: DossierTravel }) {
 }
 
 function Offer({ data, level }: { data: DossierOffer; level: Level }) {
-  const { price } = data;
   return (
     <>
       {data.items.length ? (
@@ -313,45 +369,16 @@ function Offer({ data, level }: { data: DossierOffer; level: Level }) {
           </p>
         </>
       ) : null}
-      <Sub level={level}>Price</Sub>
-      <p className="dz-price">
-        <b className="mono">{price.label ?? "Not listed"}</b> {price.basis}
-      </p>
-      <PriceLadder ladder={price.ladder} level={price.level} />
-      {price.open_note ? <p className="open-note">{price.open_note}</p> : null}
-      <PriceAnchors anchors={price.anchors} />
       <Basis text={data.basis} />
     </>
   );
 }
 
-const INTERIOR_LABELS: Record<string, string> = {
-  mood: "Mood",
-  materials: "Decor & materials",
-  lighting: "Lighting",
-  layout: "Layout",
-  seating: "Seating",
-};
-
 function Room({ data }: { data: DossierRoom }) {
-  const interior = Object.entries(data.interior ?? {})
-    .map(([key, value]) => [INTERIOR_LABELS[key] ?? key, list(value).join(", ")] as const)
-    .filter(([, value]) => value);
-  const unit = data.unit
-    ? [data.unit.size, data.unit.kitchen, data.unit.outdoor_space === "yes" ? "outdoor space" : data.unit.outdoor_space === "none" ? "no outdoor space" : null]
-        .filter((part) => part && part !== "unknown")
-        .join(", ")
-    : "";
-  const dna = Object.entries(data.dna ?? {}).filter(([, value]) => list(value).length);
+  const unit = unitText(data.unit);
   return (
     <>
       <dl className="spec dz-spec">
-        {interior.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
         {unit ? (
           <div>
             <dt>Unit</dt>
@@ -376,18 +403,6 @@ function Room({ data }: { data: DossierRoom }) {
             </dd>
           </div>
         ) : null}
-        {dna.map(([family, values]) => (
-          <div key={family}>
-            <dt>{family.replace(/_/g, " ")}</dt>
-            <dd className="tags">
-              {list(values).map((value) => (
-                <span className="tag" key={value}>
-                  {value}
-                </span>
-              ))}
-            </dd>
-          </div>
-        ))}
       </dl>
       <Basis text={data.basis} />
     </>
@@ -458,8 +473,8 @@ function Launch({ data, level }: { data: DossierLaunch; level: Level }) {
           <Sub level={level}>Where to run them</Sub>
           {data.where ? (
             <p className="dz-p">
-              The {data.where.minutes}-minute walk
-              {data.where.reach_m ? ` reaches ${data.where.reach_m} m at its farthest point` : ""}
+              The {areaText(data.where)}
+              {data.where.reach_m ? ` reaches ${reachText(data.where.reach_m)} at its farthest point` : ""}
               {hoods.length ? `${data.where.reach_m ? " and" : ""} takes in parts of ${naturalList(hoods)}` : ""}.
             </p>
           ) : null}
@@ -574,17 +589,27 @@ function Method({ data, level }: { data: DossierMethod; level: Level }) {
   );
 }
 
-/** One section's body; its title is the caller's, as a heading or a disclosure's summary. */
-export function DossierBody({ dossier, part, level }: { dossier: Dossier; part: DossierKey; level: Level }) {
+/** One section's body; its title is the caller's, as a heading or a disclosure's summary. With the cover's map (the
+    report's own page), the competition table and the travel list carry its numbers and letters. */
+export function DossierBody({ dossier, part, level, map = null }: { dossier: Dossier; part: DossierKey; level: Level; map?: CoverMap | null }) {
   switch (part) {
     case "case":
       return dossier.case ? <Case data={dossier.case} level={level} /> : null;
     case "alternatives":
       return dossier.alternatives ? <Alternatives data={dossier.alternatives} /> : null;
     case "competition":
-      return dossier.competition ? <Competition data={dossier.competition} level={level} /> : null;
+      return dossier.competition ? (
+        <Competition
+          data={dossier.competition}
+          level={level}
+          area={dossierArea(dossier)}
+          numbers={tableNumbers(dossier.competition.places, map?.pins ?? [])}
+        />
+      ) : null;
     case "travel":
-      return dossier.travel ? <Travel data={dossier.travel} /> : null;
+      return dossier.travel ? (
+        <Travel data={dossier.travel} area={dossierArea(dossier)} letters={travelLetters(dossier.travel.places, map?.trips ?? [])} />
+      ) : null;
     case "offer":
       return dossier.offer ? <Offer data={dossier.offer} level={level} /> : null;
     case "room":

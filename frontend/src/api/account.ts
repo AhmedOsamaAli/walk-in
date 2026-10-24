@@ -1,5 +1,6 @@
 /* Accounts: the app's public settings, who is signed in, and the surveys saved to the account (the API contract). */
 import { post, request } from "./client";
+import type { PlacesKit } from "./kit";
 import type { Intent, RunStatus } from "./types";
 
 /** GET /api/config: the web app's public settings, limited to what signing in needs. */
@@ -34,9 +35,10 @@ export interface PlacesSurvey {
   url: string;
 }
 
-/** GET /api/me/places: newest first, at most 100. */
+/** GET /api/me/places: the account's surveys and the launch kits made for them, newest first, at most 100 of each. */
 export interface Places {
   surveys: PlacesSurvey[];
+  kits: PlacesKit[];
 }
 
 export const account = {

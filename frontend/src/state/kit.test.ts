@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../api/client";
-import type { KitStatus, KitView } from "../api/commerce";
-import { followKit, KIT_GONE, KIT_POLL_TRIES, type KitPoll } from "./kit";
+import type { KitStatus, KitView } from "../api/kit";
+import { followKit, KIT_GONE, KIT_POLL_TRIES, kitNews, type KitPoll } from "./kit";
 
 function view(status: KitStatus): KitView {
   return {
@@ -12,11 +12,8 @@ function view(status: KitStatus): KitView {
     name: "Golden Hour",
     created_at: "2026-10-22T16:00:00Z",
     survey_url: "/s/r1?sheet=0",
-    is_owner: true,
     kit: null,
     error: status === "failed" ? "The copy could not be written." : null,
-    campaign_url: null,
-    refundable_until: "2026-11-05T16:00:00Z",
   };
 }
 
@@ -53,12 +50,10 @@ describe("following a kit while it is built", () => {
     expect(loads()).toBe(3);
   });
 
-  it("stops at a failed or refunded kit", async () => {
-    for (const status of ["failed", "refunded"] as const) {
-      const { poll, updates } = fakePoll([view("building"), view(status)]);
-      await followKit(poll);
-      expect(updates).toEqual(["building", status]);
-    }
+  it("stops at a failed kit", async () => {
+    const { poll, updates } = fakePoll([view("building"), view("failed")]);
+    await followKit(poll);
+    expect(updates).toEqual(["building", "failed"]);
   });
 
   it("rides out a few failed polls", async () => {
@@ -89,5 +84,23 @@ describe("following a kit while it is built", () => {
     await followKit(poll);
     expect(updates).toEqual(["building"]);
     expect(loads()).toBe(1);
+  });
+});
+
+describe("what the page says aloud about its kit", () => {
+  const words = { building: "Building.", ready: "Ready.", failed: "Not built." };
+
+  it("says a build started, and how it ended", () => {
+    expect(kitNews(null, "building", words)).toBe("Building.");
+    expect(kitNews("building", "ready", words)).toBe("Ready.");
+    expect(kitNews("building", "failed", words)).toBe("Not built.");
+    expect(kitNews("failed", "building", words)).toBe("Building.");
+  });
+
+  it("says nothing of a kit that was already done when the page opened, or that did not change", () => {
+    expect(kitNews(null, "ready", words)).toBe("");
+    expect(kitNews(null, "failed", words)).toBe("");
+    expect(kitNews("building", "building", words)).toBe("");
+    expect(kitNews("ready", null, words)).toBe("");
   });
 });

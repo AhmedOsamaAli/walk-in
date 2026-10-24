@@ -1,0 +1,587 @@
+/* The launch kit, free for now: the card on a design sheet, the kit's page, its report as a document, and both on paper.
+   Every color is a token and keeps its role in both themes; on paper everything is ink on white whatever the theme. */
+
+/* ---------- Kits in My places: their statuses ---------- */
+.state[data-state="ready"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.state[data-state="building"] { background: var(--blue-wash); border-color: var(--blue); color: var(--blue); }
+.places-empty-note { font: 400 14.5px/1.45 var(--f-sans); color: var(--text-4); }
+
+/* ---------- The launch kit on a design sheet: what is inside, and one action ---------- */
+.kit-offer {
+  display: grid; gap: 16px;
+  padding: 20px 22px 18px;
+  background: var(--card); border: var(--rule); border-radius: var(--r-m);
+}
+.kit-offer-head { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: var(--hair); }
+.kit-offer-eyebrow { font-size: 10.5px; color: var(--blue); overflow-wrap: anywhere; }
+.kit-offer-title { font: 400 23px/1.15 var(--f-serif); letter-spacing: -.012em; text-wrap: balance; }
+.kit-contents { counter-reset: kit; }
+/* Two cells: the number, and the item's one <span> (a bare run of text would be a cell of its own in the number's column). */
+.kit-contents li {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr);
+  padding: 9px 0; border-bottom: var(--hair); font-size: 14.5px; line-height: 1.45; color: var(--text-2);
+}
+.kit-contents li > span { min-width: 0; text-wrap: pretty; }
+.kit-contents li:first-child { padding-top: 0; }
+.kit-contents li:last-child { padding-bottom: 0; border-bottom: 0; }
+.kit-contents li::before {
+  content: counter(kit, decimal-leading-zero); counter-increment: kit;
+  padding-top: 3px; font: 500 11px var(--f-mono); color: var(--blue);
+}
+.kit-contents b { font-weight: 600; color: var(--ink); }
+.kit-offer-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 44px; padding-top: 2px; }
+.kit-offer-wait { width: min(230px, 100%); }
+/* A button busy starting something stays focusable (aria-disabled), drawn as the disabled ones are. */
+.ink-button[aria-disabled="true"] { opacity: .55; cursor: progress; }
+.ink-button[aria-disabled="true"]:hover { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.kit-owned {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px;
+  width: 100%; padding: 12px 12px 12px 16px;
+  background: var(--blue-wash); border: 1px solid var(--blue); border-radius: var(--r-m);
+}
+.kit-owned p { font-size: 14.5px; font-weight: 500; color: var(--blue); }
+.kit-offer-note { font-size: 14px; line-height: 1.45; color: var(--red); }
+.kit-offer-note:empty { display: none; }
+.kit-offer-fine { font-size: 10px; color: var(--ash); text-wrap: balance; }
+/* On a phone the whole card fits under the sheet's floating Close button, in any of its states. */
+@media (max-width: 560px) {
+  .kit-offer { gap: 12px; padding: 16px 16px 14px; }
+  .kit-offer-head { padding-bottom: 10px; }
+  .kit-offer-title { font-size: 21px; }
+  .kit-contents li { padding: 7px 0; font-size: 14px; }
+  .kit-owned { gap: 8px; padding: 10px 12px; }
+  .kit-owned p { font-size: 14px; }
+  .kit-offer .ink-button { width: 100%; }
+}
+
+/* ---------- The kit's page: building, not built, gone ---------- */
+.kit-state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px 34px; align-items: start; }
+.kit-walk { padding: 6px 0 0; }
+.kit-walk .brand-mark { width: 136px; height: 136px; }
+.kit-state-title { font: 400 clamp(32px, 3.6vw, 48px)/1.02 var(--f-serif); letter-spacing: -.024em; text-wrap: balance; }
+.kit-state-lead { max-width: 56ch; margin-top: 12px; font-size: 17px; line-height: 1.5; color: var(--text-2); }
+.kit-state-meta { margin-top: 16px; font-size: 10.5px; color: var(--ash); }
+.kit-state-meta::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
+.kit-state-alert { margin-top: 16px; }
+.kit-state-links { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
+.kit-state-note { margin-top: 12px; font-size: 14.5px; line-height: 1.45; color: var(--red); }
+.kit-state-note:empty { display: none; }
+/* "Not built", stamped on the drawing in the margin. */
+.kit-state-mark {
+  justify-self: start; margin-top: 8px; padding: 9px 14px 8px;
+  border: 2px solid currentColor; border-radius: 6px;
+  font-size: 13px; font-weight: 600; letter-spacing: .14em; color: var(--red);
+  transform: rotate(-2.5deg);
+}
+.kit-state[data-state="missing"] { grid-template-columns: minmax(0, 1fr); }
+.kit-steps { counter-reset: step; max-width: 560px; margin-top: 22px; border-top: var(--rule); }
+.kit-steps li {
+  position: relative; display: grid; grid-template-columns: 36px minmax(0, 1fr);
+  padding: 10px 0; border-bottom: var(--hair); font-size: 15px; line-height: 1.4;
+}
+.kit-steps li::before {
+  content: counter(step, decimal-leading-zero); counter-increment: step;
+  padding-top: 3px; font: 500 11px var(--f-mono); color: var(--blue);
+}
+/* A pen line drawn slowly under each step in turn: something is being made, without claiming how far along it is. */
+.kit-state[data-state="building"] .kit-steps li::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--blue-fill);
+  transform: scaleX(0); transform-origin: left; animation: kitDraw 7.5s var(--ease-io) infinite;
+  animation-delay: calc(var(--i, 0) * 1.5s);
+}
+.kit-steps li:nth-child(2) { --i: 1; }
+.kit-steps li:nth-child(3) { --i: 2; }
+.kit-steps li:nth-child(4) { --i: 3; }
+.kit-steps li:nth-child(5) { --i: 4; }
+@keyframes kitDraw {
+  0% { transform: scaleX(0); opacity: 1; }
+  18% { transform: scaleX(1); opacity: 1; }
+  30%, 100% { transform: scaleX(1); opacity: 0; }
+}
+@container page (max-width: 620px) {
+  .kit-state { grid-template-columns: minmax(0, 1fr); }
+  .kit-walk .brand-mark { width: 92px; height: 92px; }
+}
+
+/* ---------- The kit's parts, under its title ---------- */
+.kit-jump { padding: 0 var(--pad); border-bottom: var(--rule); }
+.kit-jump ol { display: flex; flex-wrap: wrap; gap: 0 26px; }
+.kit-jump a {
+  display: inline-flex; align-items: baseline; gap: 8px; padding: 14px 0 13px;
+  font-size: 14.5px; font-weight: 500; text-decoration: none;
+  transition: color .3s;
+}
+.kit-jump a .mono { font-size: 10.5px; color: var(--blue); }
+.kit-jump a:hover { color: var(--blue); }
+@container page (max-width: 560px) {
+  .kit-jump ol { gap: 0 18px; }
+  .kit-jump a { padding: 11px 0 10px; font-size: 14px; }
+}
+
+/* ---------- 01 Ad copy: one card per channel, every field in a paste well ---------- */
+.ad-deck { columns: 2 360px; column-gap: 16px; }
+.ad-card {
+  display: grid; gap: 14px; break-inside: avoid; margin-bottom: 16px; padding: 20px 22px 18px;
+  background: var(--card); border: var(--rule); border-radius: var(--r-l);
+}
+.ad-head {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px;
+  padding-bottom: 10px; border-bottom: var(--rule);
+}
+.ad-channel { font: 400 24px/1.1 var(--f-serif); letter-spacing: -.012em; }
+.ad-source { font-size: 10px; color: var(--text-4); }
+.ad-source[data-source="agent"] { color: var(--blue); }
+.ad-where { margin-top: -4px; font-size: 13.5px; line-height: 1.4; color: var(--text-4); }
+.ad-field { display: grid; gap: 7px; }
+.ad-field-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ad-field-head > .mono:first-child { font-size: 10.5px; color: var(--text-3); }
+.ad-limit { margin-left: auto; font-size: 10px; color: var(--ash); }
+.ad-text {
+  padding: 12px 14px; background: var(--bone); border: 1px dashed var(--edge); border-radius: 12px;
+  font-size: 15px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.ad-script p { font: 400 17px/1.5 var(--f-serif); }
+.ad-lines li {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+  padding: 5px 0; border-bottom: 1px dotted var(--edge); font-size: 14.5px; line-height: 1.35;
+}
+.ad-lines li:last-child { border-bottom: 0; }
+.ad-lines small { flex: none; font-size: 10px; color: var(--ash); }
+.ad-claims { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-4); }
+.ad-claims > .mono:first-child { margin-right: 4px; }
+.ad-claim { padding: 3px 9px 2px; background: var(--ink); border-radius: 999px; font-size: 9.5px; color: var(--on-ink); }
+.ad-checks { margin-top: 4px; padding: 14px 18px; border: 1px dashed var(--edge); border-radius: var(--r-m); }
+.ad-checks summary { cursor: pointer; font-size: 11px; color: var(--text-3); }
+.ad-checks summary:hover { color: var(--blue); }
+.ad-checks ul { display: grid; gap: 10px; margin-top: 12px; }
+.ad-checks li { display: grid; gap: 2px; font-size: 13.5px; line-height: 1.4; color: var(--text-3); }
+.ad-checks s { color: var(--text-2); }
+.ad-checks li .mono { font-size: 10px; color: var(--ash); }
+@container page (max-width: 560px) {
+  .ad-card { padding: 18px 16px 16px; border-radius: var(--r-m); }
+}
+
+/* ---------- 02 The window poster, pinned to the drafting table ---------- */
+.poster-section { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 34px; align-items: start; }
+.poster-frame {
+  display: grid; place-items: center; padding: clamp(16px, 3.4vw, 40px);
+  background: var(--bone); border: var(--rule); border-radius: var(--r-l);
+}
+.poster-art { display: block; width: 100%; max-width: 520px; height: auto; box-shadow: var(--shadow); transform: rotate(-.7deg); }
+.poster-side { display: grid; gap: 18px; }
+.poster-side-lead { max-width: 44ch; font: 400 19px/1.42 var(--f-serif); color: var(--text-2); }
+.poster-link { font: 500 13px/1.4 var(--f-mono); overflow-wrap: anywhere; }
+/* Without the owner's link the poster has no QR code: a note asks for one, and says why. */
+.poster-ask {
+  display: grid; gap: 12px; justify-items: start;
+  padding: 16px 18px 17px; background: var(--card); border: 1px dashed var(--ink); border-radius: var(--r-m);
+}
+.poster-ask p { max-width: 52ch; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+.poster-ask b { font-weight: 600; color: var(--ink); }
+.poster-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.poster-tip { max-width: 52ch; font-size: 13px; line-height: 1.45; color: var(--text-4); }
+@container page (max-width: 820px) {
+  .poster-section { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- 03 Tracked links ---------- */
+.links-panel { display: grid; gap: 20px; }
+.links-site { max-width: 560px; }
+.kit-field { display: grid; gap: 7px; align-content: start; }
+.kit-field .label { margin: 0; }
+.kit-hint { font-size: 13px; line-height: 1.4; color: var(--text-4); }
+.kit-hint.bad { color: var(--red); }
+.link-list { border-top: var(--rule); }
+.link-row {
+  display: grid; grid-template-columns: 210px 150px minmax(0, 1fr) auto; gap: 6px 16px; align-items: center;
+  padding: 12px 0; border-bottom: var(--hair);
+}
+.link-channel { font-size: 14.5px; font-weight: 600; }
+.link-tags { font-size: 10.5px; color: var(--blue); }
+.link-url { font: 400 12.5px/1.5 var(--f-mono); color: var(--text-3); overflow-wrap: anywhere; }
+.links-note { max-width: 72ch; font-size: 14px; line-height: 1.5; color: var(--text-4); }
+.links-note code {
+  padding: 2px 7px; background: var(--bone); border-radius: 6px; font: 500 12.5px/1.5 var(--f-mono); overflow-wrap: anywhere;
+}
+.links-empty {
+  max-width: 64ch; padding: 14px 16px; border: 1px dashed var(--edge); border-radius: var(--r-m);
+  font-size: 14px; line-height: 1.5; color: var(--text-3);
+}
+@container page (max-width: 760px) {
+  .link-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .link-row .copy { grid-column: 2; grid-row: 1; }
+  .link-tags { grid-column: 1; }
+  .link-url { grid-column: 1 / -1; }
+}
+
+/* ---------- 04 The report, folded on the kit's page ---------- */
+.dz-preview { display: grid; gap: 20px; }
+.dz-preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+.dz-preview-note { max-width: 52ch; font-size: 14px; line-height: 1.45; color: var(--text-4); }
+.dz-toc { border-top: var(--rule); }
+.dz-fold { border-bottom: var(--hair); }
+.dz-fold summary {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) 28px; gap: 12px; align-items: center;
+  padding: 14px 0; cursor: pointer; list-style: none;
+}
+.dz-fold summary::-webkit-details-marker { display: none; }
+.dz-fold summary .dz-no { align-self: baseline; padding-top: 6px; }
+.dz-fold-title { font: 400 22px/1.15 var(--f-serif); letter-spacing: -.01em; transition: color .3s; }
+.dz-gist { display: block; margin-top: 3px; font-size: 14px; line-height: 1.4; color: var(--text-4); }
+.dz-fold summary:hover .dz-fold-title { color: var(--blue); }
+.dz-fold-mark {
+  position: relative; width: 26px; height: 26px; border: 1px solid var(--ink); border-radius: 50%;
+  transition: transform .45s var(--ease), background .3s, color .3s;
+}
+.dz-fold-mark::before, .dz-fold-mark::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 1.5px; background: currentColor; translate: -50% -50%;
+}
+.dz-fold-mark::after { rotate: 90deg; }
+.dz-fold[open] .dz-fold-mark { transform: rotate(45deg); background: var(--ink); color: var(--on-ink); }
+.dz-fold-body { padding: 4px 0 28px 56px; }
+@container page (max-width: 620px) {
+  .dz-fold-body { padding-left: 0; }
+}
+
+/* ---------- The report as a document: a sheet of paper on the drafting table ---------- */
+.dossier-page { padding-bottom: clamp(32px, 6vw, 72px); }
+.dz-toolbar {
+  position: sticky; top: calc(var(--bar-h) + var(--wake-h)); z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px;
+  padding: 10px var(--pad);
+  background: var(--paper); border-bottom: var(--rule);
+}
+.dz-toolbar-title { flex: 1 1 0; min-width: 0; overflow: hidden; font-size: 10.5px; color: var(--text-4); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.dz-toolbar-print { display: flex; align-items: center; gap: 14px; }
+.dz-toolbar-hint { max-width: 26ch; font-size: 12.5px; line-height: 1.35; color: var(--text-4); text-align: right; }
+@container page (max-width: 860px) {
+  .dz-toolbar-title { display: none; }
+}
+@container page (max-width: 560px) {
+  .dz-toolbar-hint { display: none; }
+  .dz-toolbar .ghost { padding: 9px 14px; }
+}
+
+.dz-doc {
+  max-width: 880px; margin: clamp(20px, 4vw, 48px) auto 0;
+  background: var(--card); border: var(--rule); box-shadow: var(--shadow-s);
+}
+@container page (max-width: 920px) {
+  .dz-doc { margin: 0; border-width: 0 0 1px; box-shadow: none; }
+}
+.dz-cover { padding: clamp(28px, 6vw, 64px) clamp(20px, 6vw, 64px) clamp(28px, 5vw, 52px); border-bottom: var(--rule); }
+.dz-kicker { font-size: 11px; color: var(--text-4); }
+.dz-kicker b { font-weight: 500; color: var(--blue); }
+.dz-name {
+  margin-top: 16px;
+  font: 400 clamp(44px, 7vw, 84px)/.96 var(--f-serif); letter-spacing: -.035em; text-wrap: balance; overflow-wrap: anywhere;
+}
+.dz-name:focus, .dz-wait .dz-kicker:focus { outline: none; }
+.dz-tagline { max-width: 42ch; margin-top: 16px; font: italic 380 clamp(19px, 2vw, 23px)/1.35 var(--f-serif); color: var(--text-2); }
+.dz-cover-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px 36px; align-items: start;
+  margin-top: 34px; padding-top: 26px; border-top: var(--rule);
+}
+.dz-facts > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: var(--hair); }
+.dz-facts > div:first-child { padding-top: 0; }
+.dz-facts dt { padding-top: 3px; font-size: 10.5px; color: var(--text-4); }
+.dz-facts dd { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.dz-facts small { display: block; margin-top: 3px; font-size: 10.5px; color: var(--text-4); }
+.dz-contents { margin-top: 38px; }
+.dz-contents ol { margin-top: 10px; border-top: var(--rule); }
+.dz-contents li { border-bottom: var(--hair); }
+.dz-contents a {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1.25fr); gap: 4px 16px; align-items: baseline;
+  padding: 10px 0; text-decoration: none;
+}
+.dz-contents-title { font: 400 19px/1.25 var(--f-serif); transition: color .3s; }
+.dz-contents small { font-size: 13px; line-height: 1.4; color: var(--text-4); }
+.dz-contents a:hover .dz-contents-title { color: var(--blue); }
+.dz-sources { margin-top: 30px; }
+.dz-sources ul { display: grid; gap: 6px; margin-top: 10px; }
+.dz-sources li { max-width: 74ch; font-size: 14px; line-height: 1.5; color: var(--text-2); }
+.dz-sources b { font-weight: 600; color: var(--ink); }
+.dz-cover > .dz-basis { margin-top: 24px; }
+.dz-sec { padding: clamp(28px, 5vw, 48px) clamp(20px, 6vw, 64px) clamp(30px, 5vw, 52px); border-bottom: var(--hair); }
+.dz-head {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 8px;
+  margin-bottom: 22px; padding-bottom: 14px; border-bottom: var(--rule);
+}
+.dz-no { padding-top: 10px; color: var(--blue); }
+.dz-title { font: 400 clamp(30px, 3.4vw, 42px)/1.04 var(--f-serif); letter-spacing: -.022em; text-wrap: balance; }
+.dz-end { padding: 22px clamp(20px, 6vw, 64px) 26px; font-size: 10px; line-height: 1.6; color: var(--ash); }
+@container page (max-width: 640px) {
+  .dz-cover-grid { grid-template-columns: minmax(0, 1fr); }
+  .dz-contents a { grid-template-columns: 34px minmax(0, 1fr); }
+  .dz-contents small { grid-column: 2; }
+  .dz-head { grid-template-columns: 34px minmax(0, 1fr); }
+}
+
+/* The report's pages until the kit is ready, or when it cannot be shown. */
+.dz-wait {
+  max-width: 720px; margin: clamp(20px, 5vw, 56px) auto 0;
+  padding: clamp(24px, 5vw, 40px) clamp(20px, 5vw, 44px) clamp(26px, 5vw, 40px);
+  border: var(--rule);
+}
+.dz-wait:not(.sk) { background: var(--card); box-shadow: var(--shadow-s); }
+.dz-wait.sk { height: min(70vh, 640px); border-radius: 0; border-color: transparent; }
+.dz-wait-text { max-width: 36ch; margin-top: 12px; font: 400 clamp(22px, 2.6vw, 30px)/1.25 var(--f-serif); letter-spacing: -.012em; }
+.dz-wait-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+@container page (max-width: 760px) {
+  .dz-wait { margin: 0; border-width: 0 0 1px; }
+}
+
+/* ---------- Inside a section of the report (on its own page, and folded on the kit's page) ---------- */
+.dz-doc-body { display: grid; gap: 14px; }
+.dz-sub { margin-top: 14px; font: 500 20px/1.2 var(--f-serif); letter-spacing: -.01em; }
+.dz-p { max-width: 68ch; font-size: 15.5px; line-height: 1.55; color: var(--text-2); }
+.dz-p b { font-weight: 600; color: var(--ink); }
+.dz-note { font-size: 13px; line-height: 1.45; color: var(--text-4); }
+.dz-basis {
+  max-width: 74ch; padding-left: 12px; border-left: 2px solid var(--smoke);
+  font-size: 13px; line-height: 1.5; color: var(--text-4);
+}
+.dz-basis .mono { margin-right: 6px; font-size: 10px; color: var(--blue); }
+
+/* The case: the decision, stamped, then its numbers. */
+.dz-decision { display: grid; gap: 10px; padding: 20px 22px; background: var(--paper); border: var(--rule); border-radius: var(--r-m); }
+.dz-stamp {
+  justify-self: start; padding: 6px 12px 5px;
+  border: 2px solid currentColor; border-radius: 6px;
+  font-size: 12px; font-weight: 600; letter-spacing: .12em; color: var(--blue);
+  transform: rotate(-1.5deg);
+}
+.dz-decision[data-level="possible"] .dz-stamp { color: var(--ink); }
+.dz-decision:is([data-level="weak"], [data-level="misfit"]) .dz-stamp { color: var(--red); }
+.dz-decision:is([data-level="thin"], [data-level="unknown"]) .dz-stamp { border-style: dashed; color: var(--text-4); }
+.dz-lead { max-width: 60ch; font: 400 clamp(20px, 2vw, 24px)/1.32 var(--f-serif); letter-spacing: -.008em; text-wrap: pretty; }
+.dz-rank { font-size: 10.5px; color: var(--text-4); }
+.dz-asked { font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+.dz-caution {
+  padding: 12px 16px; background: var(--marker); border: 1px dashed var(--on-yellow); border-radius: var(--r-m);
+  font-size: 14.5px; line-height: 1.5; color: var(--ink);
+}
+.dz-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.dz-numbers > div { display: grid; align-content: start; gap: 6px; padding-top: 10px; border-top: var(--rule); }
+.dz-numbers dt { font-size: 10.5px; color: var(--text-4); }
+.dz-numbers b { display: block; font: 400 21px/1.2 var(--f-serif); letter-spacing: -.01em; color: var(--ink); }
+.dz-numbers small { display: block; margin-top: 6px; font-size: 12.5px; line-height: 1.45; color: var(--text-4); }
+.dz-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 28px; }
+.dz-two > div { display: grid; align-content: start; gap: 10px; }
+.dz-two .dz-sub { margin-top: 6px; }
+@container page (max-width: 640px) {
+  .dz-two { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Tables: the alternatives and the competition. */
+.dz-table-wrap { overflow-x: auto; }
+.dz-table { width: 100%; min-width: 560px; border-collapse: collapse; border-top: var(--rule); }
+.dz-table th, .dz-table td {
+  padding: 10px 14px 10px 0; text-align: left; vertical-align: top;
+  border-bottom: var(--hair); font-size: 14px; line-height: 1.42;
+}
+.dz-table thead th {
+  padding-top: 9px; font: 500 10.5px/1.3 var(--f-mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-4); border-bottom: var(--rule);
+}
+.dz-table tbody th { font-weight: 600; }
+.dz-table tr.dz-chosen > * { background: var(--marker); }
+.dz-table tr.dz-chosen > :first-child { padding-left: 8px; }
+.dz-table td.mono { font-size: 11px; }
+.dz-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dz-tag {
+  display: inline-block; margin: 4px 0 0 8px; padding: 2px 8px 1px;
+  border: 1px solid var(--ink); border-radius: 999px; font-size: 9.5px; font-weight: 500; vertical-align: 1px;
+}
+.dz-why-not { display: block; margin-top: 4px; font-style: italic; color: var(--text-4); }
+.dz-complaint {
+  display: inline-block; margin: 0 6px 4px 0; padding: 1px 8px;
+  border: 1px solid var(--edge); border-radius: 999px; font-size: 12.5px; white-space: nowrap;
+}
+.dz-complaint small { color: var(--text-4); }
+
+/* Lists of the report: promises, places, items, channels, steps and questions. */
+.dz-promises, .dz-questions { counter-reset: dz; border-top: var(--rule); }
+.dz-promises li, .dz-questions li {
+  position: relative; display: grid; gap: 4px; padding: 12px 0 12px 36px; border-bottom: var(--hair);
+}
+.dz-promises li::before, .dz-questions li::before {
+  content: counter(dz, decimal-leading-zero); counter-increment: dz;
+  position: absolute; left: 0; top: 15px; font: 500 11px var(--f-mono); color: var(--blue);
+}
+.dz-promises .mono { font-size: 10px; color: var(--text-4); }
+.dz-promises b { font: 400 19px/1.3 var(--f-serif); }
+.dz-promises span:last-child { font-size: 14px; line-height: 1.45; color: var(--text-3); }
+.dz-ask { font: 400 18px/1.35 var(--f-serif); }
+.dz-step-basis { font-size: 13px; line-height: 1.45; color: var(--text-4); }
+.dz-places, .dz-items, .dz-channels { border-top: var(--rule); }
+.dz-places li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14px; padding: 10px 0; border-bottom: var(--hair); }
+.dz-place-name { font-size: 15px; font-weight: 600; }
+.dz-places .mono { font-size: 10.5px; color: var(--text-3); }
+.dz-known { grid-column: 1 / -1; font-size: 13.5px; line-height: 1.4; color: var(--text-4); }
+/* The cover map's marks before the places' names, as its key draws them: a pin's number (filled for the places that
+   compete in earnest) in the competition table, a trip's letter in yellow in the travel list. */
+.dz-marked, .dz-places-marked .dz-place-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.dz-mark {
+  flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  border: 1.2px solid var(--ink); background: var(--card); color: var(--ink);
+  font: 600 9.5px/1 var(--f-mono);
+}
+.dz-mark-main { background: var(--ink); color: var(--on-ink); }
+.dz-mark-trip { background: var(--yellow); color: var(--on-yellow); }
+.dz-mark-none { visibility: hidden; }
+.dz-places-marked .dz-known { padding-left: 26px; }
+.dz-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 9px 0; border-bottom: var(--hair); font-size: 15px; }
+.dz-items li > span:first-child { flex: 1 1 auto; }
+.dz-items .mono { font-size: 10.5px; color: var(--text-4); }
+.dz-items .dz-tag { margin: 0; }
+.dz-spec dd { font-size: 15px; line-height: 1.5; }
+.dz-claims .claim-line { font-size: 19px; }
+.dz-notes { display: grid; gap: 6px; }
+.dz-notes li { position: relative; padding-left: 16px; font-size: 13.5px; line-height: 1.45; color: var(--text-3); }
+.dz-notes li::before { content: "–"; position: absolute; left: 0; color: var(--text-4); }
+.dz-channels li { display: grid; gap: 6px; padding: 12px 0; border-bottom: var(--hair); }
+.dz-channels b { font-size: 15px; font-weight: 600; }
+.dz-setting {
+  padding: 9px 12px; background: var(--bone); border: 1px dashed var(--edge); border-radius: 10px;
+  font-size: 12.5px; font-weight: 400; line-height: 1.55; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere;
+}
+.dz-why { font-size: 13.5px; line-height: 1.45; color: var(--text-4); }
+.dz-timeline { border-left: 2px solid var(--blue-fill); }
+.dz-timeline > li { position: relative; padding: 0 0 18px 22px; }
+.dz-timeline > li::before {
+  content: ""; position: absolute; left: -7px; top: 3px; width: 12px; height: 12px;
+  background: var(--card); border: 2px solid var(--blue-fill); border-radius: 50%;
+}
+.dz-timeline > li:last-child { padding-bottom: 2px; }
+.dz-when { display: block; margin-bottom: 8px; font-size: 10.5px; color: var(--blue); }
+.dz-timeline ul { display: grid; gap: 10px; }
+.dz-do { font-size: 15.5px; font-weight: 500; line-height: 1.45; }
+.dz-checks { display: grid; gap: 10px; }
+.dz-checks li { display: grid; gap: 4px; padding: 12px 14px; border: 1px dashed var(--edge); border-radius: 12px; }
+.dz-method { border-top: var(--rule); }
+.dz-method > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 6px 18px; padding: 11px 0; border-bottom: var(--hair); }
+.dz-method dt { padding-top: 2px; font-size: 10.5px; color: var(--text-4); }
+.dz-method dd { max-width: 66ch; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+.dz-limits { display: grid; gap: 8px; }
+.dz-limits li { position: relative; max-width: 70ch; padding-left: 18px; font-size: 14.5px; line-height: 1.5; color: var(--text-2); }
+.dz-limits li::before { content: "—"; position: absolute; left: 0; color: var(--text-4); }
+@container page (max-width: 640px) {
+  .dz-method > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- On paper ---------- */
+.print-only { display: none; }
+
+/* The poster: one portrait sheet that fits both A4 (190 × 277 mm inside these margins) and US Letter (195.9 × 259.4 mm).
+   Set 250 mm tall it is 176.9 mm wide, and its QR code's modules span 37.7 mm. */
+@page poster { margin: 10mm; }
+
+@media print {
+  /* Ink on white whatever the screen's theme: the tokens the pages' print styles leave dark. */
+  :root, :root[data-theme="dark"] {
+    --bone: #f1f0ea; --blue-wash: #e8effc; --blue-fill: #0f68ea; --fog: #b6b8bd; --shimmer: #faf9f6;
+    --on-blue: #ffffff; --on-yellow: #1d1d1f; --on-yellow-2: #3a3832; --on-yellow-3: #57544b;
+  }
+  .no-print { display: none !important; }
+
+  :root[data-print="poster"] body > :not(.print-poster) { display: none !important; }
+  :root[data-print="poster"] .print-poster { display: block; page: poster; }
+  /* Fixed to the page area, so it sits in the middle of whichever sheet the printer holds. */
+  .print-poster .poster-art {
+    position: fixed; inset: 0; width: 176.9mm; height: 250mm; max-width: none; margin: auto;
+    box-shadow: none; transform: none;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  /* The kit's own page prints as a record, without its controls. */
+  .kit-page .kit-jump, .kit-page .copy, .kit-page .poster-actions, .kit-page .dz-preview-head .ink-button,
+  .kit-page .page-actions, .kit-state-links, .kit-page .poster-ask a { display: none !important; }
+  .kit-page .ad-card, .kit-page .link-row, .kit-page .poster-frame { break-inside: avoid; }
+  .kit-page .poster-art { transform: none; box-shadow: none; }
+  /* A design sheet on paper keeps what the kit holds, not the button that makes it. */
+  .kit-offer-body, .kit-offer-note, .kit-offer-fine { display: none; }
+
+  /* The report: a document, its running header and footer set by the page (lib/kit.ts reportPageCss). The cover has a
+     page to itself, the contents the next, and every section starts a page of its own. */
+  .dossier-page { page: report; min-height: 0; padding: 0 !important; background: none; }
+  .dossier-page * { filter: none !important; backdrop-filter: none !important; box-shadow: none !important; }
+  .dz-doc { max-width: none; margin: 0; background: none; border: 0; }
+  .dz-cover { padding: 0; border: 0; }
+  /* The cover fills its page, the sources and basis set at its foot; 236 mm stays inside Letter's 241 mm of text. */
+  .dz-cover-page { display: flex; flex-direction: column; min-height: 236mm; }
+  .dz-cover-page > .dz-sources { margin-top: auto; padding-top: 9mm; }
+  .dz-kicker { font-size: 7.5pt; }
+  .dz-name { margin-top: 6mm; font-size: 44pt; }
+  .dz-tagline { margin-top: 5mm; font-size: 14pt; }
+  .dz-cover-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); margin-top: 10mm; padding-top: 7mm; gap: 6mm 9mm; break-inside: avoid; }
+  .dz-facts > div { grid-template-columns: 26mm minmax(0, 1fr); gap: 3mm; padding: 2.2mm 0; }
+  .dz-facts dt { font-size: 6.5pt; }
+  .dz-facts dd { font-size: 9.5pt; }
+  .dz-facts small { font-size: 6.5pt; }
+  .dz-sources { break-inside: avoid; }
+  .dz-sources ul { gap: 1.5mm; margin-top: 2.5mm; }
+  .dz-sources li { font-size: 8.5pt; }
+  .dz-cover > .dz-basis { margin-top: 6mm; }
+  .dz-contents { break-before: page; margin-top: 0; }
+  .dz-contents ol { margin-top: 4mm; }
+  .dz-contents a { grid-template-columns: 10mm minmax(0, 1fr) minmax(0, 1.25fr); gap: 1mm 5mm; padding: 3.2mm 0; }
+  .dz-contents-title { font-size: 13pt; }
+  .dz-contents small { font-size: 8.5pt; }
+  .dz-sec { break-before: page; padding: 0; border: 0; }
+  .dz-head { grid-template-columns: 10mm minmax(0, 1fr); margin-bottom: 5mm; padding-bottom: 2.5mm; break-after: avoid; }
+  .dz-no { padding-top: 2.6mm; font-size: 7.5pt; }
+  .dz-title { font-size: 22pt; }
+  .dz-doc-body { gap: 3mm; }
+  .dz-sub { margin-top: 2mm; font-size: 12pt; break-after: avoid; }
+  .dz-when, .dz-numbers dt { break-after: avoid; }
+  .dz-p, .dz-do, .dz-items li, .dz-limits li, .dz-method dd, .dz-asked, .dz-caution, .dz-place-name,
+  .dz-channels b, .spec dd, .dz-spec dd, .dz-promises span:last-child { font-size: 9.5pt; }
+  .dz-basis, .dz-step-basis, .dz-why, .dz-known, .dz-note, .dz-numbers small, .spec-basis, .claim-proof, .dz-setting { font-size: 8pt; }
+  .dz-doc .mono { font-size: 7pt; }
+  .dz-doc .dz-setting { font-size: 8pt; }
+  .dz-doc .dz-stamp { font-size: 8pt; }
+  .dz-lead { font-size: 13pt; }
+  .dz-decision { gap: 2mm; padding: 4mm 5mm; border-width: 0.75pt; }
+  .dz-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4mm 6mm; }
+  .dz-numbers > div { gap: 1.2mm; padding-top: 2.2mm; }
+  .dz-numbers b { font-size: 12.5pt; }
+  .dz-numbers small { margin-top: 1mm; }
+  .dz-two { gap: 3mm 7mm; }
+  .dz-table th, .dz-table td { padding: 1.8mm 3mm 1.8mm 0; font-size: 8.5pt; }
+  .dz-table thead th { font-size: 6.5pt; }
+  .dz-table { min-width: 0; }
+  .dz-table-wrap { overflow: visible; }
+  .dz-table thead { display: table-header-group; }
+  .dz-promises li, .dz-questions li { padding: 2.4mm 0 2.4mm 8mm; }
+  .dz-promises li::before, .dz-questions li::before { top: 3mm; font-size: 7pt; }
+  .dz-promises b, .dz-ask { font-size: 11pt; }
+  .dz-places li, .dz-items li, .dz-channels li { padding: 2mm 0; }
+  .dz-marked, .dz-places-marked .dz-place-name { gap: 1.6mm; }
+  .dz-mark { width: 3.4mm; height: 3.4mm; border-width: .6pt; font-size: 5.5pt; }
+  .dz-places-marked .dz-known { padding-left: 5mm; }
+  .dz-timeline { margin-left: 2mm; }
+  .dz-timeline > li { padding: 0 0 4mm 6mm; }
+  .dz-timeline > li::before { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dz-timeline ul { gap: 2.2mm; }
+  .dz-method > div { grid-template-columns: 32mm minmax(0, 1fr); padding: 2mm 0; }
+  .dz-limits { gap: 1.6mm; }
+  .spec > div { padding: 2mm 0; }
+  .dz-doc .claims { gap: 2.5mm; }
+  .dz-doc .claim { padding: 2.6mm 4mm 3mm; border-width: 0.75pt; }
+  .dz-doc .claim-kind { margin-bottom: 1.6mm; }
+  .dz-doc .claim-line { font-size: 11pt; }
+  .dz-doc .tag { padding: 1mm 3mm; font-size: 8pt; }
+  .dz-end { padding: 6mm 0 0; break-inside: avoid; }
+  .dz-doc :is(p, li, dd, td, th) { orphans: 3; widows: 3; }
+  .dz-doc :is(figure, table, tr, .dz-decision, .dz-numbers > div, .dz-two > div, .claim, .dz-promises li, .dz-questions li,
+    .dz-places li, .dz-items li, .dz-channels li, .dz-timeline ul > li, .dz-checks li, .dz-method > div, .launch-cautions,
+    .dz-caution, .spec > div, .dz-contents li, .dz-sources) { break-inside: avoid; }
+  .dz-doc a { color: inherit; text-decoration: none; }
+  .dz-doc .place-link > span[aria-hidden] { display: none; }
+  /* Colors that carry meaning print even where the browser leaves backgrounds out. */
+  .dz-doc :is(.hl, .dz-caution, .tag.blue, .dz-stamp, .dz-mark),
+  .dz-doc .dz-table tr.dz-chosen > * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* Ink pills read as outlines on paper, so they stay legible with backgrounds off. */
+  .dz-doc .claim-kind { background: none; border: 0.75pt solid #111111; color: #111111; }
+}

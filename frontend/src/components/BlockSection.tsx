@@ -1,25 +1,16 @@
 import type { ReactNode } from "react";
 import type { BlockPayload, Classic, TopicGroup } from "../api/types";
-import { price, standingText, topicForms } from "../lib/format";
+import { standingText, topicForms } from "../lib/format";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
 
-function Stat({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
+function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="stat">
       <b>{children}</b>
       <span className="mono">{label}</span>
-      {note ? <small className="stat-note mono">{note}</small> : null}
     </div>
   );
-}
-
-/** How many places sit at each price level: "$ 35 · $$ 11 · $$$ 6". */
-function priceMix(levels: Record<string, number> | undefined): string {
-  return Object.entries(levels ?? {})
-    .sort((a, b) => Number(a[0]) - Number(b[0]))
-    .map(([level, count]) => `${"$".repeat(Number(level))} ${count}`)
-    .join(" · ");
 }
 
 interface TopicsProps {
@@ -67,10 +58,7 @@ function Classics({ classics }: { classics: Classic[] }) {
             <span className="c-name">{classic.name}</span>
             <span className={classic.michelin ? "badge mono michelin" : "badge mono"}>{standingText(classic)}</span>
             <span className="c-meta">
-              <span className="mono">
-                {classic.genre}
-                {classic.price_level ? ` · ${"$".repeat(classic.price_level)}` : ""}
-              </span>
+              <span className="mono">{classic.genre}</span>
               {classic.known_for.length ? <span> · known for {classic.known_for.join(", ")}</span> : null}
             </span>
           </li>
@@ -84,27 +72,19 @@ function Classics({ classics }: { classics: Classic[] }) {
   );
 }
 
-function commonestPrice(levels: Record<string, number> | undefined): number | null {
-  const [top] = Object.entries(levels ?? {}).sort((a, b) => b[1] - a[1]);
-  return top ? Number(top[0]) : null;
-}
-
-export function BlockSection({ block }: { block: BlockPayload }) {
+/** The block's numbers and voices. `area` names the survey's area as the server does ("30-minute drive"). */
+export function BlockSection({ block, area }: { block: BlockPayload; area?: string }) {
   const { summary, places } = block;
   const genres = summary.top_genres ?? [];
   const classics = summary.classics ?? [];
-  const typical = commonestPrice(summary.price_levels);
   return (
     <section id="s-block" className="sec reveal">
-      <SectionHead no="02" title="The block today" note="Everything Qloo knows inside the walking catchment." />
-      <div className="stats">
-        <Stat label="Places inside the walk">
+      <SectionHead no="02" title="The block today" note={`Everything Qloo knows inside the ${area ?? "catchment"}.`} />
+      <div className="stats stats-3">
+        <Stat label="Places">
           <CountUp value={summary.place_count ?? places.length} />
         </Stat>
         <Stat label="Average rating">{summary.avg_rating ? <CountUp value={summary.avg_rating} decimals={2} /> : "—"}</Stat>
-        <Stat label="Most common price" note={priceMix(summary.price_levels)}>
-          {typical ? price(typical) : "—"}
-        </Stat>
         <Stat label="Place types">
           <CountUp value={genres.length} />
         </Stat>

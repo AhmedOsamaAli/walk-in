@@ -7,8 +7,6 @@ import {
   gapWhy,
   list,
   naturalList,
-  price,
-  priceLabel,
   queriesText,
   replayText,
   safeUrl,
@@ -84,19 +82,6 @@ describe("formatting", () => {
   it("writes coordinates with hemispheres", () => {
     expect(coords(30.2622, -97.7247)).toBe("N 30.2622 · W 97.7247");
     expect(coords(-33.8688, 151.2093)).toBe("S 33.8688 · E 151.2093");
-  });
-
-  it("clamps price levels and treats unknown ones as mid-range", () => {
-    expect(price(1)).toBe("$");
-    expect(price(9)).toBe("$$$$");
-    expect(price(undefined)).toBe("$$");
-  });
-
-  it("labels known prices in words and never guesses an unknown one", () => {
-    expect(priceLabel(2)).toBe("$$ · moderate");
-    expect(priceLabel(4)).toBe("$$$$ · high-end");
-    expect(priceLabel(null)).toBe("");
-    expect(priceLabel(undefined)).toBe("");
   });
 
   it("shortens geocoder labels to two parts", () => {

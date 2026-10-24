@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
 import { messageOf } from "../api/client";
-import type { Concept, Design } from "../api/types";
-import { letter, list, priceLabel } from "../lib/format";
-import { hasLaunchPlan } from "../lib/launch";
-import { loadDesign, shotsOf } from "../state/designs";
+import type { Concept, Design, ExperiencePlan } from "../api/types";
+import { audienceTitle } from "../lib/audience";
+import { letter, list, naturalList } from "../lib/format";
+import { areaText, hasLaunchPlan } from "../lib/launch";
+import { offerItems, unitText, type OfferItem, type OfferMark } from "../lib/sheet";
+import { loadDesign } from "../state/designs";
+import { WhoYoudWin } from "./AudienceView";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { HoursText } from "./Hours";
 import { KitOffer } from "./KitOffer";
 import { LaunchPlanView } from "./LaunchPlan";
-import { Plate } from "./Plate";
-import { PriceAnchors } from "./Price";
-import { RenderFrame } from "./RenderFrame";
 
 interface SheetProps {
   runId: string;
@@ -19,37 +19,26 @@ interface SheetProps {
   concept: Concept;
 }
 
-/** "60 m² (646 ft²), a light-prep kitchen, no outdoor space": only what the owner said. */
-function unitText(unit: Design["unit"]): string | null {
-  if (!unit) return null;
-  const parts = [
-    unit.size !== "unknown" ? unit.size : null,
-    unit.kitchen !== "unknown" ? unit.kitchen : null,
-    unit.outdoor_space === "yes" ? "outdoor space" : unit.outdoor_space === "none" ? "no outdoor space" : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(", ") : null;
-}
+const MARKS: Record<Exclude<OfferMark, null>, string> = {
+  loved: "Known at loved places",
+  new: "New to the block",
+};
+
+const hasExperience = (plan: ExperiencePlan | null | undefined): plan is ExperiencePlan =>
+  [plan?.soundtrack, plan?.screen, plan?.talks].some((group) => Boolean(group?.length));
 
 function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
   return (
-    <>
-      <div className="d-main">
-        <p className="d-eyebrow mono">Design sheet · Concept {letter(index)} · drafting</p>
-        <h2 className="d-title" id="design-title">
-          {concept.name}
-        </h2>
-        <div className="sk sk-line" />
-        <div className="sk sk-line" />
-        <div className="sk sk-block" />
-      </div>
-      <aside className="d-side">
-        <div className="d-side-inner">
-          <div className="sk sk-card tall" />
-          <div className="sk sk-card" />
-          <div className="sk sk-card" />
-        </div>
-      </aside>
-    </>
+    <div className="d-main">
+      <p className="d-eyebrow mono">Design sheet · Concept {letter(index)} · drafting</p>
+      <h2 className="d-title" id="design-title">
+        {concept.name}
+      </h2>
+      <div className="sk sk-line" />
+      <div className="sk sk-line" />
+      <div className="sk sk-block" />
+      <div className="sk sk-block short" />
+    </div>
   );
 }
 
@@ -65,138 +54,168 @@ function SheetError({ concept, message }: { concept: Concept; message: string })
   );
 }
 
-function Sheet({ runId, index, concept, design }: SheetProps & { design: Design }) {
-  const interior = design.interior ?? {};
-  const priced = priceLabel(design.price_level ?? concept.price_level);
-  const priceBasis = design.price_basis ?? concept.price_basis;
-  const rows: [string, string | null | undefined, string | null | undefined][] = [
-    ["Mood", interior.mood, null],
-    ["Decor & materials", list(interior.materials).join(", "), null],
-    ["Lighting", interior.lighting, null],
-    ["Layout", interior.layout, null],
-    ["Seating", interior.seating, null],
-    ["Price", priced || (priceBasis ? "Not listed" : null), priceBasis],
-    ["Hours", design.hours, design.hours_basis],
-    ["Unit", unitText(design.unit), null],
-    ["Capacity", design.capacity, design.capacity_basis],
-  ];
-  const spec = rows.filter((row): row is [string, string, string | null | undefined] => Boolean(row[1]));
-  const offer = list(design.offer);
-  const artists = list(design.music?.artists);
-  const direction = design.music?.direction;
-  const partners = (design.partners ?? []).filter((partner) => partner.name);
-  const name = design.name ?? concept.name;
-  const inspired = list(concept.inspired_by);
-  const madeBy = design.mode === "agent" ? (design.model ?? "agent") : "evidence rules";
-  const shots = design.renders?.enabled ? shotsOf(design) : [];
-  const volunteer = (design.renders?.model ?? "").includes("AI Horde");
+/** What to play, screen and host. The licensing note follows the soundtrack it is mostly about; screenings and talks,
+ * where the concept has them, come after it. */
+function Experience({ plan }: { plan: ExperiencePlan }) {
+  const { soundtrack, screen, talks, basis, licensing } = plan;
+  if (!soundtrack?.length || !(screen?.length || talks?.length)) return <ExperiencePlanView plan={plan} />;
+  return (
+    <div className="d-xp">
+      <ExperiencePlanView plan={{ soundtrack, licensing }} />
+      <ExperiencePlanView plan={{ screen, talks, basis }} />
+    </div>
+  );
+}
 
+/** What it sells, each item marked where the concept's evidence says the places people here love are known for it. */
+function Offer({ items, concept, area }: { items: OfferItem[]; concept: Concept; area: string }) {
+  const marks = new Set(items.map((item) => item.mark));
+  const loved = list(concept.inspired_by).slice(0, 3);
   return (
     <>
-      <div className="d-main">
-        <p className="d-eyebrow mono">
-          Design sheet · Concept {letter(index)} · {concept.genre} · {madeBy}
-        </p>
-        <h2 className="d-title" id="design-title">
-          {name}
-        </h2>
-        <p className="d-tagline">{design.tagline ?? concept.one_liner}</p>
-        {design.concept_statement ? <p className="d-statement serif">{design.concept_statement}</p> : null}
-        <h3 className="d-h">Interior</h3>
-        <dl className="spec">
-          {spec.map(([key, value, basis]) => (
-            <div key={key}>
-              <dt>{key}</dt>
+      <h3 className="d-h">The offer</h3>
+      <ol className="offer">
+        {items.map(({ item, mark }) => (
+          <li key={item}>
+            <span className="offer-line">
+              <span className="offer-item">{item}</span>
+              {mark ? (
+                <span className="offer-mark mono" data-mark={mark}>
+                  {MARKS[mark]}
+                </span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {marks.has("loved") || marks.has("new") ? (
+        <dl className="offer-key">
+          {marks.has("loved") ? (
+            <div>
+              <dt>
+                <span className="offer-mark mono" data-mark="loved">
+                  {MARKS.loved}
+                </span>
+              </dt>
               <dd>
-                {key === "Hours" ? <HoursText hours={value} /> : value}
-                {basis ? <small className="spec-basis">{basis}</small> : null}
-                {key === "Price" ? <PriceAnchors anchors={design.price_anchors ?? concept.price_anchors} /> : null}
+                {`What Qloo shows the places of this kind people here love${loved.length ? `, such as ${naturalList(loved)},` : ""} are known for.`}
               </dd>
             </div>
-          ))}
-        </dl>
-        {offer.length ? (
-          <>
-            <h3 className="d-h">The offer</h3>
-            <ol className="offer">
-              {offer.map((item, k) => (
-                <li key={k}>{item}</li>
-              ))}
-            </ol>
-          </>
-        ) : null}
-        {design.experience ? (
-          <>
-            <h3 className="d-h">Experience</h3>
-            {direction ? <p className="d-p">{direction}</p> : null}
-            <ExperiencePlanView plan={design.experience} />
-          </>
-        ) : artists.length || direction ? (
-          <>
-            <h3 className="d-h">Sound</h3>
-            {direction ? <p className="d-p">{direction}</p> : null}
-            <div className="tags d-sound">
-              {artists.map((artist) => (
-                <span className="tag blue" key={artist}>
-                  {artist}
+          ) : null}
+          {marks.has("new") ? (
+            <div>
+              <dt>
+                <span className="offer-mark mono" data-mark="new">
+                  {MARKS.new}
                 </span>
-              ))}
-            </div>
-          </>
-        ) : null}
-        {partners.length ? (
-          <>
-            <h3 className="d-h">Partners</h3>
-            <ul className="partners">
-              {partners.map((partner, k) => (
-                <li key={k}>
-                  <b>{partner.name}</b>
-                  <span>{partner.why}</span>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-        {hasLaunchPlan(design.launch) ? (
-          <>
-            <h3 className="d-h">Launch</h3>
-            <p className="d-p launch-lede">
-              Who to reach, where and when, and only what the evidence lets an ad say. Paste the settings into each
-              platform.
-            </p>
-            <LaunchPlanView plan={design.launch} />
-          </>
-        ) : null}
-        <h3 className="d-h">Launch kit</h3>
-        <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
-        {concept.risk ? (
-          <>
-            <h3 className="d-h">Risk</h3>
-            <p className="d-p">{concept.risk}</p>
-          </>
-        ) : null}
-      </div>
-      <aside className="d-side">
-        <div className="d-side-inner">
-          {shots.length ? (
-            <div className="renders">
-              {shots.map((shot) => (
-                <RenderFrame key={shot.kind} runId={runId} index={index} shot={shot} name={name} volunteer={volunteer} />
-              ))}
+              </dt>
+              <dd>Known at those places, and at no place inside the {area}.</dd>
             </div>
           ) : null}
-          <Plate dna={design.dna ?? {}} />
-          <p className="d-source mono">
-            Design DNA read from the {concept.genre} places people here love most
-            {inspired.length ? `: ${inspired.join(", ")}` : ""}.
-          </p>
-        </div>
-      </aside>
+        </dl>
+      ) : null}
     </>
   );
 }
 
-/** The sheet's text loads first; renders follow, one request per shot. */
+/** When it opens and what the unit holds, each with what it rests on. */
+function Room({ design }: { design: Design }) {
+  const unit = unitText(design.unit);
+  const { hours, capacity } = design;
+  if (!hours && !unit && !capacity) return null;
+  const title = hours && (unit || capacity) ? "Hours and the unit" : hours ? "Hours" : "The unit";
+  return (
+    <>
+      <h3 className="d-h">{title}</h3>
+      <dl className="spec">
+        {hours ? (
+          <div>
+            <dt>Hours</dt>
+            <dd>
+              <HoursText hours={hours} />
+              {design.hours_basis ? <small className="spec-basis">{design.hours_basis}</small> : null}
+            </dd>
+          </div>
+        ) : null}
+        {unit ? (
+          <div>
+            <dt>Unit</dt>
+            <dd>{unit}</dd>
+          </div>
+        ) : null}
+        {capacity ? (
+          <div>
+            <dt>Capacity</dt>
+            <dd>
+              {capacity}
+              {design.capacity_basis ? <small className="spec-basis">{design.capacity_basis}</small> : null}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </>
+  );
+}
+
+function Sheet({ runId, index, concept, design }: SheetProps & { design: Design }) {
+  const name = design.name ?? concept.name;
+  const tagline = design.tagline ?? concept.one_liner;
+  const offer = offerItems(design, concept);
+  const area = design.launch ? areaText(design.launch.where) : "area";
+  const rules = list(design.owner_rules).map((line) => line.trim());
+  const madeBy = design.mode === "agent" ? (design.model ?? "agent") : "evidence rules";
+
+  return (
+    <div className="d-main">
+      <p className="d-eyebrow mono">
+        Design sheet · Concept {letter(index)} · {concept.genre} · {madeBy}
+      </p>
+      <h2 className="d-title" id="design-title">
+        {name}
+      </h2>
+      {tagline ? <p className="d-tagline">{tagline}</p> : null}
+      {offer.length ? <Offer items={offer} concept={concept} area={area} /> : null}
+      {design.audience ? (
+        <>
+          <h3 className="d-h">{audienceTitle(design.audience)}</h3>
+          <WhoYoudWin audience={design.audience} area={area} />
+        </>
+      ) : null}
+      <Room design={design} />
+      {rules.length ? (
+        <>
+          <h3 className="d-h">Your rules</h3>
+          <ul className="d-rules">
+            {rules.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {hasExperience(design.experience) ? (
+        <>
+          <h3 className="d-h">Experience</h3>
+          <Experience plan={design.experience} />
+        </>
+      ) : null}
+      {hasLaunchPlan(design.launch) ? (
+        <>
+          <h3 className="d-h">Launch</h3>
+          <p className="d-p launch-lede">
+            Who to reach, where and when, and only what the evidence lets an ad say. Paste the settings into each
+            platform.
+          </p>
+          <LaunchPlanView plan={design.launch} peopleAbove={Boolean(design.audience)} />
+        </>
+      ) : null}
+      <h3 className="d-h">Launch kit</h3>
+      <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
+    </div>
+  );
+}
+
+/** A concept's design sheet: what it sells, when it opens, what the unit holds, the owner's rules, the experience,
+ * the launch and its kit. A part with nothing to say is left out. */
 export function DesignContent({ runId, index, concept }: SheetProps) {
   const [loaded, setLoaded] = useState<{ design: Design } | { error: string } | null>(null);
 

@@ -1,26 +1,81 @@
-import type { FavoritePlace, GapRow, PlaceCard } from "../api/types";
+import { useMemo, type ReactNode } from "react";
+import type { FavoritePlace, GapRow, OsmPlace, PlaceCard } from "../api/types";
 import { cssVars, cx } from "../lib/css";
-import { gapWhy, priceLabel, standingText } from "../lib/format";
+import { standingText } from "../lib/format";
+import {
+  leadLine,
+  OSM_COPYRIGHT,
+  OSM_CREDIT,
+  osmConfirmed,
+  osmDetail,
+  osmExtra,
+  osmLink,
+  osmUnchecked,
+  readingLabel,
+  readingTone,
+} from "../lib/gap";
+import { lightPin, pinFocus, showPin, usePinFocus } from "../map/pinFocus";
+import { awayText, gapPins, LISTED, type ListMark } from "../map/pins";
 import { CountUp } from "./CountUp";
-import { PlaceLink, PriceAnchors, PriceLadder } from "./Price";
+import { PinMark, PlaceLink } from "./PlaceCard";
 
 const MAX_PIPS = 24;
 
-function Competitor({ place }: { place: PlaceCard }) {
+/** Whether a pin is lit: hovered or focused here or on the map, or its card is open. */
+type Lit = (key: string) => boolean;
+
+/** The pin a list item lights while it is hovered or focused, or nothing for a place with no location. */
+function pointsAt(mark: ListMark | null) {
+  if (!mark) return {};
+  const on = () => {
+    lightPin(mark.key);
+  };
+  // Leaving one item for a pin or another item may come after entering it: only this item's own light goes out.
+  const off = () => {
+    if (pinFocus().lit === mark.key) lightPin(null);
+  };
+  return { onMouseEnter: on, onMouseLeave: off, onFocus: on, onBlur: off };
+}
+
+/** The place's number or letter, as on the map; pressing it shows the place there and opens its card. */
+function MarkButton({ mark, name }: { mark: ListMark; name: string }) {
+  return (
+    <button
+      type="button"
+      className="mark-btn"
+      aria-label={`${mark.mark}: show ${name} on the map`}
+      title="Show on the map"
+      onClick={(event) => {
+        // A click the keyboard made has no pointer presses to count.
+        showPin(mark.key, event.detail === 0);
+      }}
+    >
+      <PinMark mark={mark.mark} role={mark.role} />
+    </button>
+  );
+}
+
+/** A list item with its place's mark in the margin. */
+function Placed({ mark, lit, name, children }: { mark: ListMark | null; lit: Lit; name: string; children: ReactNode }) {
+  return (
+    <li className={cx("placed", mark && lit(mark.key) && "lit")} {...pointsAt(mark)}>
+      {mark ? <MarkButton mark={mark} name={name} /> : <span className="mark-none" title="Not on the map: Qloo has no location for it" />}
+      <span className="mini-body">{children}</span>
+    </li>
+  );
+}
+
+function Competitor({ place, mark, lit }: { place: PlaceCard; mark: ListMark | null; lit: Lit }) {
   const known = (place.known_for ?? []).slice(0, 2).join(", ");
   const complaints = (place.complaints ?? []).slice(0, 2).join(", ");
-  const meta = [
-    place.rating ? `★ ${place.rating.toFixed(1)}` : "",
-    place.price_level ? "$".repeat(place.price_level) : "",
-    standingText(place.standing),
-    known ? `known for ${known}` : "",
-  ]
+  const meta = [place.rating ? `★ ${place.rating.toFixed(1)}` : "", standingText(place.standing), known ? `known for ${known}` : ""]
     .filter(Boolean)
     .join(" · ");
+  const name = place.name ?? "";
   return (
-    <li>
+    <Placed mark={mark} lit={lit} name={name}>
       <span className="n">
-        <PlaceLink name={place.name ?? ""} url={place.url} kind={place.link} />
+        <PlaceLink name={name} url={place.url} kind={place.link} />
       </span>
       {meta ? <span className="s">{meta}</span> : null}
       {complaints ? (
@@ -28,40 +83,96 @@ function Competitor({ place }: { place: PlaceCard }) {
           <span className="hl">{complaints}</span>
         </span>
       ) : null}
-    </li>
+    </Placed>
   );
 }
 
-function Favorite({ place }: { place: FavoritePlace }) {
-  const where = place.within_walk
-    ? "inside the walk"
-    : place.distance_m != null
-      ? `${(place.distance_m / 1000).toFixed(1)} km away`
-      : "";
-  const detail = [place.rating ? `★ ${place.rating.toFixed(1)}` : "", place.price_level ? "$".repeat(place.price_level) : ""]
-    .filter(Boolean)
-    .join(" · ");
+function Favorite({ place, mark, lit }: { place: FavoritePlace; mark: ListMark | null; lit: Lit }) {
+  const where = place.within_walk ? "inside the walk" : awayText(place.distance_m ?? null);
+  const name = place.name ?? "";
   return (
-    <li>
+    <Placed mark={mark} lit={lit} name={name}>
       <span className="n">
-        <PlaceLink name={place.name ?? ""} url={place.url} kind={place.link} />
+        <PlaceLink name={name} url={place.url} kind={place.link} />
       </span>
-      {detail ? <span className="s">{detail}</span> : null}
-      <span className="km">{where}</span>
-    </li>
+      {place.rating ? <span className="s">★ {place.rating.toFixed(1)}</span> : null}
+      {where ? <span className="km">{where}</span> : null}
+    </Placed>
   );
 }
 
+/** Qloo's places inside the walk as squares, then the ones only OpenStreetMap shows as hollow squares. */
 function Pips({ gap }: { gap: GapRow }) {
   const shown = Math.min(gap.nearby_count, MAX_PIPS);
-  if (!shown) return <span className="mono muted">none</span>;
+  const extra = Math.min(osmExtra(gap).length, Math.max(0, MAX_PIPS - shown));
+  if (!shown && !extra) return <span className="mono muted">none</span>;
   return (
     <>
       {Array.from({ length: shown }, (_, k) => (
         <i key={k} />
       ))}
+      {Array.from({ length: extra }, (_, k) => (
+        <i key={`osm-${k}`} className="osm" />
+      ))}
       {gap.nearby_count > MAX_PIPS || gap.nearby_capped ? <i className="more">+</i> : null}
     </>
+  );
+}
+
+function OsmLink({ place }: { place: OsmPlace }) {
+  const detail = osmDetail(place);
+  return (
+    <a
+      className="place-link"
+      href={osmLink(place.url) ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${place.name} on OpenStreetMap${detail ? ` · ${detail}` : ""}`}
+    >
+      {place.name}
+      <span aria-hidden="true">↗</span>
+      <span className="sr-only"> (opens OpenStreetMap)</span>
+    </a>
+  );
+}
+
+/** What OpenStreetMap shows inside the walk that Qloo does not list, or why the gap was not cross-checked. */
+function OsmCrossCheck({ gap, marks, lit }: { gap: GapRow; marks: (ListMark | null)[]; lit: Lit }) {
+  const osm = gap.osm;
+  if (!osm) return null;
+  const unchecked = osmUnchecked(osm);
+  if (unchecked) return <p className="osm-check unchecked mono">{unchecked}</p>;
+  const extra = osmExtra(gap);
+  return (
+    <div className="osm-check">
+      {extra.length ? (
+        <p className="osm-also">
+          <span className="mono">OpenStreetMap also shows</span>{" "}
+          {extra.map((place, k) => {
+            const mark = marks[k] ?? null;
+            return (
+              <span key={place.url}>
+                {k ? (k === extra.length - 1 ? " and " : ", ") : null}
+                <span className={cx("osm-placed", mark && lit(mark.key) && "lit")} {...pointsAt(mark)}>
+                  {mark ? <MarkButton mark={mark} name={place.name} /> : null}
+                  <OsmLink place={place} />
+                </span>
+              </span>
+            );
+          })}
+          <span className="osm-why">. Qloo doesn&apos;t list {extra.length === 1 ? "it" : "them"} here, so the score counts {extra.length === 1 ? "it" : "them"} as supply.</span>
+        </p>
+      ) : (
+        <p className="osm-also mono">{osmConfirmed(osm)}</p>
+      )}
+      <p className="osm-credit mono">
+        Map data{" "}
+        <a href={OSM_COPYRIGHT} target="_blank" rel="noopener noreferrer">
+          {OSM_CREDIT}
+        </a>
+        , ODbL
+      </p>
+    </div>
   );
 }
 
@@ -94,11 +205,16 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
   const favoritesTitle = local
     ? `Places people here love more than the city does${median}`
     : "What people here love (the city's famous spots)";
-  const competitors = (gap.competitors ?? []).slice(0, 6);
-  const favorites = (gap.favorites ?? []).slice(0, 6);
+  const competitors = (gap.competitors ?? []).slice(0, LISTED);
+  const favorites = (gap.favorites ?? []).slice(0, LISTED);
   const why = gap.why ?? [];
   const blocked = gap.ruled_out ? `Ruled out: ${gap.ruled_out}` : gap.fit && !gap.fit.fits ? `Doesn't fit: ${gap.fit.reason ?? "the unit"}` : null;
-  const priced = priceLabel(gap.price?.level);
+  const badge = readingLabel(gap.reading);
+  const onOsm = osmExtra(gap).length;
+  const pins = useMemo(() => gapPins(gap), [gap]);
+  const focus = usePinFocus();
+  // Only the open row's places are on the map.
+  const lit: Lit = (key) => open && (key === focus.lit || key === focus.open);
 
   return (
     <li
@@ -110,7 +226,7 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
         type="button"
         aria-expanded={open}
         aria-controls={`${id}-detail`}
-        aria-label={`${gap.genre}, gap score ${gap.gap_score}${gap.reading ? `, ${gap.reading}` : ""}`}
+        aria-label={`${gap.genre}, gap score ${gap.gap_score}${badge ? `, ${badge}` : ""}`}
         aria-describedby={`${id}-why`}
         onClick={() => {
           onToggle(index);
@@ -120,7 +236,7 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
         <span>
           <span className="gap-name">{gap.genre}</span>
           <span className="gap-meta">
-            {gap.reading ? <small className={cx("mono reading", reading(gap.reading))}>{gap.reading}</small> : null}
+            {badge ? <small className={cx("mono reading", readingTone(badge))}>{badge}</small> : null}
             <small className="mono">
               #{rankHere} here{around}
             </small>
@@ -133,9 +249,10 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
           </span>
           <span className="gap-bars">
             <span className="meter">
-              <span className="mono">
+              <span className="mono" title={onOsm ? `${gap.nearby_count} on Qloo, ${onOsm} more only on OpenStreetMap` : undefined}>
                 Inside walk · {gap.nearby_count}
                 {gap.nearby_capped ? "+" : ""}
+                {onOsm ? ` + ${onOsm} OSM` : ""}
                 {expected}
               </span>
               <span className="pips">
@@ -159,22 +276,13 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
       <div className="gap-detail-wrap" id={`${id}-detail`} inert={!open}>
         <div className="gap-detail">
           <div className="gap-detail-inner">
-            {why.length || priced ? (
+            {why.length ? (
               <div className="gap-evidence">
                 <h4 className="label mono">The evidence</h4>
                 <ul className="why-list">
                   {why.map((line) => (
                     <li key={line}>{line}</li>
                   ))}
-                  {gap.price ? (
-                    <li className="price-line">
-                      {priced ? <b className="mono">Price {priced}. </b> : null}
-                      {gap.price.basis}
-                      <PriceLadder ladder={gap.price.ladder} level={gap.price.level} />
-                      {gap.price.open_note ? <span className="open-note">{gap.price.open_note}</span> : null}
-                      <PriceAnchors anchors={gap.price.anchors} />
-                    </li>
-                  ) : null}
                 </ul>
               </div>
             ) : null}
@@ -182,17 +290,22 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
               <h4 className="label mono">Competitors inside the walk</h4>
               <ul className="mini">
                 {competitors.length ? (
-                  competitors.map((place, k) => <Competitor key={`${place.name ?? ""}-${k}`} place={place} />)
+                  competitors.map((place, k) => (
+                    <Competitor key={`${place.name ?? ""}-${k}`} place={place} mark={pins.competitors[k] ?? null} lit={lit} />
+                  ))
                 ) : (
                   <li className="muted">Qloo lists no direct competitor inside the walk.</li>
                 )}
               </ul>
+              <OsmCrossCheck gap={gap} marks={pins.osm} lit={lit} />
             </div>
             <div>
               <h4 className="label mono">{favoritesTitle}</h4>
               <ul className="mini">
                 {favorites.length ? (
-                  favorites.map((place, k) => <Favorite key={`${place.name ?? ""}-${k}`} place={place} />)
+                  favorites.map((place, k) => (
+                    <Favorite key={`${place.name ?? ""}-${k}`} place={place} mark={pins.favorites[k] ?? null} lit={lit} />
+                  ))
                 ) : (
                   <li className="muted">No favorites found.</li>
                 )}
@@ -205,32 +318,3 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
   );
 }
 
-/** The server's badge for a gap whose fans travel for it, as older and newer surveys word it. */
-const TRAVEL_READINGS = new Set(["Locals travel for it", "People here travel for it"]);
-
-/** The badge's tone: a real gap is highlighted, a crowded or uncertain one is muted. */
-function reading(label: string): string {
-  if (label === "Clear gap" || label === "Under-supplied" || TRAVEL_READINGS.has(label)) return "strong";
-  if (label === "Crowded" || label === "Thin data" || label === "Atypical") return "weak";
-  return "";
-}
-
-/** The one evidence line that explains the badge; the rest are in the expanded row. */
-function leadLine(gap: GapRow): string {
-  const why = gap.why ?? [];
-  const find = (pattern: RegExp) => why.find((line) => pattern.test(line));
-  if (gap.reading && TRAVEL_READINGS.has(gap.reading)) {
-    return find(/outside the walk|already inside the walk/) ?? why[0] ?? gapWhy(gap);
-  }
-  switch (gap.reading) {
-    case "Clear gap":
-    case "Under-supplied":
-    case "Crowded":
-      return find(/inside the \d+-minute walk/) ?? why[0] ?? gapWhy(gap);
-    case "Thin data":
-    case "Atypical":
-      return why.at(-1) ?? gapWhy(gap);
-    default:
-      return why[0] ?? gapWhy(gap);
-  }
-}

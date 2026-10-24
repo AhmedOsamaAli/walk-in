@@ -1,33 +1,43 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
-import { commerce, paypalOf, type KitView } from "../api/commerce";
-import type { Kit } from "../api/kit";
+import { kits, type Kit, type KitView } from "../api/kit";
 import { BrandMark } from "../components/BrandMark";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { CopyButton } from "../components/CopyButton";
-import { CampaignForm } from "../components/kit/CampaignForm";
 import { CopyChecks, CopyDeck } from "../components/kit/CopyDeck";
 import { DossierBody, dossierContents, dossierGist } from "../components/kit/DossierView";
 import { PosterSection } from "../components/kit/PosterSection";
 import { TrackedLinks, useLanding } from "../components/kit/TrackedLinks";
 import { Link } from "../components/Link";
 import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components/Page";
-import { SandboxNotice } from "../components/SandboxNotice";
 import { SectionHead } from "../components/SectionHead";
-import { absoluteUrl, dateText, inSandbox, plainError, trackedUrl } from "../lib/commerce";
+import type { TitleField } from "../components/SiteHeader";
+import { dateText } from "../lib/account";
 import { letter } from "../lib/format";
+import { kitError, trackedUrl } from "../lib/kit";
 import { BRIEF_URL, dossierUrl, PLACES_URL } from "../lib/routes";
 import { useNow } from "../lib/useNow";
-import { useKit } from "../state/kit";
-import { session, useSession } from "../state/session";
+import { useKit, useKitNews } from "../state/kit";
 
 const BUILD_STEPS = [
   "The design sheet, if the concept had none yet",
   "Ad copy for each channel, every line checked against the evidence",
-  "The window poster, drawn from the walk",
+  "The window poster, on the streets around the site",
   "Tracked links for every channel",
-  "The dossier",
+  "The report for a landlord or a lender",
 ];
+
+const NEWS = {
+  building: "Building the launch kit. This page fills in by itself as soon as it is ready.",
+  ready: "The launch kit is ready.",
+  failed: "The launch kit could not be built.",
+};
+
+/** The kit's parts, in the order the page sets them out. */
+const PARTS = [
+  { id: "kit-copy", no: "01", label: "Ad copy" },
+  { id: "kit-poster", no: "02", label: "Window poster" },
+  { id: "kit-links", no: "03", label: "Tracked links" },
+  { id: "kit-report", no: "04", label: "The report" },
+] as const;
 
 function since(iso: string, now: number): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
@@ -40,7 +50,7 @@ function Building({ view, stalled, onCheck }: { view: KitView; stalled: string |
   const elapsed = (now - Date.parse(view.created_at)) / 1000;
   const progress = Number.isFinite(elapsed) ? Math.min(0.78, Math.max(0.05, elapsed / 75)) : 0.2;
   return (
-    <section className="pg-sec kit-state" data-state="building" aria-labelledby="kit-building">
+    <section className="pg-sec kit-state" data-state="building" aria-labelledby="kit-building" aria-busy={stalled === null}>
       <div className="kit-walk" aria-hidden="true">
         <BrandMark state="walking" progress={progress} />
       </div>
@@ -49,25 +59,24 @@ function Building({ view, stalled, onCheck }: { view: KitView; stalled: string |
           Building your kit
         </h2>
         <p className="kit-state-lead">
-          About a minute. This page fills in by itself as soon as the kit is ready; you can leave and come back from My
-          places.
+          About a minute. This page fills in by itself as soon as the kit is ready; you can leave and come back with the
+          same link.
         </p>
         <ol className="kit-steps">
           {BUILD_STEPS.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
-        <p className="kit-state-meta mono" role="status">
-          {stalled ? "" : `Started ${since(view.created_at, now)} · checking every 2 seconds`}
-        </p>
         {stalled ? (
-          <p className="page-alert" role="alert">
+          <p className="page-alert kit-state-alert" role="alert">
             {stalled}{" "}
             <button type="button" className="text-button" onClick={onCheck}>
               Check again
             </button>
           </p>
-        ) : null}
+        ) : (
+          <p className="kit-state-meta mono">Started {since(view.created_at, now)} · checking every 2 seconds</p>
+        )}
       </div>
     </section>
   );
@@ -76,34 +85,52 @@ function Building({ view, stalled, onCheck }: { view: KitView; stalled: string |
 function Failed({ view, onRetried }: { view: KitView; onRetried: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   async function retry() {
     setBusy(true);
     setError(null);
     try {
-      await commerce.retryKit(view.token);
+      await kits.retry(view.token);
       onRetried();
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) void session.refresh();
-      setError(plainError(failure, "The kit could not be started again. Try again in a moment."));
+      // Started again from another tab (409), or gone (404): the page shows what the kit is now.
+      if (failure instanceof ApiError && (failure.status === 409 || failure.status === 404)) {
+        onRetried();
+        return;
+      }
+      setError(kitError(failure, "The kit could not be started again. Try again in a moment."));
       setBusy(false);
     }
   }
+
   return (
     <section className="pg-sec kit-state" data-state="failed" aria-labelledby="kit-failed">
-      <p className="kit-state-mark mono">Not built</p>
+      <p className="kit-state-mark mono" aria-hidden="true">
+        Not built
+      </p>
       <div className="kit-state-text">
         <h2 className="kit-state-title" id="kit-failed">
           The kit could not be built
         </h2>
         <p className="kit-state-lead">{view.error ?? "Something went wrong while it was being built."}</p>
-        {view.is_owner ? (
-          <button type="button" className="ink-button" disabled={busy} onClick={() => void retry()}>
+        <div className="kit-state-links">
+          <button
+            type="button"
+            className="ink-button"
+            aria-disabled={busy}
+            aria-busy={busy}
+            onClick={() => {
+              // Not disabled while it starts: a disabled button drops the keyboard's focus.
+              if (!busy) void retry();
+            }}
+          >
             {busy ? "Starting again…" : "Build it again"}
           </button>
-        ) : (
-          <p className="kit-state-lead">The owner can build it again from this page.</p>
-        )}
-        <p className="pay-note" data-tone="error" role="status">
+          <Link className="ghost mono" href={view.survey_url}>
+            Back to the design sheet
+          </Link>
+        </div>
+        <p className="kit-state-note" role="status" aria-live="polite">
           {error ?? ""}
         </p>
       </div>
@@ -111,148 +138,79 @@ function Failed({ view, onRetried }: { view: KitView; onRetried: () => void }) {
   );
 }
 
-function Refunded({ view }: { view: KitView }) {
+function Missing() {
   return (
-    <section className="pg-sec kit-state" data-state="refunded" aria-labelledby="kit-refunded">
-      <p className="kit-state-mark mono">Refunded</p>
+    <section className="pg-sec kit-state" data-state="missing" aria-label="What to do next">
       <div className="kit-state-text">
-        <h2 className="kit-state-title" id="kit-refunded">
-          This kit was refunded
-        </h2>
         <p className="kit-state-lead">
-          PayPal returned the payment and the kit was closed. The survey and its free design sheet are still there.
+          The link may be mistyped, or the kit was deleted with its survey. The kits made for your saved surveys are in My
+          places.
         </p>
-        <Link className="ink-button" href={view.survey_url}>
-          Open the survey <span aria-hidden="true">→</span>
-        </Link>
+        <div className="kit-state-links">
+          <Link className="ink-button" href={BRIEF_URL}>
+            Survey a storefront
+          </Link>
+          <Link className="ghost mono" href={PLACES_URL}>
+            My places
+          </Link>
+        </div>
       </div>
     </section>
   );
 }
 
-function OwnerBar({ view, onRefunded }: { view: KitView; onRefunded: () => void }) {
-  const { config } = useSession();
-  const now = useNow(60_000);
-  const [asking, setAsking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const refundable = view.refundable_until !== null && Date.parse(view.refundable_until) > now && view.status !== "building";
-
-  async function refund() {
-    setBusy(true);
-    setNote("Refunding through PayPal…");
-    try {
-      await commerce.refundKit(view.token);
-      setNote("Refunded. PayPal returns the payment to the account that paid.");
-      onRefunded();
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) void session.refresh();
-      setNote(plainError(error, "The refund did not go through. Try again in a moment."));
-      setBusy(false);
-    }
-  }
-
+/** Where each part of the kit starts on the page. */
+function Parts() {
   return (
-    <div className="owner-bar">
-      <p className="owner-bar-note">
-        <span className="mono">Your kit</span>
-        {refundable && view.refundable_until ? ` Refundable until ${dateText(view.refundable_until)}.` : " Saved to My places."}
-      </p>
-      <div className="owner-bar-actions">
-        {view.campaign_url ? (
-          <Link className="ink-button" href={view.campaign_url}>
-            Open your campaign <span aria-hidden="true">→</span>
-          </Link>
-        ) : view.status === "ready" ? (
-          <a className="ink-button" href="#kit-campaign">
-            Start a founding-supporter campaign
-          </a>
-        ) : null}
-        {refundable ? (
-          <button
-            type="button"
-            className="ghost mono"
-            disabled={busy}
-            onClick={() => {
-              setAsking(true);
-            }}
-          >
-            Refund
-          </button>
-        ) : null}
-      </div>
-      <p className="owner-bar-status" role="status">
-        {note ?? ""}
-      </p>
-      <ConfirmDialog
-        open={asking}
-        title="Refund this kit?"
-        confirm="Refund the kit"
-        cancel="Keep the kit"
-        danger
-        onConfirm={() => {
-          setAsking(false);
-          void refund();
-        }}
-        onCancel={() => {
-          setAsking(false);
-        }}
-      >
-        <p>
-          PayPal returns your payment to the account that paid, and the kit closes: its copy, poster, links and dossier stop
-          opening.
-        </p>
-        {inSandbox(paypalOf(config)) ? <SandboxNotice /> : null}
-      </ConfirmDialog>
-    </div>
+    <nav className="kit-jump" aria-label="Parts of the kit">
+      <ol>
+        {PARTS.map((part) => (
+          <li key={part.id}>
+            <a href={`#${part.id}`}>
+              <span className="mono">{part.no}</span>
+              {part.label}
+            </a>
+          </li>
+        ))}
+      </ol>
+    </nav>
   );
 }
 
-function CampaignLink({ url, owner, name }: { url: string; owner: boolean; name: string }) {
-  const box = useRef<HTMLElement>(null);
-  const full = absoluteUrl(url);
-  return (
-    <div className="campaign-live">
-      <p className="campaign-live-lead">
-        {owner ? "Your founding-supporter campaign is live." : `${name} is gathering founding supporters.`}
-      </p>
-      <p className="campaign-live-url">
-        <code ref={box}>{full}</code>
-        <CopyButton text={full} what="the campaign's link" target={box} />
-      </p>
-      <Link className="ink-button" href={url}>
-        {owner ? "Open the pledge page" : "See the campaign"} <span aria-hidden="true">→</span>
-      </Link>
-    </div>
-  );
-}
-
-function Ready({ view, kit, onChanged }: { view: KitView; kit: Kit; onChanged: () => void }) {
-  const { config } = useSession();
-  const { website, invalid, landing, setWebsite } = useLanding(view.token, view.campaign_url, view.survey_url);
+function Ready({ view, kit }: { view: KitView; kit: Kit }) {
+  const { website, invalid, landing, setWebsite } = useLanding(view.token, view.survey_url);
   const posterLink = kit.links.find((link) => link.key === "poster");
   const posterUrl = posterLink ? trackedUrl(landing.url, posterLink.query) : landing.url;
   const contents = dossierContents(kit.dossier);
   const cover = kit.dossier.cover;
-  const paypal = paypalOf(config);
+  const sections = kit.dossier.sections.length;
+  const pieces = Object.keys(kit.copy).length;
 
   return (
     <>
-      {view.is_owner ? <OwnerBar view={view} onRefunded={onChanged} /> : null}
-
+      <Parts />
       <section className="pg-sec" aria-labelledby="kit-copy">
         <SectionHead
           id="kit-copy"
           no="01"
           title="Ad copy"
-          note="One piece per channel of the launch plan. Every line was checked against the evidence: no number it does not give, no other business's name, no superlative."
+          note={`${pieces === 1 ? "One piece" : `${pieces} pieces`}, one per channel of the launch plan. Every line was checked against the evidence: no number it does not give, no other business's name, no superlative.`}
         />
         <CopyDeck kit={kit} />
         <CopyChecks kit={kit} />
       </section>
 
       <section className="pg-sec" aria-labelledby="kit-poster">
-        <SectionHead id="kit-poster" no="02" title="The window poster" note="Print it for the window: the QR code is the poster's own tracked link." />
+        <SectionHead
+          id="kit-poster"
+          no="02"
+          title="The window poster"
+          note={
+            landing.kind === "own"
+              ? "Print it for the window. Its QR code opens your link, tagged as the poster's channel."
+              : "Print it for the window. Add your link below and it carries a QR code to it."
+          }
+        />
         <PosterSection poster={kit.poster} link={posterUrl} landing={landing} />
       </section>
 
@@ -266,21 +224,22 @@ function Ready({ view, kit, onChanged }: { view: KitView; kit: Kit; onChanged: (
         <TrackedLinks links={kit.links} landing={landing} website={website} invalid={invalid} onWebsite={setWebsite} />
       </section>
 
-      <section className="pg-sec" aria-labelledby="kit-dossier">
+      <section className="pg-sec" aria-labelledby="kit-report">
         <SectionHead
-          id="kit-dossier"
+          id="kit-report"
           no="04"
-          title="The dossier"
-          note="The case for this business, to take to a landlord or a bank. Every section says what it rests on."
+          title="The report"
+          note={`The case for this business in ${sections} sections, for a landlord or a lender. Every section says what it rests on.`}
         />
         <div className="dz-preview">
           <div className="dz-preview-head">
             <Link className="ink-button" href={dossierUrl(view.token)}>
-              Open the dossier <span aria-hidden="true">→</span>
+              Open the report <span aria-hidden="true">→</span>
             </Link>
             <p className="dz-preview-note">
-              A printable document{cover ? ` prepared ${dateText(cover.prepared_date, { timeZone: "UTC" })}` : ""}: open it, then
-              “Save as PDF”.
+              A document to print or save as a PDF
+              {cover ? `, prepared ${dateText(cover.prepared_date, { timeZone: "UTC" })}` : ""}: open it, then choose “Save as
+              PDF”.
             </p>
           </div>
           <ol className="dz-toc">
@@ -304,96 +263,103 @@ function Ready({ view, kit, onChanged }: { view: KitView; kit: Kit; onChanged: (
           </ol>
         </div>
       </section>
-
-      {view.is_owner || view.campaign_url ? (
-        <section className="pg-sec" id="kit-campaign" aria-labelledby="kit-campaign-title">
-          <SectionHead
-            id="kit-campaign-title"
-            no="05"
-            title="Founding supporters"
-            note="Neighbors pledge a fixed amount through PayPal, which only holds it: it is collected if enough of them pledge by the deadline, and released if not."
-          />
-          {view.campaign_url ? (
-            <CampaignLink url={view.campaign_url} owner={view.is_owner} name={kit.concept.name} />
-          ) : !paypal ? (
-            <div className="sk sk-row" />
-          ) : !paypal.enabled ? (
-            <p className="kit-offer-off">Pledges need PayPal, which isn&apos;t configured on this server.</p>
-          ) : (
-            <CampaignForm token={view.token} name={kit.concept.name} currency={paypal.currency} sandbox={inSandbox(paypal)} />
-          )}
-        </section>
-      ) : null}
     </>
   );
 }
 
-/** A launch kit by its link: followed while it is built, then its copy, poster, links, dossier and campaign. */
+/** The business's name, once the kit or the page about it has one. */
+function nameOf(view: KitView | null, kit: Kit | null): string | null {
+  if (kit) return kit.concept.name;
+  if (view?.name) return view.name;
+  return null;
+}
+
+/**
+ * The title takes the focus when the page opens, so a screen reader starts there. A design sheet closing as this page
+ * opens (its launch-kit card led here) hands the focus back to the survey behind it, which is hidden by then: the focus
+ * then lands on nothing, and comes back to the title.
+ */
+function useTitleFocus(): (node: HTMLElement | null) => void {
+  const focusOnMount = useFocusOnMount();
+  const title = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (document.activeElement === document.body || document.activeElement === null) {
+        title.current?.focus({ preventScroll: true });
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+  return useCallback(
+    (node: HTMLElement | null) => {
+      title.current = node;
+      focusOnMount(node);
+    },
+    [focusOnMount],
+  );
+}
+
+/** A launch kit by its link: followed while it is built, then its ad copy, poster, tracked links and report. */
 export function KitPage({ token }: { token: string }) {
-  const { user } = useSession();
-  const { load, restart } = useKit(token, user?.id ?? null);
-  const titleRef = useFocusOnMount();
+  const { load, restart } = useKit(token);
+  const titleRef = useTitleFocus();
   const view = load.state === "shown" ? load.view : null;
   const kit = view?.status === "ready" ? view.kit : null;
-  const name = kit?.concept.name ?? view?.name ?? null;
+  const name = nameOf(view, kit);
+  const news = useKitNews(view?.status ?? null, NEWS);
   useDocumentTitle(name ? `${name} launch kit` : "Launch kit");
 
   const cover = kit?.dossier.cover;
-  const fields = kit
+  const fields: TitleField[] | undefined = kit
     ? [
         { label: "Site", lines: [cover?.site_label ?? "—"] },
         {
-          label: "Walk",
-          lines: [`${kit.poster.minutes}-min walk`, ...(cover?.area_km2 != null ? [`${cover.area_km2} km²`] : [])],
+          label: "Catchment",
+          lines: [
+            kit.poster.area_label ?? `${kit.poster.minutes}-minute walk`,
+            ...(cover?.area_km2 != null ? [`${cover.area_km2} km²`] : []),
+          ],
         },
         { label: "Built", lines: [dateText(kit.built_at)] },
-        { label: "Copy written by", lines: [kit.mode === "agent" ? (kit.model ?? "The agent") : "Evidence rules"] },
+        { label: "Copy written by", lines: [kit.mode === "agent" ? (kit.model ?? "The agent") : "The evidence rules"] },
       ]
     : undefined;
-
   const eyebrow = view
-    ? `Launch kit · Concept ${letter(view.index)}${kit ? ` · ${kit.concept.genre}` : ""}`
-    : "Launch kit";
+    ? // The page bolds the eyebrow's first word: "Launch kit" is one.
+      `Launch\u00a0kit · Concept ${letter(view.index)}${kit ? ` · ${kit.concept.genre}` : ""}`
+    : "Launch\u00a0kit";
+  const title = load.state === "missing" ? "This kit isn't here" : (name ?? "Launch kit");
 
   return (
     <Page className="kit-page">
+      <p className="sr-only" role="status" aria-live="polite">
+        {news}
+      </p>
       <PageHead
         eyebrow={eyebrow}
-        title={load.state === "missing" ? "This kit isn't here" : (name ?? "Launch kit")}
+        title={title}
         titleRef={titleRef}
         standfirst={kit ? (cover?.tagline ?? kit.poster.tagline ?? undefined) : undefined}
         fields={fields}
         actions={
           view ? (
             <Link className="ghost mono" href={view.survey_url}>
-              Open the survey
+              <span aria-hidden="true">←</span> Back to the design sheet
             </Link>
           ) : undefined
         }
       />
       {load.state === "loading" ? (
-        <section className="pg-sec" aria-busy="true">
+        <section className="pg-sec" aria-busy="true" aria-label="Loading the kit">
           <div className="sk sk-line" />
           <div className="sk sk-block" />
         </section>
       ) : null}
-      {load.state === "missing" ? (
-        <section className="pg-sec kit-state" data-state="missing">
-          <div className="kit-state-text">
-            <p className="kit-state-lead">The link may be mistyped, or the kit was removed. Kits you bought are in My places.</p>
-            <p className="kit-state-links">
-              <Link className="ink-button" href={PLACES_URL}>
-                My places
-              </Link>
-              <Link className="ghost mono" href={BRIEF_URL}>
-                Survey a storefront
-              </Link>
-            </p>
-          </div>
-        </section>
-      ) : null}
+      {load.state === "missing" ? <Missing /> : null}
       {load.state === "failed" ? (
-        <section className="pg-sec">
+        <section className="pg-sec" aria-label="The kit did not load">
           <p className="page-alert" role="alert">
             {load.message}{" "}
             <button type="button" className="text-button" onClick={restart}>
@@ -404,12 +370,14 @@ export function KitPage({ token }: { token: string }) {
       ) : null}
       {view?.status === "building" ? <Building view={view} stalled={load.state === "shown" ? load.stalled : null} onCheck={restart} /> : null}
       {view?.status === "failed" ? <Failed view={view} onRetried={restart} /> : null}
-      {view?.status === "refunded" ? <Refunded view={view} /> : null}
-      {view && kit ? <Ready view={view} kit={kit} onChanged={restart} /> : null}
+      {view && kit ? <Ready view={view} kit={kit} /> : null}
       {view?.status === "ready" && !kit ? (
-        <section className="pg-sec">
+        <section className="pg-sec" aria-label="The kit did not load">
           <p className="page-alert" role="alert">
-            The kit is ready but came without its contents. Reload the page to try again.
+            The kit is ready but came without its contents.{" "}
+            <button type="button" className="text-button" onClick={restart}>
+              Load it again
+            </button>
           </p>
         </section>
       ) : null}

@@ -20,6 +20,13 @@ export interface Block {
   widths: number[];
 }
 
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface PosterLayout {
   name: Block;
   tagline: Block | null;
@@ -29,7 +36,12 @@ export interface PosterLayout {
   subline: Block | null;
   hours: Block | null;
   hoursLabelY: number | null;
-  qr: { x: number; y: number; size: number };
+  /** Where the hours and their label start. */
+  hoursX: number;
+  /** The box the hours sit in when they take the QR code's place; null when they run under the subline. */
+  hoursBox: Box | null;
+  /** The QR code's square; null for a poster without a link of the owner's to send a passer-by to. */
+  qr: { x: number; y: number; size: number } | null;
   proof: Block | null;
 }
 
@@ -88,17 +100,26 @@ function block(lines: string[], size: number, top: number, leading: number, widt
 
 const bottomOf = (b: Block | null, fallback: number) => (b ? (b.y.at(-1) ?? fallback) + b.size * 0.3 : fallback);
 
-/** Lays the poster out; when the walk's map would be too small, the name is set smaller until it fits. */
-export function layoutPoster(text: PosterText, measure: Measure): PosterLayout {
-  let layout = attempt(text, measure, 1);
+const QR_SIZE = 148;
+const GUTTER = 28;
+const HOURS_SIZE = 13.5;
+const BOX_PAD = 16;
+const BOX_MOST = 232;
+
+/**
+ * Lays the poster out; when the walk's map would be too small, the name is set smaller until it fits. Without a QR code
+ * the band keeps its two columns: the subline on the left, and the hours in a box where the code would be.
+ */
+export function layoutPoster(text: PosterText, measure: Measure, { qr = true }: { qr?: boolean } = {}): PosterLayout {
+  let layout = attempt(text, measure, 1, qr);
   for (const scale of [0.86, 0.74, 0.62]) {
     if (layout.map.height >= 170) break;
-    layout = attempt(text, measure, scale);
+    layout = attempt(text, measure, scale, qr);
   }
   return layout;
 }
 
-function attempt(text: PosterText, measure: Measure, scale: number): PosterLayout {
+function attempt(text: PosterText, measure: Measure, scale: number, withQr: boolean): PosterLayout {
   const top = 84;
   const named = nameLines(text.name, measure, scale);
   const name = block(named.lines, named.size, top, 0.98, (line) => measure(line, "serif", named.size));
@@ -125,8 +146,16 @@ function attempt(text: PosterText, measure: Measure, scale: number): PosterLayou
   }
 
   const bandTop = POSTER_H - 236;
-  const qrSize = 148;
-  const columnWidth = INNER - qrSize - 28;
+  const slotTop = bandTop + 24;
+  const groups = (text.hours ?? "").split(" · ").filter(Boolean).slice(0, 4);
+  const hoursWidth = (line: string) => measure(line, "sans", HOURS_SIZE);
+  // Without a QR code, the hours take its place in a box as wide as they need, between the code's width and BOX_MOST.
+  const boxed = !withQr && Boolean(text.subline) && groups.length > 0;
+  const boxWidth = boxed
+    ? Math.ceil(Math.min(BOX_MOST, Math.max(QR_SIZE, ...groups.map(hoursWidth).map((width) => width + 2 * BOX_PAD))))
+    : 0;
+  const right = withQr ? QR_SIZE : boxWidth;
+  const columnWidth = right ? INNER - right - GUTTER : INNER;
   let subline: Block | null = null;
   let bandY = bandTop + 26;
   if (text.subline) {
@@ -137,12 +166,17 @@ function attempt(text: PosterText, measure: Measure, scale: number): PosterLayou
   }
   let hours: Block | null = null;
   let hoursLabelY: number | null = null;
-  if (text.hours) {
-    hoursLabelY = Math.round(bandY + 12);
-    const size = 13.5;
-    const groups = text.hours.split(" · ").filter(Boolean).slice(0, 4);
-    const lines = groups.flatMap((group) => fitLines(group, columnWidth, (line) => measure(line, "sans", size), 1));
-    hours = block(lines, size, hoursLabelY + 6, 1.38, (line) => measure(line, "sans", size));
+  let hoursBox: Box | null = null;
+  const hoursX = boxed ? POSTER_W - POSTER_M - boxWidth + BOX_PAD : POSTER_M;
+  if (groups.length) {
+    hoursLabelY = Math.round(boxed ? slotTop + BOX_PAD + 10 : bandY + 12);
+    const width = boxed ? boxWidth - 2 * BOX_PAD : columnWidth;
+    const lines = groups.flatMap((group) => fitLines(group, width, hoursWidth, 1));
+    hours = block(lines, HOURS_SIZE, hoursLabelY + 6, 1.38, hoursWidth);
+    if (boxed) {
+      const bottom = Math.round(bottomOf(hours, hoursLabelY) + BOX_PAD);
+      hoursBox = { x: POSTER_W - POSTER_M - boxWidth, y: slotTop, width: boxWidth, height: bottom - slotTop };
+    }
   }
 
   let proof: Block | null = null;
@@ -162,7 +196,9 @@ function attempt(text: PosterText, measure: Measure, scale: number): PosterLayou
     subline,
     hours,
     hoursLabelY,
-    qr: { x: POSTER_W - POSTER_M - qrSize, y: bandTop + 24, size: qrSize },
+    hoursX,
+    hoursBox,
+    qr: withQr ? { x: POSTER_W - POSTER_M - QR_SIZE, y: slotTop, size: QR_SIZE } : null,
     proof,
   };
 }
@@ -170,3 +206,15 @@ function attempt(text: PosterText, measure: Measure, scale: number): PosterLayou
 /** A stand-in measure from character counts, for tests and for the first paint before the fonts have loaded. */
 export const roughMeasure: Measure = (text, face, size, italic = false) =>
   text.length * size * (face === "mono" ? 0.6 : face === "sans" ? 0.52 : italic ? 0.43 : 0.47);
+
+/**
+ * The line over the poster's map, in capitals, for the area the survey read ("10-minute walk", "30-minute drive",
+ * "25 km drive"): "EVERYONE INSIDE THE BLUE LINE IS A 10-MINUTE WALK AWAY", "… IS WITHIN A 30-MINUTE DRIVE".
+ */
+export function posterAreaLine(area: string): string {
+  // The article follows the number as it is said: "an 8-minute walk", "an 11 km drive", "an 18-minute drive".
+  const words = `${/^(8|1[18](?!\d))/.test(area) ? "AN" : "A"} ${area.toUpperCase()}`;
+  return /walk$/i.test(area.trim())
+    ? `EVERYONE INSIDE THE BLUE LINE IS ${words} AWAY`
+    : `EVERYONE INSIDE THE BLUE LINE IS WITHIN ${words}`;
+}

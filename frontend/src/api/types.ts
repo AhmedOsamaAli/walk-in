@@ -1,11 +1,14 @@
 /* Payloads of the Walk-in API (app/main.py), limited to the fields this app reads. */
 
 export type Focus = "any" | "food_drink" | "retail" | "leisure";
-export type WalkMinutes = 5 | 10 | 15;
 export type LatLon = [number, number];
 /** What the owner wants: the block's best businesses, a verdict on their own idea, or how to improve their place. */
 export type Intent = "explore" | "open" | "improve";
 export type Kitchen = "full" | "light" | "none";
+/** Contract 10-23. How the survey area is measured: a walk or a drive of `minutes`, or a road distance of `km`. */
+export type Travel = "walk" | "drive" | "distance";
+/** Contract 10-23. Who the owner wants to serve; "all" leaves Qloo's ranking unbiased. */
+export type Ages = "all" | "under_25" | "25_34" | "35_54" | "55_plus";
 
 export interface Preset {
   id: string;
@@ -39,6 +42,14 @@ export interface Walk {
   ring: LatLon[];
   area_km2: number;
   radius_m: number;
+  /** Contract 10-23. Missing on surveys made before drives and distances: a walk. */
+  travel?: Travel;
+  /** Road distance in km, for travel "distance". */
+  km?: number | null;
+  /** "10-minute walk", "30-minute drive", "25 km drive": say this in sentences, never compose "N-minute walk". */
+  label?: string;
+  /** "10-min walk", "30-min drive", "25 km drive": for chips and the map line. */
+  short?: string;
 }
 
 /** Why a place counts as established: a Michelin Guide listing or a long TripAdvisor review history. */
@@ -53,11 +64,10 @@ export interface PlaceCard {
   name: string | null;
   address?: string | null;
   image?: string | null;
-  /** Its menu page when Qloo has one, else its website: where its real prices can be checked. */
+  /** Its menu page when Qloo has one, else its website: where its offer can be checked. */
   url?: string | null;
   link?: "menu" | "site" | null;
   rating?: number | null;
-  price_level?: number | null;
   genres?: string[];
   /** The dishes and experience themes its reviews mention most, written to read inside a sentence. */
   known_for?: string[];
@@ -91,7 +101,6 @@ export interface Classic extends Standing {
   id: string | null;
   name: string;
   genre: string;
-  price_level?: number | null;
   known_for: string[];
 }
 
@@ -99,7 +108,6 @@ export interface BlockSummary {
   place_count?: number;
   top_genres?: Tally[];
   avg_rating?: number | null;
-  price_levels?: Record<string, number>;
   menu?: TopicGroup[];
   experience?: TopicGroup[];
   complaints?: TopicGroup[];
@@ -117,34 +125,32 @@ export interface DemandPayload {
 
 export type Evidence = "ok" | "thin" | "atypical";
 
-/** A real place at a price level, whose own menu or website shows what that level costs here. */
-export interface PriceAnchor {
+/** A place of the gap's kind that OpenStreetMap shows inside the walk and Qloo does not list there. */
+export interface OsmPlace {
   name: string;
-  level: number;
-  url: string | null;
-  link: "menu" | "site" | null;
-  within_walk: boolean;
+  lat: number;
+  lon: number;
+  /** Its OpenStreetMap page, such as https://www.openstreetmap.org/node/123. */
+  url: string;
+  /** What OpenStreetMap says it is: "shop=bakery". */
+  tag?: string | null;
+  distance_m?: number;
 }
 
-/** One of Qloo's four price levels: how many places locals love, and how many inside the walk, sit there. */
-export interface PriceStep {
-  level: number;
-  loved: number;
-  inside: number;
-}
-
-export interface PriceEvidence {
-  /** The level to charge: what the evidence supports, within the owner's price range. */
-  level: number | null;
-  evidence_level: number | null;
-  /** Median price level of the places locals love, and of the places inside the walk. */
-  loved: number | null;
-  nearby: number | null;
-  basis: string;
-  ladder?: PriceStep[];
-  /** "No $$$ cocktail bar inside the walk, while 3 of the 8 cocktail bars locals love are $$$: that price level is open." */
-  open_note?: string | null;
-  anchors?: PriceAnchor[];
+/** The gap's cross-check with OpenStreetMap. Its data is © OpenStreetMap contributors, under the ODbL. */
+export interface OsmCheck {
+  /** False when OpenStreetMap did not answer, or no tag reliably marks this kind of place. */
+  checked: boolean;
+  /** Places of this kind OpenStreetMap shows inside the walk, Qloo's included. */
+  count: number;
+  /** The ones Qloo does not list there, nearest first; the gap counts them as supply. */
+  extra: OsmPlace[];
+  reason?: "unavailable" | "unmapped" | "off" | null;
+  /** The reason in words, or why the places were counted but not compared one by one. */
+  note?: string | null;
+  /** When the OpenStreetMap data was last updated on the server that answered. */
+  as_of?: string | null;
+  credit?: string | null;
 }
 
 export interface UnitFit {
@@ -160,6 +166,7 @@ export interface GapRow {
   genre: string;
   demand_rank: number;
   ref_rank: number | null;
+  /** Places of this kind Qloo lists inside the walk; `osm.extra` holds those only OpenStreetMap shows. */
   nearby_count: number;
   nearby_capped: boolean;
   favorites_kind: "local" | "citywide";
@@ -178,10 +185,11 @@ export interface GapRow {
   /** The row in two or three words ("Clear gap", "Crowded"), and in plain sentences with its numbers. */
   reading?: string;
   why?: string[];
-  price?: PriceEvidence;
   fit?: UnitFit | null;
   /** Why the owner's notes rule the category out ("serves alcohol"), or null. */
   ruled_out?: string | null;
+  /** The OpenStreetMap cross-check; missing in surveys saved before it existed. */
+  osm?: OsmCheck | null;
 }
 
 export interface HeatCell {
@@ -240,6 +248,62 @@ export interface Verdict {
   gap_score?: number;
   evidence: string[];
   row?: GapRow;
+  /** Contract 10-23. The brand's own stores in the area, when the business named is a chain Qloo knows. */
+  chain?: ChainCheck | null;
+}
+
+/** Contract 10-23. How many stores of a chain are already in the area ("Test my idea" with a brand name). */
+export interface ChainCheck {
+  brand: string;
+  inside: number;
+  /** Stores in the area twice as far; null when it could not be counted. */
+  around: number | null;
+  /** True when `inside` hit the counting limit: show it as "50+". */
+  capped?: boolean;
+  /** Ready to show: "1 Starbucks is already inside the 10-minute walk, and 4 within a 20-minute walk." */
+  line: string;
+  basis: string;
+}
+
+/**
+ * Contract 10-23. Who the places people here love draw, from Qloo's audience data: relative leans against everyone,
+ * not head counts.
+ */
+export interface Audience {
+  /** The age band these places lean to most clearly, "35–44"; null when no band stands out. */
+  ages: string | null;
+  age_min: number | null;
+  age_max: number | null;
+  /** Only when the lean is clear. */
+  gender: "women" | "men" | null;
+  /** Six rows in order (Under 25, 25–29, 30–34, 35–44, 45–54, 55+), lean from -1 to 1 where 0 is like everyone. */
+  bands: { band: string; lean: number }[];
+  /** Above 0 leans women, below 0 leans men; null when unknown. */
+  gender_lean: number | null;
+  /** The loved places it is read from. */
+  places: string[];
+  line: string;
+  basis: string;
+  /** What an ad platform takes: "Ages 30–44, women"; null when nothing leans clearly. */
+  ad?: string | null;
+  /** True when too few loved places had audience data, so this is the category everywhere (the line says so). */
+  general?: boolean;
+  /**
+   * Contract 10-23b. Who the places of this kind already inside the area draw, read the same way (median leans);
+   * null when fewer than 3 of them have audience data, or the audience is `general`.
+   */
+  inside?: {
+    ages: string | null;
+    gender: "women" | "men" | null;
+    gender_lean: number | null;
+    bands: { band: string; lean: number }[];
+    places: string[];
+  } | null;
+  /**
+   * Contract 10-23b. Ready to show, only when the places already here lean away from a group the loved places draw:
+   * "The 6 hamburger places already inside the walk … The ones people here love draw women: aim the concept at them."
+   */
+  tip?: string | null;
 }
 
 /** What the place and the places locals love in its category have; `missing` counts the places that offer it. */
@@ -256,10 +320,9 @@ export interface Comparison {
   /** False when few peers are priced like the place, so their offer and hours are a weak guide. */
   comparable: boolean;
   peer_names: string[];
-  /** The peers' own menus or websites, where their real prices can be checked. */
-  peer_links?: { name: string; price_level: number | null; url: string | null; link: "menu" | "site" | null }[];
+  /** The peers' own menus or websites, where their offer can be checked. */
+  peer_links?: { name: string; url: string | null; link: "menu" | "site" | null }[];
   rating: { place: number | null; peers: number | null };
-  price: { place: number | null; peers: number | null };
   hours: { place: Record<string, string> | null; peers: Record<string, string> | null };
   offer: Record<string, OfferDiff>;
   known_for: string[];
@@ -291,22 +354,43 @@ export interface PlacePayload {
   site: { lat: number; lon: number; label: string };
 }
 
-/** Lists written by the agent are cleaned by the server but not guaranteed to be lists, hence `unknown`. */
+/** One of the two things a wild-card concept combines, and the Qloo evidence that people here love it. */
+export interface LoveItem {
+  /** What people here love, in plain words: "coffee shops". */
+  item: string;
+  /** Its category in the gap table. */
+  genre: string;
+  /** The evidence in words: the trips people here make for it, or how they rank it. */
+  source: string;
+}
+
+/**
+ * Lists written by the agent are cleaned by the server but not guaranteed to be lists, hence `unknown`. The ranked
+ * concepts come first, then at most one wild card: two things people here love combined, untested and never ranked.
+ */
 export interface Concept {
   name: string;
   genre: string;
-  gap_score: number;
+  genre_id?: string | null;
+  /** The category's gap score; null for the wild card, which is never ranked. */
+  gap_score: number | null;
   one_liner?: string;
   for_whom?: string;
-  /** Null when Qloo lists no prices for the category here. */
-  price_level?: number | null;
-  price_basis?: string;
-  price_anchors?: PriceAnchor[];
   why_here?: unknown;
+  /** Who it competes with inside the walk; its last sentence names what the places people here love are known for
+   * and none inside the walk is. */
   beat_competitors?: string;
   signature?: unknown;
   inspired_by?: unknown;
   risk?: string;
+  /** How it meets each rule the owner gave, one plain line each: the unit, the kitchen, the price band, the diet. */
+  owner_rules?: unknown;
+  /** The extra concept after the ranked ones. */
+  wildcard?: boolean;
+  /** For the wild card: the two loves it combines. */
+  combines?: LoveItem[] | null;
+  /** For the wild card: why it is untested. */
+  caution?: string | null;
 }
 
 export interface ConceptsPayload {
@@ -317,6 +401,8 @@ export interface ConceptsPayload {
   caution?: string;
   model?: string | null;
   replayed_from?: number | null;
+  /** What was repaired, replaced or dropped to keep to the evidence and the owner's rules, in plain words. */
+  notes?: unknown;
 }
 
 export interface BaselineConcept {
@@ -341,14 +427,22 @@ export interface RunSite {
   intent?: string;
   business?: string;
   place_id?: string;
+  /** Contract 10-23. Missing on older surveys: a walk, for everyone. */
+  travel?: string;
+  km?: number | null;
+  ages?: string;
 }
 
 export interface RunPayload {
   run_id: string;
   llm: boolean;
-  /** What the server read from the owner's notes as rules ("no alcohol", "budget prices ($–$$)"). */
+  /** What the server read from the owner's notes as rules ("no alcohol", "budget prices"). */
   understood?: string[];
   site?: RunSite;
+  /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive". */
+  area_label?: string;
+  /** Contract 10-23. "Under 25", "25–34", "35–54", "55+"; null when the survey is for everyone. */
+  ages_label?: string | null;
 }
 
 export type StepState = "running" | "done" | "failed";
@@ -421,7 +515,8 @@ export interface RunRequest {
   label: string;
   focus: Focus;
   notes: string;
-  minutes: WalkMinutes;
+  /** The walk or the drive in minutes, 5 to 60; unused for a road distance. */
+  minutes: number;
   intent: Intent;
   /** The business to open (intent "open"). */
   business?: string;
@@ -430,19 +525,10 @@ export interface RunRequest {
   sizeM2?: number;
   kitchen?: Kitchen;
   outdoor?: boolean;
-}
-
-export interface Interior {
-  mood?: string;
-  materials?: unknown;
-  lighting?: string;
-  layout?: string;
-  seating?: string;
-}
-
-export interface Partner {
-  name?: string;
-  why?: string;
+  /** Contract 10-23. Walk and drive take `minutes` (5–60); distance takes `km` (1–100). */
+  travel?: Travel;
+  km?: number;
+  ages?: Ages;
 }
 
 /** How many of the places locals love carry one of Qloo's tags: who they draw, when people go, or why. */
@@ -477,8 +563,12 @@ export interface LaunchPlan {
     brands: string[];
     /** Names this category's fans love too. */
     shared: string[];
+    /** Contract 10-23. Who the loved places of this kind draw. */
+    people?: Audience | null;
   };
   where: {
+    /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive". */
+    label?: string;
     minutes: number;
     reach_m: number | null;
     neighborhoods: string[];
@@ -495,40 +585,37 @@ export interface LaunchPlan {
   basis?: string;
 }
 
+/** The unit as the owner described it: "60 m² (646 ft²)", "a light-prep kitchen", and "yes", "none" or "unknown". */
+export interface UnitText {
+  size: string;
+  kitchen: string;
+  outdoor_space: string;
+}
+
+/**
+ * A concept's design sheet (POST /api/design): what it sells, when it opens, what the unit holds, how it keeps the
+ * owner's rules, what to play, screen and host, and how it launches. Sheets saved before the cuts may carry an interior,
+ * a mood board, renders or prices too: those are never read.
+ */
 export interface Design {
   name?: string;
-  tagline?: string;
-  concept_statement?: string;
-  interior?: Interior | null;
+  /** The concept's one-liner. */
+  tagline?: string | null;
+  /** The concept's signature first, then what the places people here love are known for. */
   offer?: unknown;
-  price_level?: number | null;
-  price_basis?: string;
-  price_anchors?: PriceAnchor[];
   hours?: string | null;
   hours_basis?: string | null;
+  unit?: UnitText | null;
   /** "about 27–32 seated guests at most", when the owner gave the unit's size. */
   capacity?: string | null;
   capacity_basis?: string | null;
-  unit?: { size: string; kitchen: string; outdoor_space: string } | null;
   experience?: ExperiencePlan | null;
   launch?: LaunchPlan | null;
-  music?: { direction?: string; artists?: unknown } | null;
-  partners?: Partner[] | null;
-  dna?: Record<string, unknown> | null;
+  /** Contract 10-23. Who the loved places of this kind draw: the people to win. */
+  audience?: Audience | null;
+  /** How the concept keeps each rule the owner gave, one plain line each. */
+  owner_rules?: unknown;
+  /** "rules"; sheets made before the cuts may say "agent". */
   mode?: string;
   model?: string | null;
-  shots?: unknown;
-  renders?: { enabled?: boolean; model?: string | null } | null;
-}
-
-export interface Shot {
-  kind: string;
-  label: string;
-}
-
-export interface RenderResult {
-  image?: string | null;
-  model?: string | null;
-  queued?: boolean;
-  detail?: string;
 }

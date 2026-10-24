@@ -1,15 +1,27 @@
 import * as L from "leaflet";
 import { api } from "../api/client";
-import type { FavoritePlace, GapRow, HeatCell, LatLon, PlaceCard, Walk } from "../api/types";
+import type { GapRow, HeatCell, LatLon, Walk } from "../api/types";
+import { areaKey, WALK_10, type Area } from "../lib/area";
 import { coords } from "../lib/format";
+import { expandLabel, streetZoom, walkReach } from "../lib/fullmap";
 import { prefersReducedMotion } from "../lib/motion";
 import type { Theme } from "../state/theme";
-import { arc, cellSpan, distanceM, metersToLat, WALK_M_PER_MIN } from "./geometry";
-import { placeTip } from "./tooltip";
+import { arc, cellSpan, metersToLat, reachM } from "./geometry";
+import { PinLayer, SITE_LAYER } from "./pinLayer";
+import { areaWord, type Pin } from "./pins";
 
 export interface MapPoint {
   lat: number;
   lon: number;
+}
+
+export interface MapOptions {
+  /** Adds the corner control that grows the map to fill the screen and back; called when it is pressed. */
+  onExpand?: () => void;
+  /** A pin of the open category was clicked, tapped, or pressed with Enter or Space. */
+  onPin?: (pin: Pin, byKeyboard: boolean) => void;
+  /** The open category's taste grid is on the map, or no longer is. */
+  onGrid?: (shown: boolean) => void;
 }
 
 /**
@@ -37,18 +49,32 @@ const CREDITS_OPEN_MS = 5000;
 const BASEMAP_FADE_MS = 600;
 /** How long a theme switch waits for the new tiles before showing them anyway, say on a hidden map. */
 const BASEMAP_SWAP_TIMEOUT_MS = 30_000;
-const TIP: L.TooltipOptions = { className: "tip", direction: "top", offset: [0, -6], opacity: 1 };
-/** Farthest a gap's places may be from the site and still be drawn: favorites are searched within 15 km. */
-const MAX_PLACE_M = 60_000;
 const PIN_HTML = '<div class="site-pin"><span class="sq"></span><span class="tagl">Site</span></div>';
-
-type Located<T extends PlaceCard> = T & { lat: number; lon: number };
-const located = <T extends PlaceCard>(place: T): place is Located<T> => place.lat != null && place.lon != null;
+/** The corner control's icons: four corners pointing out to grow the map, and in to shrink it back. Both stay in the
+ * button, which shows one or the other: replacing them mid-click would detach the click's target from the control. */
+const EXPAND_ICONS =
+  '<svg class="grow" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/></svg>' +
+  '<svg class="shrink" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5"/></svg>';
 
 /** One theme's tile layers. */
 interface Basemap {
   theme: Theme;
   layers: L.TileLayer[];
+}
+
+/**
+ * The same area traced again, as when the survey's own trace replaces the brief's: drawn once, so it does not fade in
+ * twice. A walk and a drive of the same minutes are different areas, however alike their rings' lengths.
+ */
+function sameWalk(a: Walk, b: Walk): boolean {
+  return (
+    (a.travel ?? "walk") === (b.travel ?? "walk") &&
+    a.minutes === b.minutes &&
+    (a.km ?? null) === (b.km ?? null) &&
+    a.ring.length === b.ring.length &&
+    a.ring[0]?.[0] === b.ring[0]?.[0] &&
+    a.ring[0]?.[1] === b.ring[0]?.[1]
+  );
 }
 
 function dropBasemap(basemap: Basemap | null): void {
@@ -67,7 +93,10 @@ export class BlueprintMap {
   /** The previous theme's tiles, kept on screen until the current ones have loaded. */
   private fading: Basemap | null = null;
   private readonly gridRenderer: L.Canvas;
-  private readonly layers: Record<"grid" | "ring" | "block" | "gap" | "site", L.LayerGroup>;
+  private readonly layers: Record<"grid" | "ring" | "gap" | "site", L.LayerGroup>;
+  /** The open category's labeled pins. */
+  private readonly pins: PinLayer;
+  private readonly onGrid: (shown: boolean) => void;
   /** On narrow screens the frame grows for the survey and shrinks back for the brief; Leaflet must re-measure it. */
   private readonly resizer: ResizeObserver;
   private readonly idleQueue: (() => void)[] = [];
@@ -78,17 +107,26 @@ export class BlueprintMap {
   private destroyed = false;
   private site: MapPoint | null = null;
   private walk: Walk | null = null;
-  private fallbackRadius = 10 * WALK_M_PER_MIN;
+  /** The area the brief or the survey asks for: until its ring is traced, a circle of its reach stands in for it. */
+  private area: Area = WALK_10;
+  /** The owner changed the area since its ring was last framed: its next ring is framed, in or out. */
+  private areaChanged = false;
   private running = false;
   private radar: L.Marker | null = null;
   private gap: GapRow | null = null;
   private runToken = 0;
   private moveToken = 0;
+  /** The corner control that grows the map to fill the screen, and its box in the corner. */
+  private expander: HTMLButtonElement | null = null;
+  private expandBox: HTMLElement | null = null;
+  /** The map fills the screen: a site chosen meanwhile is framed at street level. */
+  private expanded = false;
 
-  constructor(element: HTMLElement, readout: HTMLElement, onPick: (lat: number, lon: number) => void) {
+  constructor(element: HTMLElement, readout: HTMLElement, onPick: (lat: number, lon: number) => void, options: MapOptions = {}) {
     this.readout = readout;
     const map = L.map(element, { zoomControl: false, worldCopyJump: true, attributionControl: false }).setView([40.735, -73.975], 12);
     this.map = map;
+    if (options.onExpand) this.addExpander(options.onExpand);
     L.control.zoom({ position: "topright" }).addTo(map);
     this.addCredits();
     const scale = L.control.scale({ position: "bottomright", imperial: false, maxWidth: 120 }).addTo(map);
@@ -105,10 +143,15 @@ export class BlueprintMap {
     this.layers = {
       grid: L.layerGroup().addTo(map),
       ring: L.layerGroup().addTo(map),
-      block: L.layerGroup().addTo(map),
       gap: L.layerGroup().addTo(map),
       site: L.layerGroup().addTo(map),
     };
+    this.pins = new PinLayer(map, {
+      onSelect: (pin, byKeyboard) => {
+        options.onPin?.(pin, byKeyboard);
+      },
+    });
+    this.onGrid = options.onGrid ?? (() => undefined);
 
     map.on("mouseover", () => {
       this.pointerOnMap = true;
@@ -150,6 +193,7 @@ export class BlueprintMap {
     for (const timer of this.timers) window.clearTimeout(timer);
     this.idleQueue.length = 0;
     this.map.off("zoomend", this.resizeRadar);
+    this.pins.destroy();
     this.map.remove();
   }
 
@@ -168,32 +212,86 @@ export class BlueprintMap {
     this.clearRun();
     this.layers.ring.clearLayers();
     this.drawPin(site);
-    this.map.flyTo([site.lat, site.lon], Math.max(this.map.getZoom(), 15), this.flight(1.4));
+    // Close enough to see the area whole, as far as it is known before it is traced (the circle of its reach), and never
+    // further out than the map already is, so a pin moved about at street level stays there; once traced, the ring
+    // brings the map out if it reaches past the edges (fitWalk). Full screen, a site placed from a city-wide view or
+    // found by the search is framed at street level.
+    const zoom = this.expanded ? this.siteZoom(site) : Math.min(16, this.reachZoom(site));
+    this.map.flyTo([site.lat, site.lon], Math.max(this.map.getZoom(), zoom), this.flight(1.4));
+  }
+
+  /** The area the brief or the survey asks for: its circle frames a new site, and stands in for its ring until traced. */
+  setArea(area: Area): void {
+    if (areaKey(area) !== areaKey(this.area)) this.areaChanged = true;
+    this.area = area;
+  }
+
+  /**
+   * The map fills the screen, or no longer does: the corner control says which. The frame has just changed size, so
+   * Leaflet re-measures it now, keeping the same center. Over a survey, the area is framed again for the new size, in or
+   * out; on the brief, the full-screen map keeps the owner's street level, and the area shows whole once back.
+   */
+  setExpanded(expanded: boolean, survey = false): void {
+    const changed = expanded !== this.expanded;
+    this.expanded = expanded;
+    this.labelExpander();
+    this.map.invalidateSize();
+    // The open category's pins are framed again for the map's new size.
+    if (changed && this.gap && this.pins.size) this.frame();
+    else if (changed && this.walk && (survey || !expanded)) this.fitWalk(this.walk, survey);
+  }
+
+  /** Shows the corner control only where the map can grow: on the brief, and docked beside a survey. */
+  setExpandable(expandable: boolean): void {
+    if (this.expandBox) this.expandBox.hidden = !expandable;
+  }
+
+  focusExpander(): void {
+    this.expander?.focus({ preventScroll: true });
+  }
+
+  /** Brings a pin of the open category into view, for a list's "show on the map"; null when it is not drawn. */
+  revealPin(key: string): Pin | null {
+    return this.pins.reveal(key, !prefersReducedMotion());
+  }
+
+  focusPin(key: string): void {
+    this.pins.focus(key);
+  }
+
+  /** Once the map is still, moves it so a pin is not under its card (`cover`, over the full-screen map). */
+  uncoverPin(key: string, cover: DOMRect): void {
+    this.whenIdle(() => {
+      if (!this.destroyed) this.pins.uncover(key, cover, !prefersReducedMotion());
+    });
+  }
+
+  /** The middle of the map: where Enter places the site from the keyboard. */
+  center(): MapPoint {
+    const { lat, lng } = this.map.getCenter().wrap();
+    return { lat, lon: lng };
   }
 
   showWalk(walk: Walk): void {
     const previous = this.walk;
     this.walk = walk;
-    const same =
-      previous !== null &&
-      previous.minutes === walk.minutes &&
-      previous.ring.length === walk.ring.length &&
-      this.layers.ring.getLayers().length > 0;
+    const same = previous !== null && sameWalk(previous, walk) && this.layers.ring.getLayers().length > 0;
     if (!same) {
       this.whenIdle(() => {
         this.drawWalk(walk);
+        this.fitWalk(walk);
       });
     }
   }
 
-  /** A survey started: frame the walk and sweep it with the radar until the run ends. */
-  startRun(minutes: number): void {
+  /** A survey started: frame the area and sweep it with the radar until the run ends. */
+  startRun(area: Area): void {
     this.clearRun();
     this.running = true;
-    this.fallbackRadius = minutes * WALK_M_PER_MIN;
+    this.area = area;
     // The frame may have just changed size for the survey view; frame the walk against its new size.
     this.map.invalidateSize();
-    this.map.flyToBounds(this.walkBounds(), { padding: [70, 70], maxZoom: 16, ...this.flight(1.2) });
+    this.map.flyToBounds(this.walkBounds(), { ...this.padding(), maxZoom: 16, ...this.flight(1.2) });
     this.startRadar();
   }
 
@@ -207,37 +305,22 @@ export class BlueprintMap {
     this.runToken += 1;
     this.running = false;
     this.gap = null;
-    this.layers.block.clearLayers();
     this.clearGap();
     this.stopRadar();
   }
 
-  plotBlock(places: PlaceCard[]): void {
-    const token = this.runToken;
-    this.whenIdle(() => {
-      if (token !== this.runToken) return;
-      this.layers.block.clearLayers();
-      const reach = this.walk?.radius_m ?? 10 * WALK_M_PER_MIN;
-      const reduced = prefersReducedMotion();
-      for (const place of places.filter(located)) {
-        const dot = L.circleMarker([place.lat, place.lon], { radius: 3.4, stroke: false, className: "pdot place" })
-          .bindTooltip(placeTip(place), TIP)
-          .addTo(this.layers.block);
-        const element = dot.getElement();
-        if (element instanceof SVGElement) {
-          // Places ripple outward from the site.
-          const share = Math.min(1.3, (place.distance_m ?? reach / 2) / reach);
-          element.style.animationDelay = reduced ? "0ms" : `${Math.round(share * 1100)}ms`;
-        }
-      }
-    });
-  }
-
-  /** Shows one gap's competitors, favorites, trips and taste grid, or clears them for null. */
+  /**
+   * Shows one category's places as labeled pins, the trips to the ones people here love outside the walk and its taste
+   * grid, framed with the walk; or, for null, clears them and frames the site and its walk again.
+   */
   showGap(gap: GapRow | null): void {
+    const had = this.gap !== null;
     this.gap = gap;
     if (!gap) {
       this.clearGap();
+      if (had && this.site && !this.running) {
+        this.map.flyToBounds(this.walkBounds(), { ...this.padding(), maxZoom: 16, ...this.flight(1.2) });
+      }
       return;
     }
     const token = this.runToken;
@@ -265,6 +348,25 @@ export class BlueprintMap {
 
   private flight(duration: number): L.ZoomPanOptions {
     return { animate: !prefersReducedMotion(), duration };
+  }
+
+  /**
+   * Room kept around what a flight frames, scaled to the map: about 26 px on the small docked map, 80 at full screen.
+   * The labels stand half their height beside their places, and the corner controls take the top.
+   */
+  private padding(): Pick<L.FitBoundsOptions, "paddingTopLeft" | "paddingBottomRight"> {
+    const { x, y } = this.map.getSize();
+    const pad = Math.round(Math.min(80, Math.max(18, Math.min(x, y) * 0.12)));
+    return { paddingTopLeft: [pad + 12, pad + 24], paddingBottomRight: [pad + 12, pad + 20] };
+  }
+
+  /** Frames the open category's pins and the walk, for the map's size now: the frame may have just been resized. */
+  private frame(): void {
+    this.map.invalidateSize();
+    const bounds = this.walkBounds();
+    const pins = this.pins.bounds();
+    if (pins) bounds.extend(pins);
+    this.map.flyToBounds(bounds, { ...this.padding(), maxZoom: 16, ...this.flight(1.2) });
   }
 
   /** The canvas grid cannot be styled with CSS, so it reads its color from the theme. */
@@ -329,6 +431,69 @@ export class BlueprintMap {
   }
 
   /**
+   * The corner control that grows the map to fill the screen and back, drawn like the zoom buttons. A click on it is
+   * not a click on the map: it stops at the control, so it never places a site under it, even once the map has grown.
+   */
+  private addExpander(onExpand: () => void): void {
+    const control = new L.Control({ position: "topleft" });
+    control.onAdd = () => {
+      const box = L.DomUtil.create("div", "map-expand");
+      const button = L.DomUtil.create("button", "map-expand-btn", box);
+      button.type = "button";
+      button.innerHTML = EXPAND_ICONS;
+      L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.disableScrollPropagation(box);
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        onExpand();
+      });
+      this.expandBox = box;
+      this.expander = button;
+      this.labelExpander();
+      return box;
+    };
+    control.addTo(this.map);
+  }
+
+  private labelExpander(): void {
+    const button = this.expander;
+    if (!button) return;
+    const label = expandLabel(this.expanded);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.toggleAttribute("data-expanded", this.expanded);
+  }
+
+  /** Street level for a site on the full-screen map: 16, or 15 when its area would not show whole at 16. */
+  private siteZoom(site: MapPoint): number {
+    const reach = L.latLng(site.lat, site.lon).toBounds(2 * walkReach(this.area));
+    return streetZoom(this.map.getBoundsZoom(reach, false, L.point(48, 48)));
+  }
+
+  /** The zoom at which the circle of the area's reach around a site shows whole. */
+  private reachZoom(site: MapPoint): number {
+    const reach = L.latLng(site.lat, site.lon).toBounds(2 * reachM(this.area));
+    return this.map.getBoundsZoom(reach, false, L.point(48, 48));
+  }
+
+  /**
+   * The area whole: the ring of an area the owner has just changed is framed, in or out, and so is any ring when
+   * `always` (a survey's map that has just changed size); any other ring that reaches past the map's edges brings the
+   * map out to its bounds, whatever its size, and one already in view leaves the map where the owner put it. Not on the
+   * brief's full-screen map, which stays at street level for placing the site, nor over an open category, which frames
+   * its pins with the area.
+   */
+  private fitWalk(walk: Walk, always = false): void {
+    if (walk !== this.walk || this.gap || this.destroyed || (this.expanded && !always)) return;
+    const ring = L.latLngBounds(walk.ring);
+    if (!ring.isValid()) return;
+    const changed = this.areaChanged;
+    this.areaChanged = false;
+    if (!always && !changed && this.map.getBounds().contains(ring)) return;
+    this.map.flyToBounds(ring, { ...this.padding(), maxZoom: 16, ...this.flight(1.2) });
+  }
+
+  /**
    * The credits in the map's corner: in full when the map appears, then collapsed into an (i) button after the first
    * pan, zoom or click, or after five seconds, as OpenStreetMap's guideline allows. The button opens them again.
    * Leaflet's own control rewrites its contents whenever the tiles change, so this one is separate.
@@ -375,7 +540,8 @@ export class BlueprintMap {
   private drawPin(site: MapPoint): void {
     this.layers.site.clearLayers();
     const icon = L.divIcon({ className: "site-icon", iconSize: [0, 0], html: PIN_HTML });
-    L.marker([site.lat, site.lon], { icon, interactive: false, keyboard: false }).addTo(this.layers.site);
+    // Above every pin: a pin never hides the site.
+    L.marker([site.lat, site.lon], { icon, interactive: false, keyboard: false, zIndexOffset: SITE_LAYER }).addTo(this.layers.site);
   }
 
   private drawWalk(walk: Walk): void {
@@ -386,14 +552,15 @@ export class BlueprintMap {
     );
   }
 
+  /** The ring traced, or else the circle of the area's reach around the site. */
   private walkBounds(): L.LatLngBounds {
     if (this.walk) return L.latLngBounds(this.walk.ring);
-    return this.site ? L.latLng(this.site.lat, this.site.lon).toBounds(1600) : this.map.getBounds();
+    return this.site ? L.latLng(this.site.lat, this.site.lon).toBounds(2 * reachM(this.area)) : this.map.getBounds();
   }
 
   private radarIcon(site: MapPoint): L.DivIcon {
     const center = L.latLng(site.lat, site.lon);
-    const radius = this.walk?.radius_m ?? this.fallbackRadius;
+    const radius = this.walk?.radius_m ?? reachM(this.area);
     const a = this.map.latLngToLayerPoint(center);
     const b = this.map.latLngToLayerPoint(L.latLng(center.lat + metersToLat(radius), center.lng));
     const r = Math.max(12, Math.round(Math.abs(a.y - b.y)));
@@ -426,50 +593,36 @@ export class BlueprintMap {
     this.moveToken += 1;
     this.layers.gap.clearLayers();
     this.layers.grid.clearLayers();
+    this.pins.clear();
     this.map.getPane("grid")?.classList.remove("in");
+    this.onGrid(false);
   }
 
   private drawGap(gap: GapRow): void {
     const site = this.site;
     if (!site) return;
     this.clearGap();
-    const origin: LatLon = [site.lat, site.lon];
-    // Favorites are searched within 15 km of the site, so anything far beyond is stale or bad data: drawing it once
-    // threw a trip across the Atlantic and pulled the camera out to the whole world.
-    const nearSite = <T extends PlaceCard>(place: Located<T>) => distanceM(origin, [place.lat, place.lon]) <= MAX_PLACE_M;
-    for (const place of (gap.competitors ?? []).filter(located).filter(nearSite)) {
-      L.circleMarker([place.lat, place.lon], { radius: 5, weight: 1.5, className: "pdot comp" })
-        .bindTooltip(placeTip(place), TIP)
-        .addTo(this.layers.gap);
-    }
-    const local = gap.favorites_kind === "local";
-    const favorites = (gap.favorites ?? []).filter(located).filter(nearSite);
-    for (const place of favorites) {
-      const style = local ? { radius: 5.5, className: "pdot fav" } : { radius: 5, className: "pdot famous" };
-      L.circleMarker([place.lat, place.lon], { ...style, weight: 1.5 }).bindTooltip(placeTip(place), TIP).addTo(this.layers.gap);
-    }
-    if (favorites.length) {
-      // Only places locals love more than the city say anything about travel; the city's famous spots do not.
-      const trips = local ? favorites.filter((place) => !place.within_walk) : [];
+    const pins = this.pins.show(gap, site, areaWord(this.walk?.travel));
+    // Only the places people here love more than the city say anything about travel; the city's famous spots do not.
+    const trips = pins.filter((pin) => pin.role === "loved" && !pin.inArea);
+    if (trips.length) {
+      const origin: LatLon = [site.lat, site.lon];
       this.afterMove(() => {
         this.drawTrips(origin, trips);
       });
-      const bounds = L.latLngBounds([origin, ...favorites.map((place): LatLon => [place.lat, place.lon])]);
-      if (this.walk) bounds.extend(this.walkBounds());
-      this.map.flyToBounds(bounds, { padding: [80, 80], maxZoom: 15, ...this.flight(1.2) });
     }
+    this.frame();
     void this.drawGrid(gap);
   }
 
-  private drawTrips(origin: LatLon, trips: Located<FavoritePlace>[]): void {
-    trips.forEach((place, k) => {
-      const line = L.polyline(arc(origin, [place.lat, place.lon]), { weight: 1.3, interactive: false, className: "leak" }).addTo(
+  private drawTrips(origin: LatLon, trips: Pin[]): void {
+    trips.forEach((pin, k) => {
+      const line = L.polyline(arc(origin, [pin.lat, pin.lon]), { weight: 1.3, interactive: false, className: "leak" }).addTo(
         this.layers.gap,
       );
       this.drawLine(line, k * 80);
     });
   }
-
   /** Runs once the next flight ends, or after a timeout if the map does not move; a newer gap cancels it. */
   private afterMove(callback: () => void): void {
     const token = ++this.moveToken;
@@ -543,6 +696,7 @@ export class BlueprintMap {
           },
         ).addTo(this.layers.grid);
       }
+      this.onGrid(this.layers.grid.getLayers().length > 0);
       const pane = this.map.getPane("grid");
       pane?.classList.remove("in");
       requestAnimationFrame(() =>

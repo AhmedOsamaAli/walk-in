@@ -1,5 +1,9 @@
-import type { MarkState } from "../lib/brand";
+import { useEffect, useRef, useState } from "react";
+import { markLabel, replays, type MarkState } from "../lib/brand";
 import { cx } from "../lib/css";
+import { prefersReducedMotion } from "../lib/motion";
+import { isPlainClick, type HomeMove } from "../lib/navigation";
+import { BRIEF_URL } from "../lib/routes";
 import type { Section, SectionId } from "../lib/sections";
 import type { Theme } from "../state/theme";
 import { AccountMenu } from "./AccountMenu";
@@ -11,19 +15,56 @@ interface TopBarProps {
   /** The mark follows the survey: where it stands, and how far along it is from 0 to 1. */
   mark: MarkState;
   progress: number;
+  /** What a click on the mark does from here; the app does it in place, without reloading the page. */
+  home: HomeMove;
+  onHome: () => void;
   /** The survey's sections; none on the pages that are not the survey. */
   sections: readonly Section[];
   ready: readonly SectionId[];
   current: SectionId | null;
   theme: Theme;
   onToggleTheme: () => void;
+  /** The map fills the screen over the bar: nothing on it can be reached meanwhile. */
+  inert?: boolean;
 }
 
-export function TopBar({ mark, progress, sections, ready, current, theme, onToggleTheme }: TopBarProps) {
+export function TopBar({ mark, progress, home, onHome, sections, ready, current, theme, onToggleTheme, inert = false }: TopBarProps) {
+  const [replay, setReplay] = useState(0);
+  /** When the last walk-in started, on performance.now()'s clock; the first plays as the page loads. */
+  const playedAt = useRef(0);
+
+  useEffect(() => {
+    playedAt.current = performance.now();
+  }, []);
+
+  function play(cause: "click" | "preview") {
+    const now = performance.now();
+    if (!replays(cause, prefersReducedMotion(), now - playedAt.current)) return;
+    playedAt.current = now;
+    setReplay((count) => count + 1);
+  }
+
   return (
-    <header className="bar">
-      <a className="mark" href="/" aria-label="Walk-in, start over">
-        <BrandMark state={mark} progress={progress} />
+    <header className="bar" inert={inert}>
+      <a
+        className="mark"
+        href={BRIEF_URL}
+        aria-label={markLabel(home)}
+        onPointerEnter={(event) => {
+          // A mouse hover previews the walk; a tap on a phone plays it with its click instead.
+          if (event.pointerType === "mouse") play("preview");
+        }}
+        onFocus={(event) => {
+          if (event.currentTarget.matches(":focus-visible")) play("preview");
+        }}
+        onClick={(event) => {
+          if (!isPlainClick(event)) return;
+          event.preventDefault();
+          play("click");
+          onHome();
+        }}
+      >
+        <BrandMark state={mark} progress={progress} replay={replay} />
         <span className="mark-word">Walk-in</span>
       </a>
       {sections.length ? (

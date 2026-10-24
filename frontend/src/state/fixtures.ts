@@ -1,5 +1,6 @@
-/* Test data: one explore survey as its stream sent it, and copies of its record as the server would return them. */
-import type { GapRow, RecordedEvent, RunRecord, RunSite, RunStatus, StepState, SurveyEvent } from "../api/types";
+/* Test data: one explore survey as its stream sent it, and copies of its record as the server would return them; and the
+   area and age focus of features/CONTRACT.md as the server sends them. */
+import type { GapRow, RecordedEvent, RunRecord, RunSite, RunStatus, StepState, SurveyEvent, Walk } from "../api/types";
 
 export function status(step: string, state: StepState, label = `Step ${step}`): SurveyEvent {
   return { event: "status", data: { step, state, label } };
@@ -44,6 +45,42 @@ export const SITE: RunSite = {
 
 export const RUN_EVENT: SurveyEvent = { event: "run", data: { run_id: "r1", llm: true, understood: ["no alcohol"], site: SITE } };
 export const DONE_EVENT: SurveyEvent = { event: "done", data: { run_id: "r1", seconds: 21.6, qloo_calls: 57, cache_hits: 3 } };
+
+/** A 30-minute drive from a suburb, for people aged 25–34, as the brief asks for it and the server records it. */
+export const DRIVE_SITE: RunSite = {
+  ...SITE,
+  lat: 30.5083,
+  lon: -97.6789,
+  label: "Round Rock, Texas",
+  travel: "drive",
+  minutes: 30,
+  km: null,
+  ages: "25_34",
+};
+
+/** The drive as the server traces it, with its own words. */
+export const DRIVE_WALK: Walk = {
+  minutes: 30,
+  source: "street network",
+  ring: [
+    [30.42, -97.76],
+    [30.6, -97.6],
+  ],
+  area_km2: 210.37,
+  radius_m: 9200,
+  travel: "drive",
+  km: null,
+  label: "30-minute drive",
+  short: "30-min drive",
+};
+
+export const DRIVE_RUN_EVENT: SurveyEvent = {
+  event: "run",
+  data: { run_id: "r2", llm: true, understood: [], site: DRIVE_SITE, area_label: "30-minute drive", ages_label: "25–34" },
+};
+
+/** A road distance off the quick picks: 12.5 km of road, for everyone. `minutes` is the brief's walk, unused. */
+export const DISTANCE_SITE: RunSite = { ...SITE, travel: "distance", km: 12.5, minutes: 10, ages: "all" };
 
 const WALK = "Tracing a 10-minute walk over the street network";
 const BLOCK = "Reading every place inside the 10-minute walk";
