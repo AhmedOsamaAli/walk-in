@@ -3,6 +3,7 @@ import type { Ages, Focus, Intent, Kitchen, PlaceHit, Preset, Travel } from "../
 import { areaLabel, KM_PICKS, MINUTE_PICKS, TRAVEL_LABELS } from "../lib/area";
 import { cssVars } from "../lib/css";
 import { coords, floorArea, INTENTS } from "../lib/format";
+import { spotTitle } from "../lib/fullmap";
 import { scrollBehavior } from "../lib/motion";
 import { walkLine, type WalkPreview } from "../lib/walk";
 import { isBigArea } from "../map/geometry";
@@ -19,6 +20,8 @@ import {
   type Choice,
 } from "../state/brief";
 import type { Site } from "../state/site";
+import { ExampleStrip } from "./ExampleStrip";
+import { MapsLink } from "./MapsLink";
 import { PlaceSearch } from "./PlaceSearch";
 import { PresetIndex } from "./PresetIndex";
 import { SearchBox } from "./SearchBox";
@@ -94,6 +97,14 @@ const INTENT_ICONS: Record<Intent, ReactNode> = {
 };
 /** Two columns: the map stays pinned beside the sheet, so scrolling the sheet never hides it. */
 const SIDE_BY_SIDE = "(min-width: 981px)";
+
+/**
+ * The brief's next step in view: its card whole when it fits under the bar, else from its site line, its primary action
+ * held at the foot of the screen while the card is on it (layout.css). Smooth unless motion is reduced.
+ */
+function showCard(card: HTMLElement | null): void {
+  card?.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
+}
 
 interface ChipsProps<T extends string | number> {
   name: string;
@@ -371,41 +382,53 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
   const sheet = useRef<HTMLElement>(null);
   const go = useRef<HTMLButtonElement>(null);
   const card = useRef<HTMLDivElement>(null);
+  const chosen = useRef<HTMLDivElement>(null);
   const fromBrief = useRef(false);
   const { intent } = form;
   const blocker = missing(site, form);
   /** The area to trace; none while "Other" holds a number out of the limits. */
   const area = briefArea(form);
+  /** The site's name: its address, or its coordinates for a pin placed by hand until its address comes. */
+  const named = site ? spotTitle(site.label, site.lat, site.lon) : null;
+  /** Where the site stands: a pin's address coming renames the site without moving it. */
+  const spot = site ? `${site.lat},${site.lon}` : null;
 
-  // A chosen site reveals the survey brief under the search; bring its button into view. A pin dropped on the map of a
-  // phone stays put, since the map sits above the sheet there and the user may still be moving the pin. Nor does the
-  // page move under the full-screen map: "Use this spot" brings the brief's next step into view once it shrinks.
+  // A chosen site reveals the survey brief under the search, and the brief comes into view with its button. Picked in
+  // the brief (the search, a sample site), focus moves on to its site line, which also closes a phone's keyboard; a pin
+  // dropped on the map beside the sheet leaves focus on the map, where the owner may still be moving it. A pin dropped
+  // on the map of a phone or tablet moves nothing, since the map sits above the sheet there: "Use this spot" waits at
+  // the foot of the screen instead (NextStep.tsx). Nor does the page move under the full-screen map, whose own "Use this
+  // spot" brings the brief's next step into view once it shrinks.
   useEffect(() => {
-    if (!site) return;
+    if (spot === null) return;
     const picked = fromBrief.current;
     fromBrief.current = false;
     if (document.documentElement.classList.contains("map-full")) return;
     if (!picked && !window.matchMedia(SIDE_BY_SIDE).matches) return;
     const frame = requestAnimationFrame(() => {
-      go.current?.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
+      if (picked) chosen.current?.focus({ preventScroll: true });
+      showCard(card.current);
     });
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [site]);
+  }, [spot]);
 
-  // "Use this spot" on the full-screen map: the brief takes over at its next step, the survey's button, or the field
-  // that still stands in its way ("What do you want to open?", "Your place").
+  // "Use this spot" (the full-screen map's, or the one at the foot of a phone's screen): the brief takes over at its
+  // next step, the survey's button, or the field that still stands in its way ("What do you want to open?", "Your
+  // place").
   useEffect(() => {
     if (!reveal) return;
     const button = go.current;
     const next = button && !button.disabled ? button : card.current?.querySelector<HTMLElement>("input:not([type=radio])");
     next?.focus({ preventScroll: true });
-    (next ?? button)?.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
+    showCard(card.current);
   }, [reveal]);
 
   function choose(next: Site) {
-    fromBrief.current = true;
+    // Only a new spot runs the effect that reads and clears this; the same one again must not leave it set for the
+    // next pin dropped on the map.
+    fromBrief.current = spot !== `${next.lat},${next.lon}`;
     onSite(next);
   }
 
@@ -413,8 +436,11 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
     choose({ id: preset.id, label: preset.label, lat: preset.lat, lon: preset.lon });
   };
 
-  /** "Try an example": the examples at the foot of the brief come into view, focus on the chosen one or the first. */
-  function toExamples() {
+  /**
+   * "Pick a sample site": the index of sites at the foot of the brief comes into view, focus on the chosen one or the
+   * first. Not the finished examples, which open a survey already run: those are the strip under the hint.
+   */
+  function toSamples() {
     const examples = sheet.current?.querySelector<HTMLElement>(".index");
     const chosen = examples?.querySelector<HTMLElement>('.site-btn[aria-pressed="true"]');
     (chosen ?? examples?.querySelector<HTMLElement>(".site-btn"))?.focus({ preventScroll: true });
@@ -446,18 +472,19 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
           or <span className="say-click">click</span>
           <span className="say-tap">tap</span> <span className="when-side">anywhere on the map</span>
           <span className="when-stacked">the map above</span>, or{" "}
-          <button type="button" className="hint-link" onClick={toExamples}>
-            try an example
+          <button type="button" className="hint-link" onClick={toSamples}>
+            pick a sample site
           </button>
         </p>
       </div>
 
       {site ? (
         <div ref={card} className="brief-card">
-          <div className="chosen">
+          <div ref={chosen} className="chosen" tabIndex={-1}>
             <span className="mono label">{intent === "improve" ? (form.place ? "Place" : "Near") : "Site"}</span>
-            <strong>{site.label}</strong>
-            <span className="mono muted">{coords(site.lat, site.lon)}</span>
+            <strong className={named?.isCoords ? "coords" : undefined}>{named?.text}</strong>
+            <MapsLink lat={site.lat} lon={site.lon} />
+            {named?.isCoords ? null : <span className="mono muted">{coords(site.lat, site.lon)}</span>}
             <span className="mono walk-note">{area ? walkLine(trace, area) : ""}</span>
           </div>
 
@@ -617,6 +644,8 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
           </div>
         </div>
       ) : null}
+
+      <ExampleStrip after={site !== null} />
 
       <PresetIndex selectedId={site?.id ?? null} onSelect={pickPreset} />
     </section>

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { dossierUrl, isPage, kitUrl, pageUrl, parseRoute, PLACES_URL, PRIVACY_URL, samePage, surveyUrl } from "./routes";
+import {
+  dossierUrl,
+  EXAMPLES_URL,
+  isPage,
+  kitUrl,
+  pageUrl,
+  parseRoute,
+  PLACES_URL,
+  PRIVACY_URL,
+  samePage,
+  surveyUrl,
+} from "./routes";
 
 describe("routes", () => {
   it("reads a survey's id and its open design sheet", () => {
@@ -24,6 +35,15 @@ describe("routes", () => {
     expect(isPage({ page: "privacy" })).toBe(true);
     expect(isPage({ page: "brief" })).toBe(false);
     expect(isPage({ page: "survey", id: "r1", sheet: null })).toBe(false);
+  });
+
+  it("reads the examples page, whatever the query", () => {
+    expect(parseRoute("/examples", "")).toEqual({ page: "examples" });
+    expect(parseRoute("/examples/", "?utm_source=film")).toEqual({ page: "examples" });
+    expect(isPage({ page: "examples" })).toBe(true);
+    for (const path of ["/example", "/examples/x", "/examples/b21ec69b0e92", "/s/examples/x", "/examplesx"]) {
+      expect(parseRoute(path, "")).toEqual({ page: "brief" });
+    }
   });
 
   it("reads a launch kit and its report by the kit's token, whatever the query", () => {
@@ -79,15 +99,19 @@ describe("routes", () => {
     }
   });
 
-  it("builds My places' and the privacy note's addresses and reads them back", () => {
+  it("builds My places', the privacy note's and the examples' addresses and reads them back", () => {
     expect(pageUrl({ page: "places" })).toBe(PLACES_URL);
     expect(pageUrl({ page: "privacy" })).toBe(PRIVACY_URL);
-    for (const route of [{ page: "places" }, { page: "privacy" }] as const) {
+    expect(pageUrl({ page: "examples" })).toBe(EXAMPLES_URL);
+    expect(EXAMPLES_URL).toBe("/examples");
+    for (const route of [{ page: "places" }, { page: "privacy" }, { page: "examples" }] as const) {
       expect(parseRoute(pageUrl(route), "")).toEqual(route);
     }
     expect(samePage({ page: "places" }, { page: "places" })).toBe(true);
     expect(samePage({ page: "privacy" }, { page: "privacy" })).toBe(true);
+    expect(samePage({ page: "examples" }, { page: "examples" })).toBe(true);
     expect(samePage({ page: "places" }, { page: "privacy" })).toBe(false);
+    expect(samePage({ page: "examples" }, { page: "places" })).toBe(false);
   });
 
   it("builds a kit's and its report's addresses and reads them back", () => {

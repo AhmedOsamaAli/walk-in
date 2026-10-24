@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import type { LaunchChannel, LaunchPlan } from "../api/types";
 import { naturalList } from "../lib/format";
-import { CLAIM_KINDS, areaText, audienceRows, reachText, shareText } from "../lib/launch";
+import { CLAIM_KINDS, areaText, audienceReach, audienceRows, reachText, shareText } from "../lib/launch";
 import { PeopleStrip } from "./AudienceView";
 import { CopyButton } from "./CopyButton";
 import { HoursText } from "./Hours";
@@ -76,7 +76,7 @@ export function LaunchPlanView({ plan, peopleAbove = false }: { plan: LaunchPlan
         <div className="launch-block">
           <h4 className="xp-title">
             Who to reach
-            <span className="mono">What people within 1.5 km over-index on</span>
+            <span className="mono">What people within {audienceReach(plan.basis)} over-index on</span>
           </h4>
           <dl className="spec launch-spec">
             {audience.crowd.length ? (

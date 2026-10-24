@@ -65,7 +65,18 @@
   font: 500 12.5px/16px var(--f-sans); cursor: default;
   animation: fade .3s ease both;
 }
-.map-key i { flex: none; width: 12px; height: 12px; border: 1.5px dashed var(--map-accent); border-radius: 50%; }
+.map-key i {
+  position: relative; flex: none; width: 13px; height: 13px; border: 2px dashed var(--map-accent); border-radius: 50%;
+  background: color-mix(in srgb, var(--map-accent) 16%, transparent);
+}
+/* The site in the middle of its ring, as on the map: the key reads as the area around the site, not as a spinner. */
+.map-key i::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px;
+  background: var(--blue-fill);
+}
+/* While the area is traced, its mark turns, as the radar does over a survey. */
+.map-key[data-tracing] i { animation: keyTrace 2.4s linear infinite; }
+@keyframes keyTrace { to { transform: rotate(360deg); } }
 .map-key span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .map-frame.expanded .map-key { display: none; }
 .map-frame[data-dock] .map-key { pointer-events: none; }
@@ -201,7 +212,7 @@ html.map-full, html.map-full body { overflow: hidden; }
 /* The roles' marks and lines are in pins.css. */
 .legend i { flex: none; display: inline-block; width: 12px; height: 12px; }
 .lg-site { background: var(--blue-fill); }
-.lg-ring { border: 1.5px dashed var(--map-accent); border-radius: 50%; }
+.lg-ring { border: 2px dashed var(--map-accent); border-radius: 50%; background: color-mix(in srgb, var(--map-accent) 16%, transparent); }
 .lg-grid { background: color-mix(in srgb, var(--map-grid-fill) 35%, transparent); }
 
 /* ---------- Leaflet controls ---------- */

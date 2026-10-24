@@ -65,6 +65,31 @@
 }
 .bar-nav a.current::after { transform: scaleX(1); }
 .bar-end { display: flex; align-items: center; gap: 18px; }
+/* The finished examples, on every page: a word in the bar's drafting face, underlined in the pen on their own page. */
+.bar-link {
+  position: relative; display: inline-flex; align-items: center; min-height: 36px; padding: 0 2px;
+  color: var(--ink); text-decoration: none; white-space: nowrap; transition: color .3s;
+}
+.bar-link:hover { color: var(--blue); }
+.bar-link::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 2px;
+  background: var(--blue-fill); transform: scaleX(0); transform-origin: left; transition: transform .5s var(--ease);
+}
+.bar-link[aria-current="page"]::after { transform: scaleX(1); }
+/* Phones: the mark, the examples, the account and the theme share the bar. */
+@media (max-width: 420px) {
+  .bar { gap: 12px; }
+  .bar-link { font-size: 10.5px; letter-spacing: .03em; }
+}
+/* The narrowest phones (320 px): everything a little tighter, so nothing in the bar touches. */
+@media (max-width: 340px) {
+  .bar { gap: 8px; }
+  .bar .bar-end { gap: 6px; }
+  .mark { gap: 6px; }
+  .mark .mark-word { font-size: 19px; }
+  .bar-end .account-signin { padding: 0 9px; }
+  .theme-toggle { width: 32px; height: 32px; }
+}
 .theme-toggle {
   flex: none; display: grid; place-items: center; width: 36px; height: 36px;
   border: 1px solid var(--ink); border-radius: 50%;
@@ -113,6 +138,57 @@
 .sheet-foot a { color: var(--blue); text-decoration: none; }
 .sheet-foot a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .section-error { color: var(--red); text-transform: none; letter-spacing: .01em; }
+
+/* ---------- The site's name: in the brief's site line and the survey's header, with its link to Google Maps ---------- */
+.site-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 16px; margin: 12px 0 18px; }
+.site-name .site-title { margin: 0; }
+.maps-link {
+  flex: none; color: var(--blue); text-transform: none; letter-spacing: .02em; white-space: nowrap;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--blue) 35%, transparent); text-underline-offset: 3px;
+  transition: color .3s, text-decoration-color .3s;
+}
+.maps-link:hover { color: var(--ink); text-decoration-color: currentColor; }
+.maps-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 2px; }
+/* A pin placed by hand goes by its coordinates until its address comes: in the drafting face, as on the map's card. */
+.chosen strong.coords { font: 500 15px/1.3 var(--f-mono); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+
+/* ---------- The brief's next step, once a site is chosen (Brief.tsx, NextStep.tsx, SearchBox.tsx) ---------- */
+/* The card scrolls into view under the bar, whole when it fits; its primary action stays at the foot of the screen
+   while the card is on it, so it is never a scroll away. */
+.brief-card { scroll-margin: calc(var(--bar-h) + 14px) 0 14px; }
+.brief-card .go-row {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: -12px 0; padding: 12px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--card) 0%, transparent), var(--card) 12px);
+}
+/* The site line takes focus once a site is picked in the brief; it is not a control, so it draws no ring. */
+.chosen:focus { outline: none; }
+/* A search box that says the site set: its arrow steps back to an outline, leaving the next step the one primary action.
+   Typing something new brings it back. */
+.capsule[data-settled] .capsule-go { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.capsule[data-settled] .capsule-go svg { stroke: var(--ink); }
+/* Phones and tablets: "Use this spot" at the foot of the screen while the brief is out of sight below the map. */
+.next-pill { display: none; }
+@media (max-width: 980px) {
+  .next-pill {
+    position: fixed; z-index: 1000; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    display: flex; align-items: center; gap: 14px; width: fit-content; max-width: calc(100% - 32px); height: 58px;
+    margin: 0 auto; padding: 0 7px 0 22px;
+    background: var(--blue-fill); color: var(--on-blue); border-radius: 999px; box-shadow: var(--shadow);
+    text-align: left;
+    animation: nextIn .3s var(--ease) both;
+  }
+  .next-pill-text { display: grid; gap: 2px; min-width: 0; }
+  .next-pill b { font: 500 16px/1.15 var(--f-sans); white-space: nowrap; }
+  .next-pill-site { overflow: hidden; font: 400 12.5px/1.25 var(--f-sans); white-space: nowrap; text-overflow: ellipsis; opacity: .85; }
+  .next-pill i { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--on-blue); }
+  .next-pill svg { width: 20px; height: 20px; fill: none; stroke: var(--blue-fill); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .next-pill:hover { background: var(--ink); color: var(--on-ink); }
+  .next-pill:hover i { background: var(--on-ink); }
+  .next-pill:hover svg { stroke: var(--ink); }
+  .next-pill:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+}
+@keyframes nextIn { from { opacity: 0; transform: translateY(14px); } }
 
 /* ---------- View transitions ---------- */
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .5s; animation-timing-function: var(--ease); }

@@ -68,9 +68,16 @@ export interface PinSummary {
   insideTotal: number;
   insideCapped: boolean;
   osm: number;
-  /** Loved or famous places drawn outside the area, and the median trip to them. */
+  /** Loved or famous places drawn outside the area: whether the legend has a line for them. */
   outside: number;
-  outsideMedianKm: number | null;
+  /**
+   * The server's numbers for the open category, as the gap row shows them: how many of the located places people here
+   * love (or the city's famous spots) lie outside the area, of how many, and the median trip to the ones outside. Not
+   * recounted from the pins, which stop at six.
+   */
+  favoritesFar: number;
+  favoritesTotal: number;
+  medianFarKm: number | null;
   /** Loved or famous places drawn inside the area that are not among its numbered competitors. */
   lovedInside: number;
 }
@@ -123,6 +130,15 @@ export function median(values: number[]): number | null {
   const mid = Math.floor(sorted.length / 2);
   const upper = sorted[mid] ?? 0;
   return sorted.length % 2 ? upper : ((sorted[mid - 1] ?? upper) + upper) / 2;
+}
+
+/**
+ * The median trip to the favorites outside the area, as the server measured it (app/scoring.py, median_far_km); null
+ * for rows saved before it existed, which say no distance rather than one diluted by the favorites already close by.
+ */
+export function medianFarKm(gap: GapRow): number | null {
+  const value: unknown = "median_far_km" in gap ? gap.median_far_km : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** The open category's pins, and each list item's mark. */
@@ -203,8 +219,6 @@ export function gapPins(gap: GapRow): GapPins {
   });
 
   const away = pins.filter((made) => (made.role === "loved" || made.role === "famous") && !made.inArea);
-  const trips = away.map((made) => made.distanceM).filter(finite);
-  const middle = median(trips);
   return {
     pins,
     competitors,
@@ -218,7 +232,9 @@ export function gapPins(gap: GapRow): GapPins {
       insideCapped: gap.nearby_capped,
       osm: pins.filter((made) => made.role === "osm").length,
       outside: away.length,
-      outsideMedianKm: middle === null ? null : Math.round(middle / 100) / 10,
+      favoritesFar: gap.favorites_far,
+      favoritesTotal: gap.favorites_total,
+      medianFarKm: medianFarKm(gap),
       lovedInside: pins.filter((made) => (made.role === "loved" || made.role === "famous") && made.inArea).length,
     },
   };
@@ -297,11 +313,14 @@ export function osmLine(summary: PinSummary): string {
   return `Only on OpenStreetMap: ${summary.osm}`;
 }
 
-/** "Loved, outside the walk: 5 · median 3.3 km", or the city's famous spots when too few stand out as loved here. */
+/**
+ * "Loved, outside the walk: 7 of 7 · median 3.4 km", in the server's numbers as the gap row has them; or the city's
+ * famous spots, when too few stand out as loved here.
+ */
 export function outsideLine(summary: PinSummary, area = AREA): string {
-  const lead = summary.kind === "local" ? `Loved, outside ${area}` : "City's famous spots";
-  const trip = summary.outsideMedianKm === null ? "" : ` · median ${summary.outsideMedianKm.toFixed(1)} km`;
-  return `${lead}: ${summary.outside}${trip}`;
+  const lead = summary.kind === "local" ? "Loved" : "City's famous spots";
+  const trip = summary.medianFarKm === null ? "" : ` · median ${summary.medianFarKm.toFixed(1)} km`;
+  return `${lead}, outside ${area}: ${summary.favoritesFar} of ${summary.favoritesTotal}${trip}`;
 }
 
 export function lovedInsideLine(summary: PinSummary, area = AREA): string {

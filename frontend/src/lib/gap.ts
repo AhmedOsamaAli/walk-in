@@ -19,23 +19,32 @@ export function readingTone(reading: string | null | undefined): "strong" | "wea
   return "";
 }
 
-/** The one evidence line that explains the badge; the rest are in the expanded row. */
+/**
+ * The one evidence line that explains the badge; the rest are in the expanded row. The server's lines name the area as
+ * it was measured: "inside the 10-minute walk", "inside the 30-minute drive", "inside the 10 km drive"; the trip to the
+ * favorites says "outside the walk" for a walk and the whole area for a drive ("outside the 30-minute drive").
+ */
 export function leadLine(gap: GapRow): string {
   const why = gap.why ?? [];
   const find = (pattern: RegExp) => why.find((line) => pattern.test(line));
   switch (readingLabel(gap.reading)) {
     case TRAVEL_READING:
-      return find(/outside the walk|already inside the walk/) ?? why[0] ?? gapWhy(gap);
+      return find(/\bare (?:already inside|outside) the /) ?? why[0] ?? gapWhy(gap);
     case "Clear gap":
     case "Under-supplied":
     case "Crowded":
-      return find(/inside the \d+-minute walk/) ?? why[0] ?? gapWhy(gap);
+      return find(/(?<!already )inside the (?:\d+-minute|\d+(?:\.\d+)? km) (?:walk|drive)\b/) ?? why[0] ?? gapWhy(gap);
     case "Thin data":
     case "Atypical":
       return why.at(-1) ?? gapWhy(gap);
     default:
       return why[0] ?? gapWhy(gap);
   }
+}
+
+/** "Inside walk", "Inside drive": the gap row's short label for the places of the kind inside the area ("the drive"). */
+export function insideShort(area: string): string {
+  return `Inside ${area.replace(/^the /, "")}`;
 }
 
 /** OpenStreetMap's credit, shown wherever its places are (its data is under the Open Database License). */
@@ -66,20 +75,34 @@ export function supplyCount(gap: GapRow): number {
   return gap.nearby_count + osmExtra(gap).length;
 }
 
-/** Why a gap was not cross-checked, in words; null when it was, or for surveys saved before the cross-check existed. */
+/** The note for an area too large to read from OpenStreetMap, as the server words it (app/survey/pipeline.py). */
+export const OSM_TOO_BIG = "Not cross-checked: OpenStreetMap is read for areas up to 30 km², and this one is larger.";
+
+/**
+ * Why a gap was not cross-checked, in the server's own words when it sends them, else from the reason; null when it was
+ * checked, or for surveys saved before the cross-check existed.
+ */
 export function osmUnchecked(osm: OsmCheck | null | undefined): string | null {
   if (!osm || osm.checked) return null;
-  if (osm.reason === "unmapped") return "Not cross-checked: no OpenStreetMap tag reliably marks this kind of place.";
-  if (osm.reason === "unavailable") return "Not cross-checked: OpenStreetMap did not answer in time.";
+  const note = typeof osm.note === "string" ? osm.note.trim() : "";
+  if (note) return note;
+  // The server's reasons ("too_big": the area is larger than OpenStreetMap's free servers are asked about).
+  const reason = osm.reason;
+  if (reason === "unmapped") return "Not cross-checked: no OpenStreetMap tag reliably marks this kind of place.";
+  if (reason === "unavailable") return "Not cross-checked: OpenStreetMap did not answer in time.";
+  if (reason === "too_big") return OSM_TOO_BIG;
   return "Not cross-checked with OpenStreetMap.";
 }
 
-/** What the cross-check found when every place it shows is one Qloo lists too, or why they were not compared. */
-export function osmConfirmed(osm: OsmCheck | null | undefined): string | null {
+/**
+ * What the cross-check found when every place it shows is one Qloo lists too, or why they were not compared; `area` is
+ * the area inside a sentence ("the walk", "the drive").
+ */
+export function osmConfirmed(osm: OsmCheck | null | undefined, area: string): string | null {
   if (!osm?.checked || osm.extra.length) return null;
   if (osm.note) return osm.note;
-  if (!osm.count) return "OpenStreetMap shows none inside the walk either.";
-  return `OpenStreetMap shows ${osm.count} inside the walk, all on Qloo's list too.`;
+  if (!osm.count) return `OpenStreetMap shows none inside ${area} either.`;
+  return `OpenStreetMap shows ${osm.count} inside ${area}, all on Qloo's list too.`;
 }
 
 /** "331 m away · shop=pastry" */

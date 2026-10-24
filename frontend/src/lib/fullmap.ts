@@ -1,5 +1,6 @@
-/* The full-screen map's rules (map/SurveyMap.tsx, map/controller.ts): how close it frames a new site, what its card
-   and the search boxes call the site, its control's words, and the history entry that lets Back leave it. */
+/* The full-screen map's rules (map/SurveyMap.tsx, map/controller.ts): how close it frames a new site, what its card,
+   the brief, the survey's header and the search boxes call the site, its link to Google Maps, its control's words, and
+   the history entry that lets Back leave it. */
 import { reachM } from "../map/geometry";
 import { asArea, type Area } from "./area";
 import { coords } from "./format";
@@ -24,22 +25,43 @@ export function streetZoom(walkFits: number): number {
  */
 export const walkReach = (area: Area | number): number => reachM(asArea(area));
 
-/** The name a site placed by hand on the map takes in the brief. */
+/**
+ * The label a site placed by hand on the map holds until its address comes (state/site.ts usePinAddress). Never shown:
+ * meanwhile, and when no address comes, the site goes by its coordinates.
+ */
 export const DROPPED_PIN = "Dropped pin";
 
-/** What the full-screen map's card calls the site: its address, or its coordinates for a pin placed by hand. */
+/** A label in the coordinates' own words ("N 30.0626 · E 31.2197"): a pin surveyed before its address came. */
+const COORDS_LABEL = /^[NS] \d+(?:\.\d+)? · [EW] \d+(?:\.\d+)?$/;
+
+/** Whether a site's label names no place: a pin placed by hand, without its address yet or for good. */
+export function unnamed(label: string | null | undefined): boolean {
+  const name = label?.trim() ?? "";
+  return !name || name === DROPPED_PIN || COORDS_LABEL.test(name);
+}
+
+/** What the site is called wherever it shows: its address, or its coordinates for a pin placed by hand. */
 export function spotTitle(label: string | null | undefined, lat: number, lon: number): { text: string; isCoords: boolean } {
-  const name = label?.trim();
-  return name && name !== DROPPED_PIN ? { text: name, isCoords: false } : { text: coords(lat, lon), isCoords: true };
+  const name = label?.trim() ?? "";
+  return unnamed(name) ? { text: coords(lat, lon), isCoords: true } : { text: name, isCoords: false };
+}
+
+/** The site's name as shown, and as a survey sends it: never "Dropped pin". */
+export const siteName = (site: { label: string; lat: number; lon: number }): string =>
+  spotTitle(site.label, site.lat, site.lon).text;
+
+/** The site on Google Maps, for a look at the street itself: a search for its coordinates, in a new tab. */
+export function googleMapsUrl(lat: number, lon: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(6)},${lon.toFixed(6)}`;
 }
 
 /**
  * What a search box says once a site is set, however it was set (SearchBox.tsx): the site's name, or nothing for a pin
- * placed by hand, which has no address to search for.
+ * placed by hand until its address comes, since its coordinates are no address to search for.
  */
 export function searchText(label: string | null | undefined): string {
-  const name = label?.trim();
-  return name && name !== DROPPED_PIN ? name : "";
+  const name = label?.trim() ?? "";
+  return unnamed(name) ? "" : name;
 }
 
 /** The corner control's name and tooltip, either way. */

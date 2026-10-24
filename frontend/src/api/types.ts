@@ -196,7 +196,7 @@ export interface OsmCheck {
   count: number;
   /** The ones Qloo does not list there, nearest first; the gap counts them as supply. */
   extra: OsmPlace[];
-  reason?: "unavailable" | "unmapped" | "off" | null;
+  reason?: "unavailable" | "unmapped" | "off" | "too_big" | null;
   /** The reason in words, or why the places were counted but not compared one by one. */
   note?: string | null;
   /** When the OpenStreetMap data was last updated on the server that answered. */
@@ -224,6 +224,8 @@ export interface GapRow {
   favorites_total: number;
   favorites_far: number;
   median_favorite_km: number | null;
+  /** The median trip to the favorites outside the area (app/scoring.py); absent on rows saved before it existed. */
+  median_far_km?: number | null;
   expected_nearby?: number | null;
   lift: number;
   relative_supply: number;

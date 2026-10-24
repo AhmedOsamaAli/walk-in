@@ -289,14 +289,23 @@ export function SurveyMap({
     syncArea();
   }, [askedKey]);
 
-  useEffect(() => {
+  // A site is placed where it stands: renaming it there (a dropped pin's address coming) neither drops its pin again nor
+  // clears its ring.
+  const spot = site ? `${site.lat},${site.lon}` : null;
+  const placeSite = useEffectEvent(() => {
     if (site) controller.current?.selectSite(site);
-  }, [site]);
+  });
+  useEffect(() => {
+    placeSite();
+  }, [spot]);
 
   // Selecting a site clears the drawn walk, so the walk is shown again even when it is the same object.
-  useEffect(() => {
+  const drawWalk = useEffectEvent(() => {
     if (walk) controller.current?.showWalk(walk);
-  }, [site, walk]);
+  });
+  useEffect(() => {
+    drawWalk();
+  }, [spot, walk]);
 
   useEffect(() => {
     if (run > 0) beginRun();
@@ -375,9 +384,10 @@ export function SurveyMap({
   const area = areaWord(walk?.travel ?? asked.travel);
   const line = walkLine(trace, asked, waking);
   /** The map's own key, at its bottom-left once a site is placed: what its dashed ring is, traced or on its way. */
+  const tracing = !walk && !surveying && trace.phase === "tracing";
   const key = walk
     ? `${walkShort(walk)} · ${km2Text(walk.area_km2)} km²`
-    : !surveying && trace.phase === "tracing"
+    : tracing
       ? `Tracing a ${areaShort(asked)}…`
       : areaShort(asked);
 
@@ -430,7 +440,7 @@ export function SurveyMap({
           </div>
         )}
         {site && !full ? (
-          <p className="map-key" aria-hidden="true">
+          <p className="map-key" aria-hidden="true" data-tracing={tracing ? "" : undefined}>
             <i />
             <span>{key}</span>
           </p>

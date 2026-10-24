@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LaunchPlan } from "../api/types";
-import { areaText, audienceRows, hasLaunchPlan, reachText, shareText } from "./launch";
+import { areaText, audienceReach, audienceRows, hasLaunchPlan, reachText, shareText } from "./launch";
 
 const plan: LaunchPlan = {
   audience: { crowd: [], artists: [], podcasts: [], screen: [], brands: [], shared: [] },
@@ -52,5 +52,17 @@ describe("the plan's area", () => {
     expect(reachText(883)).toBe("883 m");
     expect(reachText(999)).toBe("999 m");
     expect(reachText(14_240)).toBe("14.2 km");
+  });
+
+  it("says how far around the audiences were read, as the plan's basis line does", () => {
+    const basis = (km: string) =>
+      `Audiences are what people within ${km} over-index on compared with same-size areas around; the crowd, times and reasons to visit are Qloo's tags on the places people here love of this kind.`;
+    expect(audienceReach(basis("1.5 km"))).toBe("1.5 km");
+    expect(audienceReach(basis("7 km"))).toBe("7 km");
+    expect(audienceReach(basis("6.469 km"))).toBe("6.5 km");
+    expect(audienceReach(basis("12 km"))).toBe("12 km");
+    expect(audienceReach(basis("14.6 km"))).toBe("15 km");
+    expect(audienceReach(undefined)).toBe("1.5 km");
+    expect(audienceReach("Audiences are what people here over-index on.")).toBe("1.5 km");
   });
 });

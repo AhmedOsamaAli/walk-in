@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { GapRow, OsmCheck } from "../api/types";
 import {
+  insideShort,
   leadLine,
+  OSM_TOO_BIG,
   osmConfirmed,
   osmDetail,
   osmExtra,
@@ -102,11 +104,56 @@ describe("the OpenStreetMap cross-check", () => {
     expect(osmUnchecked(checked())).toBeNull();
   });
 
+  it("says it in the server's words when it sends them, and an area too large as too large, not as a timeout", () => {
+    const tooBig = { checked: false, count: 0, extra: [], reason: "too_big" } as unknown as OsmCheck;
+    expect(osmUnchecked(tooBig)).toBe(OSM_TOO_BIG);
+    expect(OSM_TOO_BIG).toBe("Not cross-checked: OpenStreetMap is read for areas up to 30 km², and this one is larger.");
+    expect(osmUnchecked({ ...tooBig, note: "Not cross-checked: OpenStreetMap is read for areas up to 25 km², and this one is larger." })).toBe(
+      "Not cross-checked: OpenStreetMap is read for areas up to 25 km², and this one is larger.",
+    );
+    const note = "Not cross-checked: the area is too large for OpenStreetMap's free servers.";
+    expect(osmUnchecked({ checked: false, count: 0, extra: [], reason: "unavailable", note })).toBe(note);
+    expect(osmUnchecked({ checked: false, count: 0, extra: [], reason: "unavailable", note: "  " })).toBe(
+      "Not cross-checked: OpenStreetMap did not answer in time.",
+    );
+  });
+
   it("confirms Qloo's count when OpenStreetMap shows nothing more", () => {
-    expect(osmConfirmed(checked({ extra: [], count: 0 }))).toBe("OpenStreetMap shows none inside the walk either.");
-    expect(osmConfirmed(checked({ extra: [], count: 3 }))).toBe("OpenStreetMap shows 3 inside the walk, all on Qloo's list too.");
-    expect(osmConfirmed(checked({ extra: [], note: "Qloo lists more places of this kind…" }))).toBe("Qloo lists more places of this kind…");
-    expect(osmConfirmed(checked())).toBeNull();
+    expect(osmConfirmed(checked({ extra: [], count: 0 }), "the walk")).toBe("OpenStreetMap shows none inside the walk either.");
+    expect(osmConfirmed(checked({ extra: [], count: 3 }), "the walk")).toBe(
+      "OpenStreetMap shows 3 inside the walk, all on Qloo's list too.",
+    );
+    expect(osmConfirmed(checked({ extra: [], count: 3 }), "the drive")).toBe(
+      "OpenStreetMap shows 3 inside the drive, all on Qloo's list too.",
+    );
+    expect(osmConfirmed(checked({ extra: [], note: "Qloo lists more places of this kind…" }), "the drive")).toBe(
+      "Qloo lists more places of this kind…",
+    );
+    expect(osmConfirmed(checked(), "the walk")).toBeNull();
     expect(osmDetail(INSOMNIA)).toBe("331 m away · shop=pastry");
+  });
+});
+
+describe("the area in the gap rows", () => {
+  it("says the area as the survey measured it", () => {
+    expect(insideShort("the walk")).toBe("Inside walk");
+    expect(insideShort("the drive")).toBe("Inside drive");
+  });
+
+  it("leads with the drive's lines on a drive or road-distance survey", () => {
+    const drive = [
+      "People here rank bakery #6 among the place types they engage with.",
+      "Only 4 bakeries inside the 30-minute drive, where a block this dense usually has about 9.",
+      "5 of the 6 bakeries people here love more than the rest of the city does are outside the 30-minute drive (median 12.4 km): A, B and C.",
+    ];
+    expect(leadLine(gap({ reading: "People here travel for it", why: drive }))).toBe(drive[2]);
+    expect(leadLine(gap({ reading: "Clear gap", why: drive }))).toBe(drive[1]);
+    const distance = [
+      "People here rank bakery #6 among the place types they engage with.",
+      "Most of the bakeries people here love more than the rest of the city does are already inside the 10 km drive (5 of 6), such as A.",
+      "2 bakeries inside the 10 km drive, about what a block this dense holds (about 2.4).",
+    ];
+    expect(leadLine(gap({ reading: "People here travel for it", why: distance }))).toBe(distance[1]);
+    expect(leadLine(gap({ reading: "Crowded", why: distance }))).toBe(distance[2]);
   });
 });

@@ -10,6 +10,7 @@ import {
   insideLine,
   lovedInsideLine,
   median,
+  medianFarKm,
   outsideLine,
   pinLabel,
   plural,
@@ -29,6 +30,8 @@ const loved = (id: string, name: string, distance: number, within = false): Favo
   ...place(id, name, 40.7 + distance / 111_320, -73.95, distance),
   within_walk: within,
 });
+/** A row as the server sends it now, with the median trip to the favorites outside the area. */
+const withTrip = (gap: GapRow, km: number): GapRow => Object.assign(gap, { median_far_km: km });
 
 function row(extra: Partial<GapRow> = {}): GapRow {
   return {
@@ -136,7 +139,7 @@ describe("gapPins", () => {
     expect(areaWord("drive")).toBe("the drive");
     expect(areaWord("distance")).toBe("the drive");
     expect(insideLine(summary, "the drive")).toBe("Inside the drive: 3 of 4 seafood places");
-    expect(outsideLine(summary, "the drive")).toBe("Loved, outside the drive: 5 · median 3.3 km");
+    expect(outsideLine(summary, "the drive")).toBe("Loved, outside the drive: 5 of 5");
     const [first] = pins;
     if (!first) throw new Error("missing pin");
     expect(roleText(first, "the drive")).toBe("Inside the drive");
@@ -145,23 +148,57 @@ describe("gapPins", () => {
 
   it("sums up what the legend shows", () => {
     const { summary } = gapPins(row());
-    expect(summary).toMatchObject({ inside: 3, insideTotal: 4, osm: 0, outside: 5, outsideMedianKm: 3.3, lovedInside: 0 });
+    expect(summary).toMatchObject({
+      inside: 3,
+      insideTotal: 4,
+      osm: 0,
+      outside: 5,
+      favoritesFar: 5,
+      favoritesTotal: 5,
+      medianFarKm: null,
+      lovedInside: 0,
+    });
     expect(insideLine(summary)).toBe("Inside the walk: 3 of 4 seafood places");
     expect(insideLine({ ...summary, inside: 4 })).toBe("Inside the walk: 4 seafood places");
     expect(insideLine({ ...summary, inside: 1, insideTotal: 1 })).toBe("Inside the walk: 1 seafood place");
     expect(insideLine({ ...summary, inside: 6, insideTotal: 50, insideCapped: true })).toBe(
       "Inside the walk: 6 of 50+ seafood places",
     );
-    expect(outsideLine(summary)).toBe("Loved, outside the walk: 5 · median 3.3 km");
-    expect(outsideLine({ ...summary, kind: "citywide", outsideMedianKm: 6.9 })).toBe("City's famous spots: 5 · median 6.9 km");
+    expect(outsideLine(summary)).toBe("Loved, outside the walk: 5 of 5");
+    expect(outsideLine({ ...summary, medianFarKm: 3.3 })).toBe("Loved, outside the walk: 5 of 5 · median 3.3 km");
+    expect(outsideLine({ ...summary, kind: "citywide", favoritesFar: 8, favoritesTotal: 10, medianFarKm: 12 }, "the drive")).toBe(
+      "City's famous spots, outside the drive: 8 of 10 · median 12.0 km",
+    );
     expect(lovedInsideLine({ ...summary, lovedInside: 2 })).toBe("Loved, inside the walk: 2");
+  });
+
+  it("says the favorites in the server's numbers, as the gap row does, not in the six pins it draws", () => {
+    // Seven loved places, all outside: the map letters six (A–F), whose own median trip would be 4.1 km.
+    const seven = [1900, 2600, 3400, 3900, 4300, 4600, 5200].map((m, k) => loved(`f${k}`, `Loved ${k}`, m));
+    const gap = withTrip(row({ favorites: seven, favorites_total: 7, favorites_far: 7, median_favorite_km: 3.9 }), 3.9);
+    const { summary, pins } = gapPins(gap);
+    expect(pins.filter((pin) => pin.role === "loved").map((pin) => pin.mark)).toEqual(["A", "B", "C", "D", "E", "F"]);
+    expect(summary).toMatchObject({ outside: 6, favoritesFar: 7, favoritesTotal: 7, medianFarKm: 3.9 });
+    expect(outsideLine(summary)).toBe("Loved, outside the walk: 7 of 7 · median 3.9 km");
+    // Some loved places inside the area: the median is the trip to the ones outside, the server's median_far_km.
+    const some = gapPins(withTrip(row({ favorites_total: 7, favorites_far: 4, median_favorite_km: 1.2 }), 3.4));
+    expect(outsideLine(some.summary, "the drive")).toBe("Loved, outside the drive: 4 of 7 · median 3.4 km");
+  });
+
+  it("gives no distance for a row saved before the server measured the trip outside", () => {
+    const old = gapPins(row({ median_favorite_km: 2.8 }));
+    expect(old.summary.medianFarKm).toBeNull();
+    expect(outsideLine(old.summary)).toBe("Loved, outside the walk: 5 of 5");
+    expect(medianFarKm(Object.assign(row(), { median_far_km: "3.4" }))).toBeNull();
+    expect(medianFarKm(Object.assign(row(), { median_far_km: null }))).toBeNull();
+    expect(medianFarKm(withTrip(row(), 0.8))).toBe(0.8);
   });
 
   it("marks the city's famous spots as famous, and loved places inside the walk as inside", () => {
     const famous = gapPins(row({ favorites_kind: "citywide" }));
     expect(new Set(famous.pins.filter((pin) => pin.mark >= "A").map((pin) => pin.role))).toEqual(new Set(["famous"]));
     const inside = gapPins(row({ favorites: [loved("w1", "Corner Cellar", 150, true)] }));
-    expect(inside.summary).toMatchObject({ outside: 0, lovedInside: 1, outsideMedianKm: null });
+    expect(inside.summary).toMatchObject({ outside: 0, lovedInside: 1 });
   });
 });
 

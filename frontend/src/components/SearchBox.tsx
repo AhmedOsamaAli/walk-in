@@ -4,7 +4,7 @@ import type { GeocodeResult } from "../api/types";
 import { shortLabel } from "../lib/format";
 import { searchText } from "../lib/fullmap";
 import type { MapPoint } from "../map/controller";
-import type { Site } from "../state/site";
+import { samePoint, type Site } from "../state/site";
 
 interface Results {
   query: string;
@@ -18,10 +18,10 @@ interface SearchBoxProps {
   /**
    * The site set, however it was set: by this search, on the map, from the examples or as the owner's place. Each new
    * one replaces what the box says with the site's name, or empties the box for a pin placed by hand, so the box never
-   * names another site than the one set.
+   * names another site than the one set. A pin's address, once it comes, takes the box if nothing was typed since.
    */
   site?: MapPoint | null;
-  /** The site's name: "Dropped pin" for a pin placed by hand. */
+  /** The site's label: DROPPED_PIN (lib/fullmap.ts) for a pin placed by hand, until its address comes. */
   siteLabel?: string | null;
 }
 
@@ -40,19 +40,24 @@ export function SearchBox({
   const [results, setResults] = useState<Results | null>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [shownSite, setShownSite] = useState(site);
-  if (site !== shownSite) {
-    setShownSite(site);
-    setText(searchText(siteLabel));
-    setOpen(false);
-    setActive(-1);
+  const [shown, setShown] = useState({ site, label: siteLabel });
+  if (site !== shown.site || siteLabel !== shown.label) {
+    // The same spot named anew (a dropped pin's address has come) leaves alone what has been typed since.
+    const renamed = samePoint(site, shown.site);
+    setShown({ site, label: siteLabel });
+    if (!renamed || text.trim() === searchText(shown.label)) setText(searchText(siteLabel));
+    if (!renamed) {
+      setOpen(false);
+      setActive(-1);
+    }
   }
 
   // A new site also drops a search still waiting to run or to answer, so no list opens for words the box no longer says.
+  const spot = site ? `${site.lat},${site.lon}` : null;
   useEffect(() => {
     window.clearTimeout(timer.current);
     sequence.current += 1;
-  }, [site]);
+  }, [spot]);
 
   useEffect(() => {
     // A click elsewhere closes the list, and drops a search still waiting to run or to answer, so its list does not
@@ -141,6 +146,8 @@ export function SearchBox({
 
   const optionId = (index: number) => `${listId}-${index}`;
   const showList = open && results !== null;
+  /** The box says the site set, or nothing for a pin: its arrow steps back, so the next step is the one primary action. */
+  const settled = site !== null && text.trim() === searchText(siteLabel);
 
   return (
     <form
@@ -148,6 +155,7 @@ export function SearchBox({
       className="capsule"
       role="search"
       autoComplete="off"
+      data-settled={settled ? "" : undefined}
       onSubmit={(event) => {
         void submit(event);
       }}

@@ -5,11 +5,14 @@ import { BlockSection } from "./components/BlockSection";
 import { Brief } from "./components/Brief";
 import { ConceptsSection } from "./components/ConceptsSection";
 import { DesignSheet, type DesignTarget } from "./components/DesignSheet";
+import { ExampleBanner } from "./components/ExampleBanner";
+import { ExampleWait } from "./components/ExampleWait";
 import { GapsSection } from "./components/GapsSection";
 import { ImproveSection } from "./components/ImproveSection";
 import { KeepSurveys } from "./components/KeepSurveys";
 import { Link } from "./components/Link";
 import { LiveStatus } from "./components/LiveStatus";
+import { NextStep } from "./components/NextStep";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { SiteHeader, type TitleField } from "./components/SiteHeader";
 import { SurveyLog } from "./components/SurveyLog";
@@ -18,7 +21,7 @@ import { TopBar } from "./components/TopBar";
 import { VerdictSection } from "./components/VerdictSection";
 import { areaLabel, areaOf, walkLabel, type Area } from "./lib/area";
 import { markState } from "./lib/brand";
-import { DROPPED_PIN } from "./lib/fullmap";
+import { DROPPED_PIN, siteName, unnamed } from "./lib/fullmap";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
 import { scrollBehavior, Settled, withViewTransition } from "./lib/motion";
 import { homeMove, NavigateContext, type Navigate, type Showing } from "./lib/navigation";
@@ -36,6 +39,7 @@ import {
 } from "./lib/routes";
 import { posterButtonId, sectionNo, sectionsFor, useSectionSpy, type SectionId } from "./lib/sections";
 import type { MapPoint } from "./map/controller";
+import { areaWord } from "./map/pins";
 import { SurveyMap, type PlacedSpot } from "./map/SurveyMap";
 import { PageView } from "./pages/PageView";
 import {
@@ -52,8 +56,9 @@ import {
 } from "./state/brief";
 import { RUN_GONE } from "./state/record";
 import { engine } from "./state/engine";
+import { surveyExample, useExamples } from "./state/examples";
 import { session } from "./state/session";
-import { useSiteWalk, type Site } from "./state/site";
+import { samePoint, usePinAddress, useSiteWalk, withAddress, type Site } from "./state/site";
 import { surveyProgress, type SurveyState } from "./state/survey";
 import { ThemeContext, useTheme } from "./state/theme";
 import { useSurvey, type RestoreResult } from "./state/useSurvey";
@@ -134,7 +139,8 @@ function recordedTitle(survey: SurveyState): Surveyed {
   if (!survey.site) return { label: "Survey in progress", eyebrow: EYEBROWS[survey.intent], fields: [] };
   const brief = briefOf(survey.site, survey.place);
   const run = runRequest(brief.site, brief.form);
-  const label = run.intent === "improve" ? (survey.place?.name ?? brief.site.label) : brief.site.label;
+  const name = siteName(brief.site);
+  const label = run.intent === "improve" ? (survey.place?.name ?? name) : name;
   const fields = briefFields(run, survey.catchment, brief.form.place);
   return { label, eyebrow: EYEBROWS[run.intent], fields };
 }
@@ -177,6 +183,7 @@ export function App() {
   const briefTrace = useSiteWalk(site, briefArea(form));
   const briefWalk = briefTrace.phase === "shown" ? briefTrace.walk : null;
   const { survey, start, restore, reset, toggleGap } = useSurvey();
+  const examples = useExamples();
 
   const title = started ?? (survey.recorded === null ? null : recordedTitle(survey));
   const surveying = screen.name === "survey" && title !== null;
@@ -185,17 +192,26 @@ export function App() {
   const current = useSectionSpy(ready);
   const openGap = survey.openGap === null ? null : (survey.gaps?.[survey.openGap] ?? null);
   const surveySite: MapPoint | null = started?.site ?? survey.site;
-  const surveyWalk = survey.catchment ?? (started?.site === site ? briefWalk : null);
+  const surveyWalk = survey.catchment ?? (started && samePoint(started.site, site) ? briefWalk : null);
   /** The area the survey asked for: as started here, or as its record holds it (an older survey's is a walk). */
   const surveyArea: Area = started?.area ?? areaOf(survey.site ?? {});
   /** The area inside a sentence, in the server's words once traced ("30-minute drive"), else as asked. */
   const surveyAreaLabel = survey.catchment ? walkLabel(survey.catchment) : areaLabel(surveyArea);
+  /** The area after "inside" or "outside": "the walk", or "the drive" for a drive or a road distance. */
+  const surveyAreaWord = areaWord(survey.catchment?.travel ?? surveyArea.travel);
   const sheetConcept = surveying && sheet?.runId === survey.runId ? survey.concepts?.concepts?.[sheet.index] : undefined;
   const design: DesignTarget | null = sheet && sheetConcept ? { ...sheet, concept: sheetConcept } : null;
   const showing: Showing = surveying ? "survey" : screen.name === "opening" ? "opening" : screen.name === "page" ? "page" : "brief";
   /** The map grows to fill the screen on the brief, and from its dock beside a survey. */
   const expandable = showing === "brief" || showing === "survey";
   const pageInert = mapFull && expandable;
+  /** The survey shown, or loading from its link, when it is one of the finished examples: it says so above it. */
+  const example = surveyExample(
+    examples.list,
+    screen.name === "opening" ? screen.id : surveying ? survey.runId : null,
+  );
+  /** The examples' link in the bar: until they load, and for good once there are some. */
+  const noExamples = examples.phase === "ready" && !examples.list.length;
 
   const titleRef = useCallback((node: HTMLHeadingElement | null) => {
     if (!node || !focusTitle.current) return;
@@ -247,9 +263,10 @@ export function App() {
 
   function startSurvey() {
     if (!site || surveying || missing(site, form)) return;
-    const run = runRequest(site, form);
+    // Nothing waits for a dropped pin's address: without it yet, the survey goes by the pin's coordinates.
+    const run = runRequest({ ...site, label: siteName(site) }, form);
     const fields = briefFields(run, briefWalk, form.place);
-    const label = run.intent === "improve" ? (form.place?.name ?? site.label) : site.label;
+    const label = run.intent === "improve" ? (form.place?.name ?? run.label) : run.label;
     withViewTransition(() => {
       flushSync(() => {
         setStarted({ label, eyebrow: EYEBROWS[run.intent], fields, site, area: areaOf(run) });
@@ -280,10 +297,10 @@ export function App() {
   }
 
   /**
-   * The mark from a survey: a fresh brief and map, as a reload of "/" gave, without the reload. The survey stays saved
-   * at its link, which Back returns to; one still running goes on without this page.
+   * A fresh brief and map at "/", as a reload of "/" gave, without the reload. A survey in memory stays saved at its
+   * link, which Back returns to; one still running goes on without this page.
    */
-  function startOver() {
+  function freshBrief() {
     withViewTransition(() => {
       flushSync(() => {
         reset();
@@ -294,6 +311,7 @@ export function App() {
         setSite(null);
         setForm(initialBrief);
         setScreen({ name: "brief" });
+        setStageOn(true);
         setMapEpoch((epoch) => epoch + 1);
         setMapFull(false);
         setReveal(0);
@@ -301,7 +319,18 @@ export function App() {
     });
     if (!onBriefUrl()) navigate(BRIEF_URL);
     window.scrollTo({ top: 0 });
+  }
+
+  /** The mark from a survey: a fresh brief, said aloud. */
+  function startOver() {
+    freshBrief();
     announce("Started over. The survey stays saved at its link.");
+  }
+
+  /** "Survey your own storefront", from the examples page and an example's banner: a fresh brief, its search empty. */
+  function surveyOwn() {
+    freshBrief();
+    announce("A new survey: search for your storefront, or place it on the map.");
   }
 
   /** Shows a survey's recorded copy once it has loaded, or the brief with a notice when it cannot be shown. */
@@ -477,6 +506,14 @@ export function App() {
     chooseSite({ id: null, label: label ?? DROPPED_PIN, lat, lon });
   }
 
+  // A pin placed by hand takes its address once it comes, if it has not moved since: the brief, the search box and the
+  // survey's header then name it, and a survey started from it sends it. A survey already started from the pin keeps
+  // the coordinates it was sent with, and its header shows the address.
+  usePinAddress(site, (pin, address) => {
+    setSite((now) => withAddress(now, pin, address));
+    setStarted((now) => (now && samePoint(now.site, pin) && unnamed(now.label) ? { ...now, label: address } : now));
+  });
+
   const page = screen.name === "page" ? screen.route : null;
 
   return (
@@ -493,8 +530,9 @@ export function App() {
           theme={theme}
           onToggleTheme={toggleTheme}
           inert={pageInert}
+          examples={noExamples ? null : page?.page === "examples" ? "current" : "link"}
         />
-        {page ? <PageView route={page} /> : null}
+        {page ? <PageView route={page} onFresh={surveyOwn} /> : null}
         {stageOn ? (
           <main className="stage" data-mode={surveying ? "survey" : "brief"} hidden={page !== null}>
             <article className="sheet" data-settled={surveying && settled ? "" : undefined} inert={pageInert}>
@@ -511,6 +549,9 @@ export function App() {
                 onPlace={choosePlace}
                 onSurvey={startSurvey}
               />
+              {example && (screen.name === "opening" || surveying) ? (
+                <ExampleBanner example={example} onFresh={surveyOwn} />
+              ) : null}
               {screen.name === "opening" ? (
                 <section className="sec opening" aria-busy="true">
                   <p className="mono">Opening survey {screen.id}</p>
@@ -521,10 +562,12 @@ export function App() {
                   <SectionBoundary key={`live-${survey.run}`} label="The survey status">
                     <LiveStatus survey={survey} />
                   </SectionBoundary>
+                  {noExamples ? null : <ExampleWait key={`wait-${survey.run}`} running={survey.status === "running"} />}
                   <SiteHeader
                     eyebrow={title.eyebrow}
                     label={title.label}
                     fields={withVerdict(withUnderstood(title.fields, survey.understood), survey.verdict)}
+                    point={surveySite}
                     onNewSurvey={newSurvey}
                     titleRef={titleRef}
                   />
@@ -538,7 +581,7 @@ export function App() {
                   ) : null}
                   {survey.gaps ? (
                     <SectionBoundary key={`gaps-${survey.run}`} label="The gaps">
-                      <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} />
+                      <GapsSection gaps={survey.gaps} openGap={survey.openGap} onToggle={toggleGap} area={surveyAreaWord} />
                     </SectionBoundary>
                   ) : null}
                   {survey.verdict ? (
@@ -601,6 +644,13 @@ export function App() {
               expandable={expandable}
               onPick={pickFromMap}
               onExpand={setMapFull}
+              onUse={() => {
+                setReveal((count) => count + 1);
+              }}
+            />
+            <NextStep
+              site={site}
+              active={showing === "brief" && !mapFull}
               onUse={() => {
                 setReveal((count) => count + 1);
               }}

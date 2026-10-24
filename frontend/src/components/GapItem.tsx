@@ -3,6 +3,7 @@ import type { FavoritePlace, GapRow, OsmPlace, PlaceCard } from "../api/types";
 import { cssVars, cx } from "../lib/css";
 import { standingText } from "../lib/format";
 import {
+  insideShort,
   leadLine,
   OSM_COPYRIGHT,
   OSM_CREDIT,
@@ -15,7 +16,7 @@ import {
   readingTone,
 } from "../lib/gap";
 import { lightPin, pinFocus, showPin, usePinFocus } from "../map/pinFocus";
-import { awayText, gapPins, LISTED, type ListMark } from "../map/pins";
+import { AREA, awayText, gapPins, LISTED, medianFarKm, type ListMark } from "../map/pins";
 import { CountUp } from "./CountUp";
 import { PinMark, PlaceLink } from "./PlaceCard";
 
@@ -87,8 +88,8 @@ function Competitor({ place, mark, lit }: { place: PlaceCard; mark: ListMark | n
   );
 }
 
-function Favorite({ place, mark, lit }: { place: FavoritePlace; mark: ListMark | null; lit: Lit }) {
-  const where = place.within_walk ? "inside the walk" : awayText(place.distance_m ?? null);
+function Favorite({ place, mark, lit, area }: { place: FavoritePlace; mark: ListMark | null; lit: Lit; area: string }) {
+  const where = place.within_walk ? `inside ${area}` : awayText(place.distance_m ?? null);
   const name = place.name ?? "";
   return (
     <Placed mark={mark} lit={lit} name={name}>
@@ -136,8 +137,8 @@ function OsmLink({ place }: { place: OsmPlace }) {
   );
 }
 
-/** What OpenStreetMap shows inside the walk that Qloo does not list, or why the gap was not cross-checked. */
-function OsmCrossCheck({ gap, marks, lit }: { gap: GapRow; marks: (ListMark | null)[]; lit: Lit }) {
+/** What OpenStreetMap shows inside the area that Qloo does not list, or why the gap was not cross-checked. */
+function OsmCrossCheck({ gap, marks, lit, area }: { gap: GapRow; marks: (ListMark | null)[]; lit: Lit; area: string }) {
   const osm = gap.osm;
   if (!osm) return null;
   const unchecked = osmUnchecked(osm);
@@ -163,7 +164,7 @@ function OsmCrossCheck({ gap, marks, lit }: { gap: GapRow; marks: (ListMark | nu
           <span className="osm-why">. Qloo doesn&apos;t list {extra.length === 1 ? "it" : "them"} here, so the score counts {extra.length === 1 ? "it" : "them"} as supply.</span>
         </p>
       ) : (
-        <p className="osm-also mono">{osmConfirmed(osm)}</p>
+        <p className="osm-also mono">{osmConfirmed(osm, area)}</p>
       )}
       <p className="osm-credit mono">
         Map data{" "}
@@ -192,18 +193,25 @@ interface GapItemProps {
   index: number;
   open: boolean;
   onToggle: (index: number) => void;
+  /** The area inside a sentence, as the survey measured it: "the walk", or "the drive" for a drive or a road distance. */
+  area?: string;
 }
 
-export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
+export function GapItem({ gap, index, open, onToggle, area = AREA }: GapItemProps) {
   const local = gap.favorites_kind === "local";
   const id = `gap-${index}`;
   const rankHere = gap.demand_rank >= 51 ? "50+" : String(gap.demand_rank);
   const around =
     gap.ref_rank == null ? "" : gap.ref_rank >= 51 ? " · 50+ around" : ` · #${gap.ref_rank.toFixed(0)} around`;
   const expected = gap.expected_nearby != null ? ` · ~${gap.expected_nearby.toFixed(1)} typical` : "";
-  const median = local && gap.median_favorite_km != null ? ` · median ${gap.median_favorite_km} km` : "";
+  // The server's numbers, as the legend says them: how many of the loved places lie outside the area, of how many, and
+  // the median trip to those outside; the list under it names six at most.
+  const km = medianFarKm(gap);
+  const outside = local
+    ? ` · ${gap.favorites_far} of ${gap.favorites_total} outside${km === null ? "" : ` · median ${km.toFixed(1)} km`}`
+    : "";
   const favoritesTitle = local
-    ? `Places people here love more than the city does${median}`
+    ? `Places people here love more than the city does${outside}`
     : "What people here love (the city's famous spots)";
   const competitors = (gap.competitors ?? []).slice(0, LISTED);
   const favorites = (gap.favorites ?? []).slice(0, LISTED);
@@ -250,7 +258,7 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
           <span className="gap-bars">
             <span className="meter">
               <span className="mono" title={onOsm ? `${gap.nearby_count} on Qloo, ${onOsm} more only on OpenStreetMap` : undefined}>
-                Inside walk · {gap.nearby_count}
+                {insideShort(area)} · {gap.nearby_count}
                 {gap.nearby_capped ? "+" : ""}
                 {onOsm ? ` + ${onOsm} OSM` : ""}
                 {expected}
@@ -287,24 +295,30 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
               </div>
             ) : null}
             <div>
-              <h4 className="label mono">Competitors inside the walk</h4>
+              <h4 className="label mono">Competitors inside {area}</h4>
               <ul className="mini">
                 {competitors.length ? (
                   competitors.map((place, k) => (
                     <Competitor key={`${place.name ?? ""}-${k}`} place={place} mark={pins.competitors[k] ?? null} lit={lit} />
                   ))
                 ) : (
-                  <li className="muted">Qloo lists no direct competitor inside the walk.</li>
+                  <li className="muted">Qloo lists no direct competitor inside {area}.</li>
                 )}
               </ul>
-              <OsmCrossCheck gap={gap} marks={pins.osm} lit={lit} />
+              <OsmCrossCheck gap={gap} marks={pins.osm} lit={lit} area={area} />
             </div>
             <div>
               <h4 className="label mono">{favoritesTitle}</h4>
               <ul className="mini">
                 {favorites.length ? (
                   favorites.map((place, k) => (
-                    <Favorite key={`${place.name ?? ""}-${k}`} place={place} mark={pins.favorites[k] ?? null} lit={lit} />
+                    <Favorite
+                      key={`${place.name ?? ""}-${k}`}
+                      place={place}
+                      mark={pins.favorites[k] ?? null}
+                      lit={lit}
+                      area={area}
+                    />
                   ))
                 ) : (
                   <li className="muted">No favorites found.</li>

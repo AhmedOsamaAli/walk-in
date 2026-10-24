@@ -352,12 +352,21 @@ export class BlueprintMap {
 
   /**
    * Room kept around what a flight frames, scaled to the map: about 26 px on the small docked map, 80 at full screen.
-   * The labels stand half their height beside their places, and the corner controls take the top.
+   * The labels stand half their height beside their places, and the corner controls take the top. The map's key, at its
+   * bottom-left on the brief and on a survey's strip, keeps the foot clear as well, so no ring or pin hides under it.
    */
   private padding(): Pick<L.FitBoundsOptions, "paddingTopLeft" | "paddingBottomRight"> {
     const { x, y } = this.map.getSize();
     const pad = Math.round(Math.min(80, Math.max(18, Math.min(x, y) * 0.12)));
-    return { paddingTopLeft: [pad + 12, pad + 24], paddingBottomRight: [pad + 12, pad + 20] };
+    return { paddingTopLeft: [pad + 12, pad + 24], paddingBottomRight: [pad + 12, Math.max(pad + 20, this.keyClearance())] };
+  }
+
+  /** How far above the map's foot its key reaches, with room for a pin's label over it; 0 while no key shows. */
+  private keyClearance(): number {
+    const canvas = this.map.getContainer();
+    const key = canvas.parentElement?.querySelector<HTMLElement>(".map-key");
+    if (!key?.getClientRects().length) return 0;
+    return Math.round(canvas.getBoundingClientRect().bottom - key.getBoundingClientRect().top) + 16;
   }
 
   /** Frames the open category's pins and the walk, for the map's size now: the frame may have just been resized. */

@@ -3,12 +3,13 @@ import { markLabel, replays, type MarkState } from "../lib/brand";
 import { cx } from "../lib/css";
 import { prefersReducedMotion } from "../lib/motion";
 import { isPlainClick, type HomeMove } from "../lib/navigation";
-import { BRIEF_URL } from "../lib/routes";
+import { BRIEF_URL, EXAMPLES_URL } from "../lib/routes";
 import type { Section, SectionId } from "../lib/sections";
 import type { Theme } from "../state/theme";
 import { AccountMenu } from "./AccountMenu";
 import { BrandMark } from "./BrandMark";
 import { EngineNote } from "./EngineNote";
+import { Link } from "./Link";
 import { ThemeToggle } from "./ThemeToggle";
 
 interface TopBarProps {
@@ -26,9 +27,23 @@ interface TopBarProps {
   onToggleTheme: () => void;
   /** The map fills the screen over the bar: nothing on it can be reached meanwhile. */
   inert?: boolean;
+  /** The finished examples' link: on every page ("current" on their own), and gone once none turn out to exist. */
+  examples?: "link" | "current" | null;
 }
 
-export function TopBar({ mark, progress, home, onHome, sections, ready, current, theme, onToggleTheme, inert = false }: TopBarProps) {
+export function TopBar({
+  mark,
+  progress,
+  home,
+  onHome,
+  sections,
+  ready,
+  current,
+  theme,
+  onToggleTheme,
+  inert = false,
+  examples = "link",
+}: TopBarProps) {
   const [replay, setReplay] = useState(0);
   /** When the last walk-in started, on performance.now()'s clock; the first plays as the page loads. */
   const playedAt = useRef(0);
@@ -89,6 +104,11 @@ export function TopBar({ mark, progress, home, onHome, sections, ready, current,
         <span className="bar-gap" />
       )}
       <div className="bar-end">
+        {examples ? (
+          <Link className="bar-link mono" href={EXAMPLES_URL} aria-current={examples === "current" ? "page" : undefined}>
+            Examples
+          </Link>
+        ) : null}
         <AccountMenu />
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
       </div>

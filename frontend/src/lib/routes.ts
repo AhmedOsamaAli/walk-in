@@ -1,6 +1,6 @@
 /**
  * What a URL asks for: the brief, a survey by its run id (with one concept's design sheet open), the signed-in user's
- * places, the privacy note, or a launch kit by its token and the kit's report.
+ * places, the privacy note, the finished examples, or a launch kit by its token and the kit's report.
  */
 export type Route = { page: "brief" } | SurveyRoute | PageRoute;
 
@@ -18,15 +18,18 @@ export interface KitRoute {
 }
 
 /** The pages that are not the survey sheet and its map. */
-export type PageRoute = { page: "places" } | { page: "privacy" } | KitRoute;
+export type PageRoute = { page: "places" } | { page: "privacy" } | { page: "examples" } | KitRoute;
 
 export const BRIEF_URL = "/";
 export const PLACES_URL = "/me";
 export const PRIVACY_URL = "/privacy";
+/** Finished surveys anyone can open before running one (features/EXAMPLES.md). */
+export const EXAMPLES_URL = "/examples";
 
 const SURVEY_PATH = /^\/s\/([A-Za-z0-9_-]{1,64})\/?$/;
 const PLACES_PATH = /^\/me\/?$/;
 const PRIVACY_PATH = /^\/privacy\/?$/;
+const EXAMPLES_PATH = /^\/examples\/?$/;
 // A kit's token, as the server checks it (app/routes/kits.py).
 const KIT_PATH = /^\/k\/([A-Za-z0-9_-]{1,64})\/?$/;
 const DOSSIER_PATH = /^\/k\/([A-Za-z0-9_-]{1,64})\/dossier\/?$/;
@@ -42,6 +45,7 @@ export function parseRoute(pathname: string, search: string): Route {
   }
   if (PLACES_PATH.test(pathname)) return { page: "places" };
   if (PRIVACY_PATH.test(pathname)) return { page: "privacy" };
+  if (EXAMPLES_PATH.test(pathname)) return { page: "examples" };
   const kit = KIT_PATH.exec(pathname)?.[1];
   if (kit) return { page: "kit", token: kit };
   const dossier = DOSSIER_PATH.exec(pathname)?.[1];
@@ -76,6 +80,8 @@ export function pageUrl(route: PageRoute): string {
       return PLACES_URL;
     case "privacy":
       return PRIVACY_URL;
+    case "examples":
+      return EXAMPLES_URL;
     case "kit":
       return kitUrl(route.token);
     case "dossier":

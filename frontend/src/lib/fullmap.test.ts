@@ -3,12 +3,15 @@ import {
   DROPPED_PIN,
   expandLabel,
   FULL_MAP_ENTRY,
+  googleMapsUrl,
   isFullMapEntry,
   searchText,
   SITE_ZOOM,
+  siteName,
   spotTitle,
   STREET_ZOOM,
   streetZoom,
+  unnamed,
   walkReach,
 } from "./fullmap";
 
@@ -44,6 +47,35 @@ describe("spotTitle", () => {
     expect(spotTitle(DROPPED_PIN, 30.0626, 31.2197)).toEqual({ text: "N 30.0626 · E 31.2197", isCoords: true });
     expect(spotTitle(null, 40.735, -73.975)).toEqual({ text: "N 40.7350 · W 73.9750", isCoords: true });
     expect(spotTitle("  ", 40.735, -73.975).isCoords).toBe(true);
+    // A pin surveyed before its address came was sent with its coordinates: they are no name either.
+    expect(spotTitle("N 30.0626 · E 31.2197", 30.0626, 31.2197)).toEqual({ text: "N 30.0626 · E 31.2197", isCoords: true });
+  });
+});
+
+describe("the site's name", () => {
+  it("is never 'Dropped pin': a pin goes by its coordinates until its address comes", () => {
+    expect(siteName({ label: DROPPED_PIN, lat: 40.7128, lon: -73.9611 })).toBe("N 40.7128 · W 73.9611");
+    expect(siteName({ label: "131 South 2nd Street, Williamsburg, Brooklyn", lat: 40.7128, lon: -73.9611 })).toBe(
+      "131 South 2nd Street, Williamsburg, Brooklyn",
+    );
+    expect(siteName({ label: " Zamalek, Cairo ", lat: 30.0626, lon: 31.2197 })).toBe("Zamalek, Cairo");
+  });
+
+  it("tells a label that names no place from an address", () => {
+    expect(unnamed(DROPPED_PIN)).toBe(true);
+    expect(unnamed("N 30.0626 · E 31.2197")).toBe(true);
+    expect(unnamed("S 33.8688 · E 151.2093")).toBe(true);
+    expect(unnamed("")).toBe(true);
+    expect(unnamed(null)).toBe(true);
+    expect(unnamed("Zamalek, Cairo")).toBe(false);
+    expect(unnamed("N 7th Street, Williamsburg")).toBe(false);
+  });
+});
+
+describe("googleMapsUrl", () => {
+  it("searches Google Maps for the site's coordinates", () => {
+    expect(googleMapsUrl(30.0626, 31.2197)).toBe("https://www.google.com/maps/search/?api=1&query=30.062600,31.219700");
+    expect(googleMapsUrl(40.7350123, -73.9750987)).toBe("https://www.google.com/maps/search/?api=1&query=40.735012,-73.975099");
   });
 });
 
@@ -55,6 +87,7 @@ describe("searchText", () => {
 
   it("says nothing for a pin placed by hand, or no site", () => {
     expect(searchText(DROPPED_PIN)).toBe("");
+    expect(searchText("N 30.0626 · E 31.2197")).toBe("");
     expect(searchText(null)).toBe("");
     expect(searchText(undefined)).toBe("");
     expect(searchText("  ")).toBe("");
