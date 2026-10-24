@@ -105,8 +105,14 @@ export function TopBar({
       )}
       <div className="bar-end">
         {examples ? (
-          <Link className="bar-link mono" href={EXAMPLES_URL} aria-current={examples === "current" ? "page" : undefined}>
-            Examples
+          <Link
+            className="bar-link bar-examples mono"
+            href={EXAMPLES_URL}
+            aria-current={examples === "current" ? "page" : undefined}
+            title="Finished surveys anyone can open, with their launch kit and report"
+          >
+            <span className="bar-examples-verb">See</span>
+            <span>examples</span>
           </Link>
         ) : null}
         <AccountMenu />

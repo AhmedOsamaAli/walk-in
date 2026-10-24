@@ -102,6 +102,9 @@
 .log .finding .msg { padding-left: 12px; border-left: 2px solid var(--blue); }
 .log .err .msg { color: var(--red); }
 .log .failed .state { color: var(--red); }
+/* Folded to its newest lines; this opens the rest. */
+.log-toggle { margin-top: 12px; font-size: 14px; }
+@media print { .log-toggle { display: none; } }
 
 /* ---------- 02 Block ---------- */
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: var(--rule); border-bottom: var(--rule); }

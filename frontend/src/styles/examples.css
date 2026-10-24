@@ -5,7 +5,7 @@
    that at 1440×900 the cards' first row shows above the fold, under the search and beside the map. */
 .ex-strip { margin-top: clamp(12px, 1.8vh, 22px); animation: fadeUp .6s var(--ease) both; }
 .ex-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 8px; }
-.ex-strip-title { font-size: 11px; font-weight: 500; }
+.ex-strip-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .ex-strip-all { flex: none; color: var(--blue); text-decoration: none; transition: color .3s; }
 .ex-strip-all:hover { color: var(--ink); }
 .ex-strip-all span { display: inline-block; transition: transform .4s var(--ease); }

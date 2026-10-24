@@ -21,7 +21,7 @@ export function ExampleStrip({ after = false }: { after?: boolean }) {
           See a finished example
         </h2>
         <Link className="ex-strip-all mono" href={EXAMPLES_URL}>
-          All examples <span aria-hidden="true">→</span>
+          See all examples <span aria-hidden="true">→</span>
         </Link>
       </div>
       <ol className="ex-cards">
