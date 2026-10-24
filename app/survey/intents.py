@@ -116,21 +116,20 @@ async def chain_check(q: QlooClient, run: RunState, query: str) -> dict | None:
         if not brand:
             return None
         brand_id = brand["entity_id"]
-        inside, around = await asyncio.gather(
+        (inside, capped), (around, around_capped) = await asyncio.gather(
             engine.brand_stores(q, engine.walk_filter(catchment), brand_id, CHAIN_LIMIT),
             engine.brand_stores(q, engine.around_filter(catchment), brand_id, engine.AROUND_LIMIT),
         )
-        sample = inside or around or await engine.brand_stores(
+        sample = inside or around or (await engine.brand_stores(
             q, engine.circle_filter(catchment.lat, catchment.lon, engine.favorites_m(catchment)), brand_id, 5,
-        )
+        ))[0]
     except QlooError:
         log.warning("Chain lookup failed; judging the business by its words only", exc_info=True)
         return None
     name = brand.get("name") or query
     category = next((tag for tag in map(scoring.primary_genre_tag, sample) if tag), None)
-    capped = len(inside) >= CHAIN_LIMIT
     count = f"{CHAIN_LIMIT}+" if capped else str(len(inside))
-    near = f"{engine.AROUND_LIMIT}+" if len(around) >= engine.AROUND_LIMIT else str(len(around))
+    near = f"{engine.AROUND_LIMIT}+" if around_capped else str(len(around))
     wider = catchment.around_label
     within = f"within the {wider}" if wider.startswith("area ") else f"within a {wider}"
     if inside:

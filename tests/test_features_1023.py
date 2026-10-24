@@ -370,3 +370,50 @@ def test_a_chain_check_that_fails_leaves_the_verdict_to_the_words():
         return await intents.chain_check(Failing(), run, "Bean Chain")
 
     assert asyncio.run(judge()) is None
+
+
+# ---------- Fixes from the pre-deploy review (Oct 24) ----------
+
+
+def test_a_decimal_road_distance_matches_valhallas_contour_cut_to_two_decimals():
+    ring = area.circle_ring(40.0, -73.0, 1500)
+    data = {"features": [{"properties": {"contour": 2.29},
+                          "geometry": {"type": "Polygon", "coordinates": [[list(p) for p in ring]]}}]}
+    assert area.parse_isochrone(data, 2.3) is not None
+    assert area.parse_isochrone(data, 2.4) is None
+
+
+def test_an_area_too_large_for_openstreetmap_says_so_and_never_that_it_did_not_answer():
+    _, events, _ = asyncio.run(survey(FakeOsm(), travel="drive", minutes=30))
+    rows = next(data for event, data in events if event == "gaps")["rows"]
+    assert all(row["osm"]["reason"] == "too_big" for row in rows)
+    lines = [line for row in rows for line in row.get("why") or []]
+    assert not any("did not answer" in line for line in lines)
+    assert any("too large for OpenStreetMap" in line for line in lines)
+
+
+def test_the_agent_sees_what_the_loved_places_offer():
+    from app.survey.evidence import inspect_payload
+
+    run, _, _ = asyncio.run(survey())
+    row = next(r for r in run.gaps if r["genre"] == "Seafood")
+    offered = inspect_payload(run, row)["what_these_places_offer"]
+    assert offered and "menu" in offered
+
+
+def test_a_big_chain_keeps_its_50_plus_when_qloo_lists_closed_stores_among_them():
+    class ManyStores(FakeQloo):
+        async def insights(self, params: dict) -> dict:
+            if params.get("filter.references_brand"):
+                offset = int(params.get("offset", 0))
+                stores = []
+                for i in range(offset, min(offset + 50, 120)):
+                    store = {"entity_id": f"s{i}", "name": f"Store {i}", "properties": {"is_closed": i % 20 == 0}}
+                    stores.append(store)
+                return {"results": {"entities": stores}}
+            return await super().insights(params)
+
+    stores, capped = asyncio.run(engine.brand_stores(ManyStores(), {"filter.location": "x"}, "brand", 50))
+    assert len(stores) == 50 and capped
+    few, more = asyncio.run(engine.brand_stores(ManyStores(), {"filter.location": "x"}, "brand", 150))
+    assert len(few) == 114 and not more  # 120 listed, 6 closed, and the last page was not full

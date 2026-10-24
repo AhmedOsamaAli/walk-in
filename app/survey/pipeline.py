@@ -143,7 +143,7 @@ async def cross_check(client: osm.OsmClient, catchment: Catchment, check: osm.Cr
     instance answers in time, the step fails, the log says why and the survey goes on. An area too large for the free
     servers is not asked at all, and the survey says so."""
     if catchment.area_m2 > OSM_MAX_KM2 * 1e6:
-        check.scan = osm.Scan(checked=False, note=OSM_TOO_BIG_NOTE.format(limit=OSM_MAX_KM2))
+        check.scan = osm.Scan(checked=False, note=OSM_TOO_BIG_NOTE.format(limit=OSM_MAX_KM2), reason="too_big")
         await emit("notice", {"message": OSM_TOO_BIG.format(limit=OSM_MAX_KM2)})
         return check
     await emit("status", {"step": "osm", "state": "running", "label": osm.LABEL})

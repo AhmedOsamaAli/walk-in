@@ -15,7 +15,7 @@ from .constraints import ALCOHOL_ITEM, Constraints
 from .models import RunState
 
 # The tag families that say what a place offers, as against how it looks or feels (decor, setting, ambience).
-OFFER_FAMILIES = ("menu", "offerings", "cuisine", "amenities", "activities", "keywords")
+OFFER_TAG_FAMILIES = ("menu", "offerings", "cuisine", "amenities", "activities", "keywords")
 # Thresholds the readings share: supply as a share of what a block this dense holds, demand lift, travel share.
 UNDER, OVER, STRONGER, TRAVEL = 0.75, 1.35, 0.3, 0.65
 
@@ -114,6 +114,8 @@ def unchecked_line(row: dict) -> str | None:
     if osm["reason"] == "unmapped":
         return (f"Not cross-checked: no OpenStreetMap tag reliably marks {plural(row['genre'])}, so this count is "
                 f"Qloo's alone.")
+    if osm["reason"] == "too_big":
+        return "Not cross-checked: the area is too large for OpenStreetMap's free servers, so this count is Qloo's alone."
     return "Not cross-checked: OpenStreetMap did not answer in time, so this count is Qloo's alone."
 
 
@@ -788,7 +790,8 @@ def inspect_payload(run: RunState, row: dict) -> dict:
         # Only what the places offer: their decor, setting and ambience tags read as filler ('lively', 'cozy') and
         # said the same of every block.
         "what_these_places_offer": {
-            family: names for family, names in scoring.design_dna(entities).items() if family in OFFER_FAMILIES and names
+            family: names for family, names in scoring.design_dna(entities).items()
+            if family in OFFER_TAG_FAMILIES and names
         },
     }
     if osm_extra(row):

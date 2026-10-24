@@ -69,6 +69,7 @@ NOTES = {
     "off": "The OpenStreetMap cross-check is off.",
     "unavailable": "Not cross-checked: OpenStreetMap did not answer in time.",
     "unmapped": "Not cross-checked: no OpenStreetMap tag reliably marks this kind of place.",
+    "too_big": "Not cross-checked: the area is too large for OpenStreetMap's free servers.",
 }
 
 
@@ -501,6 +502,7 @@ class Scan:
     source: str | None = None  # the Overpass instance that answered
     as_of: str | None = None  # when OpenStreetMap's data was last updated on that instance
     note: str | None = None  # why the walk was not cross-checked
+    reason: str = "unavailable"  # why not, for the gap rows: 'unavailable' (no answer in time) or 'too_big'
 
 
 def unchecked(reason: str, note: str | None = None) -> dict:
@@ -607,7 +609,7 @@ class CrossCheck:
         if self.scan is None:
             return unchecked("off")
         if not self.scan.checked:
-            return unchecked("unavailable", self.scan.note)
+            return unchecked(self.scan.reason, self.scan.note)
         places = self.places_of(genre, genre_id)
         if places is None:
             return unchecked("unmapped")
@@ -870,7 +872,9 @@ class OsmClient:
                             url, data={"data": query}, timeout=httpx.Timeout(limit, connect=min(CONNECT_S, limit)),
                         )
                     data = _answer_of(response)
-                    kept = shape(data)
+                    # Shaping a big area's answer is pure Python and can take seconds: off the event loop, so surveys
+                    # keep streaming and health checks keep answering meanwhile.
+                    kept = await asyncio.to_thread(shape, data)
                 except (httpx.HTTPError, TimeoutError, OsmError, ValueError, KeyError, TypeError, AttributeError) as exc:
                     self._failed[url] = time.monotonic()
                     problems.append(f"{host}: {_describe(exc)}")

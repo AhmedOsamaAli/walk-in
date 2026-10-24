@@ -496,21 +496,25 @@ async def find_brand(q: QlooClient, query: str) -> dict | None:
     return None
 
 
-async def brand_stores(q: QlooClient, location: dict, brand_id: str, limit: int) -> list[dict]:
-    """The open places of a chain in an area (Qloo's filter.references_brand), page by page up to `limit`."""
+async def brand_stores(q: QlooClient, location: dict, brand_id: str, limit: int) -> tuple[list[dict], bool]:
+    """The open places of a chain in an area (Qloo's filter.references_brand), page by page until `limit` open ones are
+    found, and whether there may be more than `limit` (paging stopped on a full page). Closed places Qloo still lists are
+    skipped, so a few extra pages may be read, never more than two."""
     found: dict[str, dict] = {}
-    offset = 0
-    while offset < limit:
+    offset, more = 0, False
+    for _ in range(math.ceil(limit / PAGE) + 2):
         params = {"filter.type": "urn:entity:place", "filter.references_brand": brand_id, **location, "take": PAGE}
         if offset:
             params["offset"] = offset
         page = scoring.entities(await q.insights(params))
         for place in page:
             found.setdefault(scoring.item_id(place) or f"#{len(found)}", place)
-        if len(page) < PAGE:
+        more = len(page) == PAGE  # a full page: Qloo may list more
+        if not more or sum(1 for place in found.values() if scoring.is_open(place)) > limit:
             break
         offset += PAGE
-    return [place for place in found.values() if scoring.is_open(place)][:limit]
+    stores = [place for place in found.values() if scoring.is_open(place)]
+    return stores[:limit], more and len(stores) >= limit
 
 
 async def search_places(q: QlooClient, query: str, lat: float, lon: float, miles: int = 2, take: int = 8) -> list[dict]:

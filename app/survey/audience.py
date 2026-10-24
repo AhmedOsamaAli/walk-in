@@ -74,7 +74,8 @@ async def against_inside(q: QlooClient, row: dict, loved: dict, here: str = "wal
     if not there:
         return {"inside": None, "tip": None}
     inside = {key: there[key] for key in ("ages", "gender", "gender_lean", "bands", "places")}
-    return {"inside": inside, "tip": tip(loved, there, row["genre"], here, len(there["places"]))}
+    # The leans are read from at most MAX_PLACES of the places inside, so the tip names no count: `places` says which.
+    return {"inside": inside, "tip": tip(loved, there, row["genre"], here)}
 
 
 def answered_names(rows: list[dict], places: list[dict]) -> list[str]:

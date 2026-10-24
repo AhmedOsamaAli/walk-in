@@ -39,6 +39,7 @@ SERVER_TIMEOUT_S = 25
 TIMEOUT_S = 35.0  # one request: a city's streets take an instance longer than the cross-check's places
 BUDGET_S = 75.0  # every instance asked, together; the kit is built in the background
 CACHE_NAME = "basemap"
+WET_SAMPLE = 64  # outline points tested for water; a drive's outline has hundreds, and each is tested against the coast
 _M_PER_DEG = 111_320.0
 _EPS = 1e-6
 
@@ -415,8 +416,10 @@ def body_of_water(members: list[tuple[str, list[list[Point]]]], box: Box, walk: 
     rings = water_rings(edges, box)
     if not rings:
         return []
-    wet = sum(1 for point in walk if winding(point, rings) != 0)
-    return rings if wet <= len(walk) // 2 else []
+    # A sample of the outline tells as well as every point, and keeps a big drive's outline cheap against a long coast.
+    sample = walk[::max(1, len(walk) // WET_SAMPLE)]
+    wet = sum(1 for point in sample if winding(point, rings) != 0)
+    return rings if wet <= len(sample) // 2 else []
 
 
 def site_in_water(members: list[tuple[str, list[list[Point]]]]) -> bool:

@@ -29,6 +29,7 @@ MIN_MINUTES, MAX_MINUTES = 5, 60  # the public Valhalla instance refuses time co
 MIN_KM, MAX_KM = 1.0, 100.0  # and distance contours over 100 km
 AROUND_FACTOR = 2  # the area supply is compared with: a trip this many times as long, about twice the area's radius
 QLOO_RING_POINTS = 180  # Qloo reads an area from the URL and refuses long ones (HTTP 414), so outlines are simplified
+CONTOUR_TOLERANCE = 0.011  # Valhalla writes a contour cut to two decimals: 2.3 comes back as 2.29
 _M_PER_DEG = 111_320.0
 
 
@@ -251,10 +252,12 @@ def circle_catchment(lat: float, lon: float, minutes: int, reach: Reach | None =
 
 
 def parse_isochrone(data: dict, minutes: float | None = None) -> list[tuple[float, float]] | None:
-    """The outline of one contour (`minutes`; without it, the first feature), as a closed (lon, lat) ring."""
+    """The outline of one contour (`minutes`, or km for a distance; without it, the first feature), as a closed (lon,
+    lat) ring. Valhalla keeps contours as 32-bit floats and writes them cut to two decimals (2.3 km comes back as 2.29),
+    so a contour matches within a hundredth."""
     features = data.get("features") or []
     if minutes is not None:
-        features = [f for f in features if _contour(f) == float(minutes)]
+        features = [f for f in features if (c := _contour(f)) is not None and abs(c - float(minutes)) <= CONTOUR_TOLERANCE]
     if not features:
         return None
     geometry = features[0].get("geometry") or {}
