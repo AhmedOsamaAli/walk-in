@@ -240,8 +240,8 @@ export function GapItem({ gap, index, open, onToggle }: GapItemProps) {
             <small className="mono">
               #{rankHere} here{around}
             </small>
-            {gap.source === "agent" ? <small className="mono flag live">tested live by agent</small> : null}
-            {gap.source === "owner" ? <small className="mono flag live">your request</small> : null}
+            {gap.source === "agent" ? <small className="mono flag tested">tested live by agent</small> : null}
+            {gap.source === "owner" ? <small className="mono flag tested">your request</small> : null}
           </span>
           {blocked ? <span className="gap-out mono">{blocked}</span> : null}
           <span className="gap-why serif" id={`${id}-why`}>

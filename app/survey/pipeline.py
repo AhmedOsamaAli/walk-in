@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 from .. import engine, osm, scoring
 from ..answers import AnswerCache
-from ..catchment import Catchment, CatchmentService
+from ..catchment import Catchment, CatchmentService, simplified
 from ..demographics import ages_label
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError, track_reads
@@ -80,6 +80,8 @@ async def analyze_site(
         catchment = await step(
             "walk", f"Tracing a {site.area} over the street network", walker.area(site.lat, site.lon, site.reach)
         )
+        # Every Qloo request below sends the outline; a drive's is simplified once, off the event loop.
+        catchment = await simplified(catchment)
         run.catchment = catchment
         await emit("catchment", catchment.public())
         # OpenStreetMap is asked alongside Qloo; the gaps wait for it only once Qloo's evidence is in.
@@ -169,7 +171,8 @@ async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, an
         concepts, about = await concepts_from_agent(llm, q, run, emit, answers)
         mode = "agent" if concepts else "rules"
     if not concepts:
-        concepts, mode, about = rule_concepts(run), "rules", {}
+        # The rules read every favorite's reviews: seconds of work for a big drive, done where the server keeps answering.
+        concepts, mode, about = await asyncio.to_thread(rule_concepts, run), "rules", {}
     if not concepts:
         reason = "your notes rule out" if any(row.get("ruled_out") for row in run.gaps) else "this unit cannot host"
         mode, about = "none", {"note": f"Every category the block is missing is one {reason}."}

@@ -395,6 +395,20 @@ async def geocode(request: Request, q: str = Query(..., min_length=3, max_length
         raise HTTPException(502, "Address search is unavailable right now.") from exc
 
 
+@router.get("/reverse", response_model=schemas.ReverseHit, responses={404: {"description": "No address at this point"}})
+async def reverse(
+    request: Request, lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180),
+) -> dict:
+    """The address of a pin dropped on the map."""
+    try:
+        found = await request.app.state.services.geocoder.reverse(lat, lon)
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(502, "Address lookup is unavailable right now.") from exc
+    if found is None:
+        raise HTTPException(404, "No address at this point.")
+    return found
+
+
 class RevalidatingStaticFiles(StaticFiles):
     """Static files that browsers must revalidate, so a redeploy is picked up immediately.
 

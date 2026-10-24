@@ -1,6 +1,6 @@
 import type { Area } from "../lib/area";
 import { toRunRecord } from "./stream";
-import type { Design, Example, GeocodeResult, HeatCell, PlaceHit, Preset, RunRecord, RunRequest, Walk } from "./types";
+import type { Design, Example, GeocodeResult, HeatCell, PlaceHit, Preset, ReverseResult, RunRecord, RunRequest, Walk } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -172,6 +172,9 @@ export const api = {
   /** Finished surveys anyone can open, with their launch kit and report; empty when none is configured. */
   examples: () => request<Example[]>("/api/examples"),
   geocode: (text: string) => request<GeocodeResult[]>(`/api/geocode?${query({ q: text })}`),
+  /** The address of a dropped pin; rejects with a 404 when the point has none. */
+  reverse: (lat: number, lon: number, signal?: AbortSignal) =>
+    request<ReverseResult>(`/api/reverse?${query({ lat: lat.toFixed(6), lon: lon.toFixed(6) })}`, { signal }),
   places: (text: string, lat: number, lon: number, signal?: AbortSignal) =>
     request<PlaceHit[]>(`/api/places?${query({ q: text, lat: lat.toFixed(6), lon: lon.toFixed(6) })}`, { signal }),
   catchment: (lat: number, lon: number, area: Area, signal?: AbortSignal) =>

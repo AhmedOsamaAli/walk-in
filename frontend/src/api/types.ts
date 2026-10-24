@@ -67,6 +67,14 @@ export interface GeocodeResult {
   lon: number;
 }
 
+/** The address of a pin dropped on the map (GET /api/reverse; 404 when the point has none). Contract 10-24b. */
+export interface ReverseResult {
+  /** The street address and the two smallest parts of town: "131 South 2nd Street, Williamsburg, Brooklyn". */
+  label: string;
+  /** OpenStreetMap's full address line. */
+  address: string;
+}
+
 /** A place on Qloo near the pin, found by name (GET /api/places), for "improve my place". */
 export interface PlaceHit {
   id: string;

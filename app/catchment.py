@@ -11,10 +11,12 @@ distance), and the report says so.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import httpx
@@ -210,8 +212,10 @@ class Catchment:
         """Radius of a circle with the same area."""
         return math.sqrt(self.area_m2 / math.pi)
 
-    @property
+    @cached_property
     def wkt(self) -> str:
+        """The outline as Qloo reads it, simplified once: a big drive's outline has thousands of points, and every
+        Qloo request of a survey sends it."""
         return ring_wkt(simplify_ring(self.ring))
 
     @property
@@ -222,7 +226,7 @@ class Catchment:
     def around_area_m2(self) -> float | None:
         return ring_area_m2(self.around, self.lat) if self.around else None
 
-    @property
+    @cached_property
     def around_wkt(self) -> str | None:
         return ring_wkt(simplify_ring(self.around)) if self.around else None
 
@@ -295,6 +299,19 @@ def plausible(ring: list[tuple[float, float]] | None, lat: float, minutes: int, 
         return 0.002 * expected <= area <= 4 * expected
     expected = math.pi * ((reach.km or 0) * 1000) ** 2  # no road reaches farther than the distance itself
     return 0.002 * expected <= area <= 1.05 * expected
+
+
+# Outlines with more points than this are simplified on a worker thread: on a small server, a big drive's outline takes
+# seconds, and the server would not answer meanwhile.
+SIMPLIFY_OFF_LOOP_POINTS = 2 * QLOO_RING_POINTS
+
+
+async def simplified(catchment: Catchment) -> Catchment:
+    """The catchment with the outlines Qloo reads already simplified (a survey sends them with every request), a long
+    one on a worker thread."""
+    if len(catchment.ring) + len(catchment.around or ()) > SIMPLIFY_OFF_LOOP_POINTS:
+        await asyncio.to_thread(lambda: (catchment.wkt, catchment.around_wkt))
+    return catchment
 
 
 class CatchmentService:

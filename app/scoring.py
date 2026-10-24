@@ -595,6 +595,7 @@ STORE_THEMES = frozenset({
 TOPIC_KINDS = ("menu", "experience", "complaint")
 
 
+@lru_cache(maxsize=65536)
 def topic_text(name: str) -> str:
     """A keyword as plain words: lowercase, accents and punctuation folded ('Crème brûlée' -> 'creme brulee')."""
     folded = "".join(ch for ch in unicodedata.normalize("NFKD", name or "") if not unicodedata.combining(ch))
@@ -634,6 +635,7 @@ def _singular(word: str) -> str:
 NOT_MENU_HEADS = frozenset(_singular(word) for word in NOT_MENU_WORDS)
 
 
+@lru_cache(maxsize=65536)
 def _stem(word: str) -> str:
     """One form for a word's spellings: 'pastries' and 'pastry', 'cookies' and 'cookie', 'quiches' and 'quiche' meet."""
     if len(word) < 3 or not word.isascii():
@@ -670,6 +672,7 @@ def _names_a_dish(core: str) -> bool:
     return not (len(words) == 2 and words[0] in ROLE_WORDS) and _singular(_head(core)) not in NOT_MENU_HEADS
 
 
+@lru_cache(maxsize=65536)
 def menu_key(core: str) -> str:
     """One key for the ways reviews write a dish: 'croissants' and 'croissant', 'egyptian food' and 'egyptian'."""
     stems = [MENU_SPELLINGS.get(_stem(word), _stem(word)) for word in ("and" if word == "n" else word for word in core.split())]
@@ -679,6 +682,7 @@ def menu_key(core: str) -> str:
     return MENU_SYNONYMS.get(key, key)
 
 
+@lru_cache(maxsize=65536)
 def item_key(name: str) -> str:
     """One key for any wording of a dish, drink or activity: 'Great croissants', 'croissant' and 'Croissants' meet."""
     text = topic_text(name)
@@ -741,6 +745,7 @@ def _fold(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)).lower()
 
 
+@lru_cache(maxsize=65536)
 def _repeats(keyword: str, own: str) -> bool:
     """Whether a keyword repeats whole words of a place's name or address: 'zamalek' or 'el zamalek' in Zamalek, 'katz' at
     Katz's; 'tea' is not in 'Steak House'."""
