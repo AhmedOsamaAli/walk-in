@@ -329,23 +329,72 @@ async def gap_table(
 
 
 async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dict | None, str | None]:
-    """Resolve free text ('bakeries', 'board game cafe') to a storefront place genre, or say why it cannot.
+    """Resolve free text ('bakeries', 'board game cafe', 'taco shop') to a storefront place genre, or say why it cannot.
 
     Genres locals already rank keep their local and reference ranks; others come from Qloo's tag search and are
     marked unranked, which is itself evidence of weak local demand. A search result only counts when its words match
-    the query's (exactly, more specific or broader): "art gallery" must not become "Aboriginal art gallery".
+    the query's (exactly, more specific or broader): "art gallery" must not become "Aboriginal art gallery". The text
+    is read as genre_readings gives it, in turn; when none finds a category, the first reading's reason is given.
     """
-    wanted = _normalize_genre(query)
+    first_reason = None
+    for text, near in genre_readings(query):
+        genre, why = await _find_genre_as(q, ranked, text, query, near)
+        if genre:
+            return genre, None
+        first_reason = first_reason or why
+    return None, first_reason
+
+
+# Everyday names for categories Qloo files under another name, keyed by _normalize_genre's form: a whole query, then
+# single words ('burger joint' -> 'hamburger joint').
+CASUAL_NAMES = {
+    "flower shop": "florist", "flower": "florist", "juice bar": "juice shop", "smoothie bar": "juice shop",
+    "smoothie": "juice shop", "noodle bar": "noodle shop", "gelateria": "ice cream shop", "gelato": "ice cream shop",
+    "bookshop": "book store", "book shop": "book store",
+}
+CASUAL_WORDS = {"taqueria": "taco", "boba": "bubble tea", "burger": "hamburger", "bike": "bicycle"}
+# Words that only say a place is a business ('taco shop', 'pizza place'). Without them only Qloo's exact category
+# counts, so 'pet store' never becomes 'Pet sitter'.
+BUSINESS_WORDS = {"shop", "place", "spot", "joint", "stand", "outlet", "business"}
+
+
+def genre_readings(query: str) -> list[tuple[str, bool]]:
+    """The texts a business is looked up by, each with whether a near match (more specific or broader) counts: its
+    everyday name's category first ('taqueria' -> 'taco'), then the words as typed, then without the words that only
+    say it is a business ('taco shop' -> 'taco'), which must name a category exactly."""
+    typed = " ".join(query.strip().lower().split())
+    key = _normalize_genre(typed)
+    casual = CASUAL_NAMES.get(key) or " ".join(CASUAL_WORDS.get(word, word) for word in key.split())
+    readings = ([(casual, True)] if casual != key else []) + [(typed, True)]
+    bare = " ".join(word for word in _normalize_genre(casual).split() if word not in BUSINESS_WORDS)
+    if bare:
+        readings.append((bare, False))
+    seen: set[str] = set()
+    distinct = []
+    for text, near in readings:
+        if text and _normalize_genre(text) not in seen:
+            seen.add(_normalize_genre(text))
+            distinct.append((text, near))
+    return distinct
+
+
+async def _find_genre_as(
+    q: QlooClient, ranked: list[dict], text: str, query: str, near: bool,
+) -> tuple[dict | None, str | None]:
+    """find_genre for one reading of the owner's `query`; without `near`, only an exact category counts."""
+    wanted = _normalize_genre(text)
     exact = next(
         (genre for genre in ranked if _normalize_genre(genre["name"]).replace(" ", "") == wanted.replace(" ", "")), None,
     )
     if exact:
         return exact, None
-    data = await q.tags({"filter.query": query.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 10})
+    data = await q.tags({"filter.query": text.strip()[:60], "filter.tag.types": "urn:tag:genre:place", "take": 10})
     best = None
     for position, tag in enumerate(scoring.tags(data)):
         tag_id, name = scoring.tag_id(tag), tag.get("name")
         quality = _match_quality(wanted, _normalize_genre(name)) if tag_id and name else 0
+        if quality and not near and quality < 3:
+            quality = 0
         if quality and (best is None or (-quality, len(name.split()), position) < best[0]):
             best = ((-quality, len(name.split()), position), tag_id, name)
     if best is None:
@@ -373,6 +422,9 @@ def _match_quality(query: str, name: str) -> int:
 def _normalize_genre(text: str) -> str:
     text = " ".join(text.lower().replace("-", " ").split())
     text = text.removesuffix(" restaurants").removesuffix(" restaurant")
+    # A shop and a store are one thing: 'bubble tea shop' is Qloo's 'Bubble tea store', 'bookshop' its 'Book store'.
+    text = " ".join("shop" if word in ("store", "stores") else word for word in text.split())
+    text = text.replace("bookstore", "bookshop")
     if text.endswith("ies"):
         return text[:-3] + "y"
     if text.endswith(("ches", "shes", "sses", "xes")):

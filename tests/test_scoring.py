@@ -377,6 +377,39 @@ def test_find_genre_only_accepts_categories_that_match_the_hunch():
     assert genre is None and "only the generic Store" in why
 
 
+def test_find_genre_reads_everyday_names_and_drops_business_words():
+    import asyncio
+
+    from app.engine import find_genre, genre_readings
+
+    class TagSearch:
+        def __init__(self, by_query):
+            self.by_query, self.asked = by_query, []
+
+        async def tags(self, params):
+            self.asked.append(params["filter.query"])
+            return {"results": {"tags": [
+                {"id": f"urn:tag:genre:place:{name.lower().replace(' ', '_')}", "name": name}
+                for name in self.by_query.get(params["filter.query"], [])
+            ]}}
+
+    def find(by_query, query):
+        search = TagSearch(by_query)
+        return asyncio.run(find_genre(search, [], query)), search.asked
+
+    # Qloo's search for 'taco shop' finds other shops; without the business word, its exact category.
+    (genre, _), asked = find({"taco shop": ["Coffee shop", "Tobacco shop"], "taco": ["Taco", "Taco restaurant"]}, "taco shop")
+    assert genre["name"] == "Taco" and asked == ["taco shop", "taco"]
+    assert find({"taco": ["Taco", "Taco restaurant"]}, "Taquerias")[0][0]["name"] == "Taco"
+    assert find({"bubble tea shop": ["Bubble tea store", "Tea store"]}, "bubble tea shop")[0][0]["name"] == "Bubble tea store"
+    assert find({"book store": ["Book store", "Book Publisher"]}, "bookshop")[0][0]["name"] == "Book store"
+    assert find({"florist": ["Florist"], "flower shop": ["Dried Flower Shop"]}, "flower shop")[0][0]["name"] == "Florist"
+    # Without its business word only an exact category counts: a pet store is no pet sitter.
+    (genre, why), asked = find({"pet": ["Pet Sitter", "Pet Groomer"]}, "pet store")
+    assert genre is None and why == "Qloo has no storefront category matching 'pet store'." and asked == ["pet store", "pet"]
+    assert genre_readings("Pizza places") == [("pizza places", True), ("pizza", False)]
+
+
 def test_reference_rank_uses_median_and_counts_missing_as_low():
     assert scoring.reference_rank([2, 4, 30]) == 4.0
     assert scoring.reference_rank([1, None, None]) == 51.0
