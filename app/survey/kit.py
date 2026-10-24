@@ -36,6 +36,7 @@ from .dossier import (
     campaign,
     concept_at,
     map_trips,
+    streets_basis,
     untested,
     usable_claims,
     walk_outline,
@@ -994,6 +995,35 @@ def poster_map(run: RunState, row: dict | None, claims: list[dict], streets: dic
     kind = in_sentence(row["genre"]) if kind.endswith(" places") else kind  # 'for seafood', 'for bakeries'
     caption = f"{number(km)} km: where {people_here(run.site.ages)} go for {kind} now" if trips else None
     return {"streets": streets, "trips": trips, "caption": caption}
+
+
+def _kit_maps(payload: object) -> list[tuple[dict, bool]]:
+    """The maps a kit draws over the street map: the poster's, and the report cover's (True: its note names sources)."""
+    if not isinstance(payload, dict):
+        return []
+    poster, dossier = payload.get("poster"), payload.get("dossier")
+    cover = dossier.get("cover") if isinstance(dossier, dict) else None
+    return [(part["map"], is_cover) for part, is_cover in ((poster, False), (cover, True))
+            if isinstance(part, dict) and isinstance(part.get("map"), dict)]
+
+
+def lacks_street_map(payload: object) -> bool:
+    """Whether a kit's maps were drawn without the street map, as when no source of it answered while the kit was
+    built. A kit made before its maps existed has none to fill."""
+    return any(not kit_map.get("streets") for kit_map, _ in _kit_maps(payload))
+
+
+def with_street_map(payload: dict, streets: dict) -> dict:
+    """The kit with `streets` (app.basemap.street_map) in each map that lacks it, the poster's and the report cover's,
+    whose note on its sources then names the streets' too; the payload given is left as it was."""
+    kit = copy.deepcopy(payload)
+    for kit_map, is_cover in _kit_maps(kit):
+        if kit_map.get("streets"):
+            continue
+        kit_map["streets"] = streets
+        if is_cover and isinstance(kit_map.get("basis"), str):
+            kit_map["basis"] += streets_basis(streets)
+    return kit
 
 
 def make_links(keys: list[str], name: str, genre: str) -> list[dict]:

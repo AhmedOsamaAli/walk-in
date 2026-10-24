@@ -258,8 +258,7 @@ def site_map(run: RunState, row: dict | None, streets: dict | None) -> dict:
              f"{people_here(run.site.ages)} love more than the city does, outside the {area}, at their straight-line "
              f"distance (Qloo).")
     if streets:
-        as_of = str(streets.get("as_of") or "")[:10]
-        basis += f" Streets and water: OpenStreetMap{f', data of {as_of}' if as_of else ''}."
+        basis += streets_basis(streets)
     return {
         "streets": streets,
         "pins": map_pins(run, row) if row else [],
@@ -267,6 +266,14 @@ def site_map(run: RunState, row: dict | None, streets: dict | None) -> dict:
         "caption": map_caption(run, row),
         "basis": basis,
     }
+
+
+def streets_basis(streets: dict) -> str:
+    """The cover map's note on its streets and water: OpenStreetMap's, read from its Overpass servers or from
+    OpenFreeMap's vector tiles of it (app.vectortiles), and the date of the data."""
+    as_of = str(streets.get("as_of") or "")[:10]
+    via = " (OpenFreeMap's vector tiles)" if "openfreemap" in str(streets.get("source") or "") else ""
+    return f" Streets and water: OpenStreetMap{via}{f', data of {as_of}' if as_of else ''}."
 
 
 def area_name(run: RunState) -> str:

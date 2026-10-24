@@ -73,10 +73,12 @@ async def find_kit(request: Request, run_id: str = Query(..., max_length=32), in
 
 @router.get("/kits/{token}")
 async def kit_page(request: Request, token: str = Path(..., pattern=TOKEN)) -> dict:
-    """A kit, for anyone with its link; the page asks again while it is building."""
+    """A kit, for anyone with its link; the page asks again while it is building. A kit saved without its street map
+    gets it here when it can (app.kits)."""
     kit = await request.app.state.kits.kit(token)
     if kit is None:
         raise HTTPException(404, "Kit not found.")
+    kit = await request.app.state.builder.with_streets(kit)
     return {
         "token": kit["token"],
         "status": kit["status"],

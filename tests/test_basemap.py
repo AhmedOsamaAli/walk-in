@@ -1,5 +1,6 @@
 """The kit's street map: what one Overpass query reads around a walk, how its streets, water and parks are cut to a box,
-which side of a shore is water, and how the client asks and caches. Fake Overpass answers only."""
+which side of a shore is water, how the client asks and caches, and how the vector tiles stand in when Overpass does not
+answer. Fake Overpass answers and fake tiles only."""
 import asyncio
 import json
 import math
@@ -7,7 +8,7 @@ import math
 import httpx
 import pytest
 
-from app import basemap, osm
+from app import basemap, osm, vectortiles
 from app.catchment import Catchment
 
 SITE = (40.7145, -73.958)
@@ -300,3 +301,94 @@ def test_no_client_or_no_walk_is_no_street_map(tmp_path):
     assert asyncio.run(basemap.street_map(None, WALK)) is None
     assert asyncio.run(basemap.street_map(client_, None)) is None
     assert seen == []
+
+
+# ---------- The second source: vector tiles (app.vectortiles) ----------
+
+class FakeTiles:
+    """Stands in for app.vectortiles.TileClient: records what it is asked, answers a map or fails."""
+
+    def __init__(self, fail: BaseException | None = None) -> None:
+        self.fail = fail
+        self.asked: list[tuple[basemap.Box, tuple[str, ...]]] = []
+
+    async def street_map(self, box, walk, layers):
+        self.asked.append((box, tuple(layers)))
+        if self.fail is not None:
+            raise self.fail
+        return {"source": vectortiles.SOURCE, "layers": list(layers), "streets": {"primary": [[[0, 0], [1, 1]]]},
+                "credit": vectortiles.CREDIT}
+
+
+class DownOverpass:
+    """An Overpass client that never answers, and records how it was asked."""
+
+    def __init__(self) -> None:
+        self.asked: list[dict] = []
+
+    async def ask(self, query, shape, **options):
+        self.asked.append(options)
+        raise osm.OsmError("every instance timed out")
+
+
+def test_when_overpass_does_not_answer_the_tiles_draw_the_map(tmp_path):
+    client_, seen = client(tmp_path, 502, 502)
+    tiles = FakeTiles()
+    streets = asyncio.run(basemap.street_map(client_, WALK, tiles=tiles))
+    assert streets["source"] == "tiles.openfreemap.org" and streets["credit"] == vectortiles.CREDIT
+    assert len(seen) == 2 and tiles.asked == [(BOX, basemap.STREET_LAYERS)]  # Overpass first, then the same box
+    town = Catchment(*SITE, 20, "street network", ring_at([(-2500, 0), (0, 2500), (2500, 0), (0, -2500)]), travel="drive")
+    asyncio.run(basemap.street_map(client_, town, basemap.layers_for(town), tiles))
+    assert tiles.asked[-1] == (basemap.box_for(town), basemap.MAIN_ROADS)  # the layers the area's size calls for
+    # Without Overpass at all, the tiles still draw it.
+    assert asyncio.run(basemap.street_map(None, WALK, tiles=tiles))["source"] == "tiles.openfreemap.org"
+
+
+def test_overpass_comes_first_and_gets_forty_seconds_before_the_tiles(tmp_path):
+    client_, seen = client(tmp_path, answer())
+    tiles = FakeTiles()
+    assert asyncio.run(basemap.street_map(client_, WALK, tiles=tiles))["source"] == "first.test" and tiles.asked == []
+    down = DownOverpass()
+    assert asyncio.run(basemap.street_map(down, WALK, tiles=tiles))["source"] == "tiles.openfreemap.org"
+    assert down.asked == [{"name": "basemap", "timeout": basemap.TIMEOUT_S, "budget": 40.0}]
+    assert basemap.BUDGET_S + vectortiles.BUDGET_S <= 70  # a kit's street map is ready in about a minute at worst
+
+
+def test_tiles_first_asks_overpass_only_when_the_tiles_fail(tmp_path):
+    client_, seen = client(tmp_path, answer())
+    tiles = FakeTiles()
+    assert asyncio.run(basemap.street_map(client_, WALK, tiles=tiles, tiles_first=True))["source"] == "tiles.openfreemap.org"
+    assert seen == [] and len(tiles.asked) == 1
+    failing = FakeTiles(vectortiles.TileError("tile 14/1/1: HTTP 502"))
+    assert asyncio.run(basemap.street_map(client_, WALK, tiles=failing, tiles_first=True))["source"] == "first.test"
+    assert len(seen) == 1 and len(failing.asked) == 1
+
+
+@pytest.mark.parametrize("failure", [
+    vectortiles.TileError("the tiles took longer than 30 s"), ValueError("odd"), KeyError("tiles"), TimeoutError(),
+    httpx.ConnectError("refused"),
+])
+def test_the_street_map_never_raises_and_is_none_when_both_sources_fail(tmp_path, failure):
+    client_, seen = client(tmp_path, 502, 502)
+    tiles = FakeTiles(failure)
+    assert asyncio.run(basemap.street_map(client_, WALK, tiles=tiles)) is None
+    assert len(seen) == 2 and len(tiles.asked) == 1 and not list(tmp_path.glob("*.json"))
+    assert asyncio.run(basemap.street_map(None, WALK, tiles=FakeTiles(failure), tiles_first=True)) is None
+    odd = Catchment(*SITE, 10, "street network", [("east", "north")] * 5)  # an area no box can be drawn around
+    assert asyncio.run(basemap.street_map(client_, odd, tiles=FakeTiles())) is None
+
+
+def test_an_area_is_cut_to_the_box_winding_as_it_did():
+    box = basemap.Box(*SITE, -100, -100, 100, 100)
+    # A U open to the north, through the box's north edge: one ring, its arms joined along the edge by a line of no
+    # width, filling the bar and the two arms inside the box.
+    u = [(-150, -50), (150, -50), (150, 150), (50, 150), (50, 0), (-50, 0), (-50, 150), (-150, 150), (-150, -50)]
+    cut = basemap.clip_area(u, box)
+    assert cut[0] == cut[-1] and all(box.inside(p) for p in cut)
+    assert basemap.area_m2(cut) == pytest.approx(200 * 50 + 2 * 50 * 100)
+    assert basemap.winding((0, 50), [cut]) == 0 and basemap.winding((-75, 50), [cut]) == 1
+    hole = [(-20, -20), (-20, 20), (20, 20), (20, -20), (-20, -20)]  # clockwise, wholly inside: as it was
+    assert basemap.clip_area(hole, box) == hole and basemap.area_m2(hole) < 0
+    assert basemap.clip_area([(200, 200), (300, 200), (300, 300), (200, 300), (200, 200)], box) == []
+    whole = basemap.clip_area([(-500, -500), (500, -500), (500, 500), (-500, 500), (-500, -500)], box)
+    assert basemap.area_m2(whole) == pytest.approx(200 * 200)

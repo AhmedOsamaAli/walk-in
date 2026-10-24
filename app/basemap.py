@@ -6,8 +6,12 @@ streets; the main roads to tertiary up to 60 km²; motorways, trunk and primary 
 drawn as areas, the sea along the coastline) and, for a walk-sized area, parks. It is asked like the survey's
 cross-check (app.osm: the same instances, User-Agent, manners and on-disk cache). The answer is clipped to the box,
 simplified (Ramer-Douglas-Peucker, a few metres for a walk, harder for a bigger box) and capped at about 2,000 points
-(under 60 KB), then kept with the kit, so it is fetched once. When OpenStreetMap does not answer there is no street
-map: the maps draw the area and its places without one and say so. No street or shore is ever made up.
+(under 60 KB), then kept with the kit, so it is fetched once.
+
+The public Overpass instances often time out or refuse for hours, so they get BUDGET_S seconds in all; then the same
+map is read from a second, independent source of the same data: OpenFreeMap's vector tiles (app.vectortiles, up to its
+own 30 s), cut to the same box, simplified and capped the same way (payload). Only when neither answers is there no
+street map: the maps draw the area and its places without one and say so. No street or shore is ever made up.
 
 Overpass gives an area's edges only where they cross the box, so which side of an edge is water is read from the site:
 a storefront stands on land, so a point is water when a line from the site to it crosses that body of water's edges an
@@ -21,9 +25,10 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from functools import partial
+from typing import Protocol
 
 from . import osm
 from .catchment import Catchment
@@ -37,7 +42,9 @@ TOLERANCES_M = (2.0, 3.0, 5.0, 8.0, 12.0)  # tried in turn until the map holds a
 MIN_AREA_M2 = 400.0  # water or a park smaller than this is a fountain or a lawn, not a landmark
 SERVER_TIMEOUT_S = 25
 TIMEOUT_S = 35.0  # one request: a city's streets take an instance longer than the cross-check's places
-BUDGET_S = 75.0  # every instance asked, together; the kit is built in the background
+# Every instance asked, together: then the vector tiles (app.vectortiles.BUDGET_S), so the map is ready in about a minute
+# at worst, while the kit's copy is written.
+BUDGET_S = 40.0
 CACHE_NAME = "basemap"
 WET_SAMPLE = 64  # outline points tested for water; a drive's outline has hundreds, and each is tested against the coast
 _M_PER_DEG = 111_320.0
@@ -392,6 +399,32 @@ def clip_chain(chain: list[Point], box: Box) -> list[list[Point]]:
     return clip_line(chain, box)
 
 
+def clip_area(ring: list[Point], box: Box) -> list[Point]:
+    """The part of an area's closed ring inside the box (Sutherland-Hodgman), closed and winding as the ring did; []
+    when none of it is. An area the box cuts in several parts comes back as one ring, the parts joined along the box's
+    edge by lines of no width, which fill nothing (the maps fill areas and draw no outline)."""
+    points = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else list(ring)
+    for axis, limit, above in ((0, box.west, True), (0, box.east, False), (1, box.south, True), (1, box.north, False)):
+        if not points:
+            return []
+        kept: list[Point] = []
+        previous = points[-1]
+        was_in = previous[axis] >= limit if above else previous[axis] <= limit
+        for point in points:
+            is_in = point[axis] >= limit if above else point[axis] <= limit
+            if is_in != was_in:
+                t = (limit - previous[axis]) / (point[axis] - previous[axis])
+                other = 1 - axis
+                cut = previous[other] + t * (point[other] - previous[other])
+                kept.append((limit, cut) if axis == 0 else (cut, limit))
+            if is_in:
+                kept.append(point)
+            previous, was_in = point, is_in
+        points = kept
+    points = [p for i, p in enumerate(points) if p != points[i - 1]]
+    return points + [points[0]] if len(points) >= 3 else []
+
+
 def winding(point: Point, rings: Iterable[list[Point]]) -> int:
     """The nonzero rule's winding number of the rings around a point."""
     x, y = point
@@ -662,12 +695,21 @@ def read(data: dict, box: Box, walk: list[Point], layers: Iterable[str] = STREET
 
 
 def shape(data: dict, box: Box, walk: list[Point], layers: Iterable[str] = STREET_LAYERS) -> dict:
-    """What a kit keeps of an Overpass answer: [lat, lon] lines and rings, at most about MAX_POINTS points. Raises
-    OsmError when the answer holds no street, which an area traced over streets always has."""
+    """What a kit keeps of an Overpass answer (payload). Raises OsmError when the answer holds no street, which an area
+    traced over streets always has."""
     layers = tuple(layers)
     read_layers = read(data, box, walk, layers)
     if not any(read_layers.streets.values()):
         raise osm.OsmError("no streets in the answer")
+    return payload(read_layers, box, walk, layers)
+
+
+def payload(
+    read_layers: Layers, box: Box, walk: list[Point], layers: Iterable[str] = STREET_LAYERS, credit: str = osm.CREDIT,
+) -> dict:
+    """What a kit keeps of a street map read in metres, from an Overpass answer or from vector tiles: [lat, lon] lines
+    and rings simplified until they hold at most about MAX_POINTS points (fitted), and the credit its source asks for."""
+    layers = tuple(layers)
     xs, ys = [x for x, _ in walk] or [0.0], [y for _, y in walk] or [0.0]
     focus = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
     reach = max([math.dist(point, focus) for point in walk] or [0.0])
@@ -684,26 +726,52 @@ def shape(data: dict, box: Box, walk: list[Point], layers: Iterable[str] = STREE
         "tolerance_m": tolerance,
         "dropped": dropped,
         "thinned": thinned,
-        "credit": osm.CREDIT,
+        "credit": credit,
     }
+
+
+class TileSource(Protocol):
+    """The street map's second source (app.vectortiles.TileClient): the map of a box, shaped as payload shapes it, with
+    its "source"; raises when it cannot be read."""
+
+    async def street_map(self, box: Box, walk: list[Point], layers: Iterable[str]) -> dict: ...
+
+
+async def _from_overpass(client: osm.OsmClient, box: Box, walk: list[Point], layers: tuple[str, ...]) -> dict:
+    return await client.ask(query(box, layers), partial(shape, box=box, walk=walk, layers=layers), name=CACHE_NAME,
+                            timeout=TIMEOUT_S, budget=BUDGET_S)
 
 
 async def street_map(
     client: osm.OsmClient | None, catchment: Catchment | None, layers: Iterable[str] = STREET_LAYERS,
+    tiles: TileSource | None = None, *, tiles_first: bool = False,
 ) -> dict | None:
     """The streets of the layers asked for (layers_for: every street for a walk, the main roads for a bigger area),
-    water and parks around the survey's area, as the kit keeps them; None when the cross-check client is off, there
-    is no area, or OpenStreetMap does not answer. Never raises: the kit is built without a street map then."""
-    if client is None or catchment is None or len(catchment.ring) < 4:
-        return None
-    layers = tuple(layer for layer in STREET_LAYERS if layer in set(layers))
-    box = box_for(catchment)
-    walk = [box.metres(lat, lon) for lon, lat in catchment.ring]
+    water and parks around the survey's area, as the kit keeps them: from Overpass (`client`, BUDGET_S seconds in all),
+    else from the vector tiles (`tiles`, app.vectortiles); `tiles_first` asks the tiles first, as opening a kit saved
+    without a street map does (they answer in seconds). None when there is no area, or no source is given or answers.
+    Never raises: the kit is built without a street map then."""
+    sources: list[tuple[str, Callable[[Box, list[Point], tuple[str, ...]], Awaitable[dict]]]] = []
+    if client is not None:
+        sources.append(("OpenStreetMap's Overpass servers", partial(_from_overpass, client)))
+    if tiles is not None:
+        sources.append(("OpenFreeMap's vector tiles", tiles.street_map))
+    if tiles_first:
+        sources.reverse()
     try:
-        return await client.ask(query(box, layers), partial(shape, box=box, walk=walk, layers=layers), name=CACHE_NAME,
-                                timeout=TIMEOUT_S, budget=BUDGET_S)
-    except osm.OsmError as exc:
-        log.warning("No street map for the kit: %s", exc)
-    except Exception:  # an answer shaped unlike any seen so far must not stop the kit
-        log.warning("The street map failed", exc_info=True)
+        if catchment is None or len(catchment.ring) < 4:
+            return None
+        layers = tuple(layer for layer in STREET_LAYERS if layer in set(layers))
+        box = box_for(catchment)
+        walk = [box.metres(lat, lon) for lon, lat in catchment.ring]
+    except Exception:  # an area shaped unlike any seen so far must not stop the kit
+        log.warning("No box for the street map", exc_info=True)
+        return None
+    for name, fetch in sources:
+        try:
+            return await fetch(box, walk, layers)
+        except osm.OsmError as exc:
+            log.warning("No street map from %s: %s", name, exc)
+        except Exception:  # an answer shaped unlike any seen so far must not stop the kit
+            log.warning("The street map from %s failed", name, exc_info=True)
     return None

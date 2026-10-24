@@ -69,6 +69,15 @@ class KitStore:
             )
         return result.rowcount == 1
 
+    async def save_payload(self, token: str, payload: dict) -> bool:
+        """Replaces a ready kit's payload, as when its street map arrives after the kit was built (app.kits). False when
+        the kit is gone or not ready."""
+        async with self._engine.begin() as connection:
+            result = await connection.execute(
+                update(kits).where(kits.c.token == token, kits.c.status == "ready").values(payload=payload)
+            )
+        return result.rowcount == 1
+
     async def finish(
         self, token: str, *, payload: dict | None = None, error: str | None = None, name: str | None = None,
     ) -> bool:

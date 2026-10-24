@@ -11,6 +11,8 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app import kits as builders
+from app import vectortiles
 from app.db.tables import designs, kits
 from app.llm import LLM
 from app.survey import kit as kit_module
@@ -201,3 +203,128 @@ def test_my_places_lists_the_kits_of_my_surveys_and_deleting_the_account_deletes
         assert client.delete("/api/me").status_code == 204
         assert client.get(f"/api/kits/{kit['token']}").status_code == 404  # gone with its survey
         assert [row["token"] for row in rows(client, kits)] == [their_kit["token"]]
+
+
+# ---------- Kits saved without a street map ----------
+
+class FakeTiles:
+    """Stands in for OpenFreeMap's tiles (app.vectortiles.TileClient): a street map after `delay` seconds, or a failure."""
+
+    def __init__(self, fail: bool = False, delay: float = 0.0) -> None:
+        self.fail, self.delay, self.calls = fail, delay, 0
+
+    async def street_map(self, box, walk, layers):
+        self.calls += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail:
+            raise vectortiles.TileError("the tiles took longer than 30 s")
+        south, west, north, east = box.bbox
+        return {"source": vectortiles.SOURCE, "as_of": "2026-10-18", "box": [[south, west], [north, east]],
+                "layers": list(layers), "streets": {"primary": [[[south, west], [north, east]]]}, "water": [], "parks": [],
+                "points": 2, "tolerance_m": 2.0, "dropped": [], "thinned": [], "credit": vectortiles.CREDIT}
+
+
+def maps_of(kit: dict) -> tuple[dict, dict]:
+    return kit["poster"]["map"], kit["dossier"]["cover"]["map"]
+
+
+def kit_without_streets(client) -> str:
+    """A kit built while no source of street maps answered (the app has none: no OpenStreetMap client, no tiles)."""
+    token = make_kit(client, run_survey(client))["token"]
+    page = wait_for(client, token)
+    assert page["status"] == "ready" and all(m["streets"] is None for m in maps_of(page["kit"]))
+    return token
+
+
+def test_a_kit_saved_without_its_street_map_gets_it_when_opened():
+    with make_client() as client:
+        token = kit_without_streets(client)
+        tiles = FakeTiles()
+        client.app.state.builder.tiles = tiles
+        opened = client.get(f"/api/kits/{token}").json()
+        poster, cover = maps_of(opened["kit"])
+        assert poster["streets"]["source"] == "tiles.openfreemap.org" and cover["streets"] == poster["streets"]
+        assert cover["basis"].endswith(" Streets and water: OpenStreetMap (OpenFreeMap's vector tiles), data of 2026-10-18.")
+        assert poster["streets"]["credit"] == "OpenFreeMap © OpenMapTiles · Data © OpenStreetMap contributors"
+        # Saved with the kit: the next open reads it, and nothing is fetched again.
+        [row] = rows(client, kits)
+        assert maps_of(row["payload"])[0]["streets"] == poster["streets"] and row["status"] == "ready"
+        assert client.get(f"/api/kits/{token}").json() == opened and tiles.calls == 1
+
+
+def test_a_kit_is_built_with_the_tiles_map_when_overpass_is_off():
+    with make_client() as client:
+        tiles = FakeTiles()
+        client.app.state.builder.tiles = tiles
+        token = make_kit(client, run_survey(client))["token"]
+        poster, cover = maps_of(wait_for(client, token)["kit"])
+        assert poster["streets"]["source"] == "tiles.openfreemap.org" and cover["streets"] == poster["streets"]
+        assert tiles.calls == 1
+
+
+def test_a_street_map_that_cannot_be_fetched_is_asked_for_again_after_ten_minutes(monkeypatch):
+    assert builders.FILL_REST_S == 600
+    with make_client() as client:
+        token = kit_without_streets(client)
+        tiles = FakeTiles(fail=True)
+        client.app.state.builder.tiles = tiles
+        for _ in range(3):  # the first open tries; the next ones, within ten minutes, do not
+            page = client.get(f"/api/kits/{token}").json()
+            assert page["status"] == "ready" and maps_of(page["kit"])[0]["streets"] is None
+        assert tiles.calls == 1
+        monkeypatch.setattr(builders, "FILL_REST_S", 0.0)  # ten minutes later
+        tiles.fail = False
+        assert maps_of(client.get(f"/api/kits/{token}").json()["kit"])[0]["streets"] and tiles.calls == 2
+
+
+def test_opening_a_kit_waits_for_its_street_map_ten_seconds_at_most_and_the_next_open_has_it(monkeypatch):
+    assert builders.FILL_WAIT_S == 10
+    monkeypatch.setattr(builders, "FILL_WAIT_S", 0.05)
+    with make_client() as client:
+        token = kit_without_streets(client)
+        tiles = FakeTiles(delay=0.5)
+        client.app.state.builder.tiles = tiles
+        started = time.monotonic()
+        page = client.get(f"/api/kits/{token}").json()
+        assert maps_of(page["kit"])[0]["streets"] is None and time.monotonic() - started < 0.45
+        # The fetch went on in the background, once: a later open has the map.
+        deadline = time.monotonic() + 10
+        while maps_of(client.get(f"/api/kits/{token}").json()["kit"])[0]["streets"] is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        assert tiles.calls == 1
+
+
+def test_one_fetch_per_kit_at_a_time():
+    with make_client() as client:
+        token = kit_without_streets(client)
+        tiles = FakeTiles(delay=0.2)
+        client.app.state.builder.tiles = tiles
+
+        async def both() -> list[httpx.Response]:
+            transport = httpx.ASGITransport(app=client.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+                return await asyncio.gather(*(http.get(f"/api/kits/{token}") for _ in range(3)))
+
+        answers = client.portal.call(both)
+        assert all(maps_of(answer.json()["kit"])[0]["streets"] for answer in answers) and tiles.calls == 1
+
+
+def test_kits_with_a_street_map_or_made_before_maps_are_left_as_they_are():
+    streets = {"box": [[0, 0], [1, 1]], "streets": {}, "water": [], "parks": [], "credit": "©"}
+    before_maps = {"poster": {"name": "Old"}, "dossier": {"cover": {"concept": "Old"}}}
+    assert not kit_module.lacks_street_map(before_maps) and not kit_module.lacks_street_map(None)
+    without = {"poster": {"map": {"streets": None, "trips": []}},
+               "dossier": {"cover": {"map": {"streets": None, "basis": "Pins: Qloo."}}}}
+    assert kit_module.lacks_street_map(without)
+    filled = kit_module.with_street_map(without, streets)
+    assert maps_of(filled) == ({"streets": streets, "trips": []}, {"streets": streets, "basis": "Pins: Qloo. Streets and water: OpenStreetMap."})
+    assert not kit_module.lacks_street_map(filled) and maps_of(without)[0]["streets"] is None  # a copy
+    with make_client() as client:
+        token = kit_without_streets(client)
+        tiles = FakeTiles()
+        client.app.state.builder.tiles = tiles
+        client.get(f"/api/kits/{token}")
+        client.get(f"/api/kits/{token}")
+        assert tiles.calls == 1
