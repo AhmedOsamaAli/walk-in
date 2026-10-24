@@ -15,16 +15,22 @@ from datetime import UTC, datetime
 from .. import engine, osm, scoring
 from ..answers import AnswerCache
 from ..catchment import Catchment, CatchmentService
+from ..demographics import ages_label
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError, track_reads
 from . import constraints, intents
 from .concepts import caution, concepts_from_agent, rule_concepts
-from .evidence import annotate, public_gap
+from .evidence import annotate, people_here, public_gap
 from .models import Emit, RunState, RunStore, Site
 
 log = logging.getLogger("walkin")
 
 OSM_FAILED = "OpenStreetMap did not answer in time, so the gaps rest on Qloo's places alone and say they were not cross-checked."
+# OpenStreetMap's free servers answer a walk's places in seconds; a big drive holds tens of thousands and times out.
+OSM_MAX_KM2 = 30
+OSM_TOO_BIG = ("This area is larger than {limit} km², too large for OpenStreetMap's free servers, so the gaps rest on "
+               "Qloo's places alone and say they were not cross-checked.")
+OSM_TOO_BIG_NOTE = "Not cross-checked: OpenStreetMap is read for areas up to {limit} km², and this one is larger."
 
 
 def read_notes(site: Site) -> constraints.Constraints:
@@ -48,7 +54,10 @@ async def analyze_site(
     reads = track_reads()
     osm.track(None)
     checking: asyncio.Future | None = None
-    await emit("run", {"run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood})
+    await emit("run", {
+        "run_id": run.id, "site": site.__dict__, "llm": llm.enabled, "understood": run.constraints.understood,
+        "area_label": site.area, "ages_label": ages_label(site.ages),
+    })
 
     async def step(name: str, label: str, coro):
         await emit("status", {"step": name, "state": "running", "label": label})
@@ -56,7 +65,7 @@ async def analyze_site(
         await emit("status", {"step": name, "state": "done", "label": label})
         return result
 
-    minutes = site.minutes
+    who = people_here(site.ages)
     try:
         if site.intent == "improve":
             run.place = await step("place", "Finding your place on Qloo", engine.place_by_id(q, site.place_id))
@@ -69,7 +78,7 @@ async def analyze_site(
             await emit("place", {"place": scoring.place_card(run.place, location), "site": site.__dict__})
 
         catchment = await step(
-            "walk", f"Tracing a {minutes}-minute walk over the street network", walker.walk(site.lat, site.lon, minutes)
+            "walk", f"Tracing a {site.area} over the street network", walker.area(site.lat, site.lon, site.reach)
         )
         run.catchment = catchment
         await emit("catchment", catchment.public())
@@ -78,11 +87,11 @@ async def analyze_site(
         if osm_client is not None:
             checking = asyncio.ensure_future(cross_check(osm_client, catchment, check, emit))
         (block, closed), (genres, cues), taste = await asyncio.gather(
-            step("block", f"Reading every place inside the {minutes}-minute walk", engine.scan_walk(q, catchment)),
-            step("demand", "Ranking what people here engage with against six same-size areas around",
-                 engine.demand_genres(q, catchment)),
+            step("block", f"Reading every place inside the {site.area}", engine.scan_walk(q, catchment)),
+            step("demand", f"Ranking what {who} engage with against same-size areas around",
+                 engine.demand_genres(q, catchment, site.ages)),
             step("taste", "Finding the brands, artists, films, shows and podcasts this area over-indexes on",
-                 engine.local_taste(q, site.lat, site.lon)),
+                 engine.local_taste(q, site.lat, site.lon, site.ages, engine.taste_m(catchment))),
         )
         check.learn(block + closed)
         run.block, run.genres, run.cues, run.taste = block, genres, cues, taste
@@ -96,7 +105,7 @@ async def analyze_site(
 
         gaps = await step(
             "gaps", "Comparing supply with the surroundings and finding places people here love more than the rest of the city",
-            engine.gap_table(q, catchment, genres, site.focus, checking if checking is not None else check),
+            engine.gap_table(q, catchment, genres, site.focus, checking if checking is not None else check, site.ages),
         )
         run.gaps = [annotate(run, row) for row in gaps]
         await emit("gaps", {"rows": [public_gap(g) for g in run.gaps]})
@@ -131,7 +140,12 @@ async def analyze_site(
 
 async def cross_check(client: osm.OsmClient, catchment: Catchment, check: osm.CrossCheck, emit: Emit) -> osm.CrossCheck:
     """Fills the survey's cross-check with the places OpenStreetMap shows inside the walk, as a step of its own; when no
-    instance answers in time, the step fails, the log says why and the survey goes on."""
+    instance answers in time, the step fails, the log says why and the survey goes on. An area too large for the free
+    servers is not asked at all, and the survey says so."""
+    if catchment.area_m2 > OSM_MAX_KM2 * 1e6:
+        check.scan = osm.Scan(checked=False, note=OSM_TOO_BIG_NOTE.format(limit=OSM_MAX_KM2))
+        await emit("notice", {"message": OSM_TOO_BIG.format(limit=OSM_MAX_KM2)})
+        return check
     await emit("status", {"step": "osm", "state": "running", "label": osm.LABEL})
     check.scan = await client.scan(catchment)
     await emit("status", {"step": "osm", "state": "done" if check.checked else "failed", "label": osm.LABEL})

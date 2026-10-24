@@ -15,33 +15,33 @@ from fastapi.testclient import TestClient
 
 from app.answers import AnswerCache
 from app.db import Database, SurveyStore
-from app.images import ImageGen
 from app.llm import LLM
 from app.main import Services, create_app, web_root
-from app.ratelimit import DailyBudget, RateLimiter
-from tests.fakes import SEAFOOD_LOCAL_FAVORITES, SITE, FakeImages, FakeQloo, FakeWalker, StubGeocoder
+from app.ratelimit import RateLimiter
+from app.survey import constraints
+from app.survey.concepts import PRICE_LINES
+from tests.fakes import SEAFOOD_LOCAL_FAVORITES, SITE, FakeQloo, FakeWalker, StubGeocoder
 
 RUN_PARAMS = {"lat": SITE[0], "lon": SITE[1], "label": "Test Corner, Testville", "focus": "any", "minutes": 10}
 
 
 def make_services(
-    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None, walker=None,
+    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, walker=None,
 ) -> Services:
     return Services(
         qloo=qloo or FakeQloo(),
         walker=walker or FakeWalker(),
         llm=llm or LLM("", None, "test-model"),
-        images=images or ImageGen(),
         geocoder=StubGeocoder(),
         answers=answers or AnswerCache(None),
     )
 
 
 def make_client(
-    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None, images=None,
+    llm: LLM | None = None, qloo: FakeQloo | None = None, answers: AnswerCache | None = None,
     database_url: str | None = None,
 ) -> TestClient:
-    services = make_services(llm, qloo, answers, images)
+    services = make_services(llm, qloo, answers)
     return TestClient(create_app(lambda: services, database_url))
 
 
@@ -135,32 +135,26 @@ def test_full_survey_in_rules_mode():
             "All 5 seafood places people here love more than the rest of the city does are outside the walk, a median"
         )
         assert "Harbor Oyster Bar" in seafood["why_here"][2]
-        assert seafood["beat_competitors"].startswith("1 seafood place inside the walk; it is Seafood Nearby 0 (4.0★, $)")
+        assert seafood["beat_competitors"].startswith("1 seafood place inside the walk; it is Seafood Nearby 0 (4.0★)")
         assert "Their reviews complain about long waits and lines: take bookings or run a fast counter for walk-ins." in seafood["beat_competitors"]
         assert seafood["risk"].startswith("Qloo measures taste, not foot traffic")
-        assert seafood["price_level"] == 2 and seafood["price_basis"] == (
-            "The seafood places people here love are $$ (median of 5); the 1 inside the walk is $."
-        )
+        assert not {"price_level", "price_basis", "price_anchors"} & set(seafood)
         assert seafood["owner_rules"] == []  # the owner gave no rules
         assert by_genre["Seafood"]["reading"] == "Clear gap" and by_genre["Yoga studio"]["reading"] == "Thin data"
         assert by_genre["Seafood"]["why"] == seafood["why_here"]
-        assert by_genre["Seafood"]["price"]["level"] == 2
+        assert "price" not in by_genre["Seafood"]
+        # Qloo lists a price level for every place in this world; none reaches the owner, as $ or as a number.
+        assert "$" not in json.dumps([first(events, "gaps"), concepts], ensure_ascii=False)
 
         run_id = first(events, "run")["run_id"]
         design = client.post("/api/design", json={"run_id": run_id, "index": 0})
         assert design.status_code == 200
         sheet = design.json()
-        assert sheet["mode"] == "rules"
-        assert sheet["interior"]["materials"] and sheet["offer"]
-        assert sheet["renders"] == {"enabled": False, "model": None}
-        assert [shot["kind"] for shot in sheet["shots"]] == ["interior", "exterior"]
-        partner_names = [p["name"] for p in sheet["partners"]]
-        assert partner_names[-1] == "Riverside Cider Co"  # a maker, not the media brand or team that over-index more
-        assert not {"Block News", "Local Sports Team"} & set(partner_names)
-        # The soundtrack starts from what local seafood fans listen to, then the area's own favorites.
-        # The soundtrack is the neighborhood's signature artists; the one seafood fans share comes first.
-        assert sheet["music"]["artists"] == ["Local Jazz Trio", "Block Party Band"]
-        assert sheet["music"]["direction"] == "Artists people within 1.5 km over-index on"
+        assert sheet["mode"] == "rules" and sheet["offer"]
+        top = concepts["concepts"][0]
+        assert (sheet["name"], sheet["tagline"]) == (top["name"], top["one_liner"])  # the card and the sheet agree
+        # No decor, mood, renders or partners: on real surveys they came out the same everywhere, or invented.
+        assert not {"interior", "mood", "shots", "renders", "partners", "music", "dna"} & set(sheet)
         experience = sheet["experience"]
         assert [(a["name"], a.get("since")) for a in experience["soundtrack"]] == [("Block Party Band", 2019), ("Local Jazz Trio", 1985)]
         assert "screen" not in experience and "talks" not in experience  # a seafood restaurant has no screen nights
@@ -171,8 +165,7 @@ def test_full_survey_in_rules_mode():
         assert concepts["concepts"][0]["for_whom"].startswith(
             "Neighbors within a 10-minute walk who now travel a median"
         ) and "km to seafood places such as Harbor Oyster Bar and Dockside Crab" in concepts["concepts"][0]["for_whom"]
-        assert sheet["price_basis"] == seafood["price_basis"]
-        assert sheet["interior"]["lighting"].startswith("Daylight through the shopfront")
+        assert "price_level" not in sheet and "$" not in json.dumps(sheet, ensure_ascii=False)
         assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet  # cached
         # The wildcard has a design sheet like any concept, its offer starting from the two loves it combines.
         wild_sheet = client.post("/api/design", json={"run_id": run_id, "index": 3}).json()
@@ -183,18 +176,6 @@ def test_full_survey_in_rules_mode():
 
 def tool_call(call_id: str, name: str, args: dict) -> dict:
     return {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
-
-
-DESIGN_REPLY = {
-    "name": "Tide & Table", "tagline": "Oysters on the corner", "concept_statement": "Because locals travel.",
-    "interior": {"mood": "lively", "materials": ["tile"], "lighting": "warm", "layout": "bar", "seating": "stools"},
-    "offer": ["Oysters", "Crudo"], "price_level": 3, "hours": "5pm-11pm",
-    "music": {"direction": "local jazz", "artists": ["Local Jazz Trio", "Invented Artist", "Sea Shanty Crew"]},
-    "partners": [{"name": "Block Place 1", "why": "next door"}, {"name": "Block News", "why": "press"},
-                 {"name": "Riverside Cider Co", "why": "cider pairing"}, {"name": "Tide Magazine", "why": "press"},
-                 {"name": "Invented Partner", "why": "?"}],
-    "launch": "Oyster night", "image_prompt": "a raw bar",
-}
 
 
 def scripted_llm(agent_steps: list[list[dict]], requests: list[dict] | None = None) -> LLM:
@@ -214,8 +195,6 @@ def scripted_llm(agent_steps: list[list[dict]], requests: list[dict] | None = No
         if system.startswith("You are a retail strategy consultant"):
             return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(
                 {"concepts": [{"name": "Generic Cafe", "genre": "Cafe", "one_liner": "Coffee for everyone"}]})}))
-        if system.startswith("You are a concept designer"):
-            return httpx.Response(200, json=completion({"role": "assistant", "content": json.dumps(DESIGN_REPLY)}))
         return httpx.Response(500, json={"error": {"message": "unexpected request"}})
 
     return LLM("test-key", "https://llm.test/v1/", "test-model",
@@ -307,23 +286,20 @@ def test_agent_investigates_live_and_is_grounded():
         rows = {row["genre"]: row for row in first(events, "gaps")["rows"]}
         tide = concepts["concepts"][0]
         assert tide["why_here"] == rows["Seafood"]["why"] and tide["why_here"] != ["Seafood ranks #1 here"]
-        # A price within one level of what the places people here love charge is the model's positioning call; it is
-        # kept, and the basis states the evidence it was weighed against.
-        assert tide["one_liner"] == "Raw bar for the block" and tide["price_level"] == 3
-        assert tide["price_basis"].startswith("The seafood places people here love are $$")
+        # The model chooses, names and positions; every factual line is rebuilt from the measured evidence, and the
+        # price level it proposed is dropped: no concept carries one.
+        assert tide["one_liner"] == "Raw bar for the block" and "price_level" not in tide
         assert tide["beat_competitors"].startswith("1 seafood place inside the walk")
         assert first(events, "baseline")["concepts"][0]["name"] == "Generic Cafe"
 
         run_id = first(events, "run")["run_id"]
         sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
-        assert sheet["mode"] == "agent" and sheet["model"] == "test-model"
-        assert sheet["music"]["artists"] == ["Local Jazz Trio"]  # signature artists only: not invented, not global fans'
-        assert [p["name"] for p in sheet["partners"]] == ["Block Place 1", "Riverside Cider Co"]
-        # Hours come from the places people here love, not from the model; the model's launch idea gives way to the plan
-        # built from the evidence.
+        # The sheet is the agent's concept plus the evidence: no second model call renames or re-pitches it.
+        assert sheet["mode"] == "rules" and (sheet["name"], sheet["tagline"]) == (tide["name"], tide["one_liner"])
+        assert sheet["offer"][:2] == ["Oysters", "Crudo flight"]
         assert sheet["hours"] == "Mon–Thu 11 am–10 pm · Fri–Sat 11 am–11:30 pm · Sun 11 am–10 pm"
-        assert isinstance(sheet["launch"], dict) and "Oyster night" not in str(sheet["launch"])
-        assert client.post("/api/design", json={"run_id": run_id, "index": 1}).json()["dna"]  # designs a tested genre
+        assert isinstance(sheet["launch"], dict)
+        assert client.post("/api/design", json={"run_id": run_id, "index": 1}).json()["offer"]  # designs a tested genre
 
 
 def test_identical_evidence_replays_the_agent_without_spending_ai_quota(tmp_path):
@@ -340,7 +316,7 @@ def test_identical_evidence_replays_the_agent_without_spending_ai_quota(tmp_path
         first_run = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
         first_sheet = client.post("/api/design", json={"run_id": first(first_run, "run")["run_id"], "index": 1}).json()
         spent = len(requests)
-        assert spent == 4  # two agent turns, the baseline and one design sheet
+        assert spent == 3  # two agent turns and the baseline; a design sheet asks no model
 
         second_run = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
         second_sheet = client.post("/api/design", json={"run_id": first(second_run, "run")["run_id"], "index": 1}).json()
@@ -426,71 +402,6 @@ def test_agent_live_tests_are_budgeted(monkeypatch):
         assert concepts[1]["name"] != "Seafood, Test Corner" and "," not in concepts[1]["name"]
 
 
-def render(client: TestClient, run_id: str, shot: str, index: int = 0):
-    return client.post("/api/render", json={"run_id": run_id, "index": index, "shot": shot})
-
-
-def test_design_sheets_render_the_interior_and_the_street_view(tmp_path):
-    images = FakeImages()
-    with make_client(images=images, answers=AnswerCache(tmp_path)) as client:
-        events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
-        run_id, name = first(events, "run")["run_id"], first(events, "concepts")["concepts"][0]["name"]
-        assert render(client, run_id, "interior").status_code == 404  # only shots of an opened sheet can be rendered
-
-        sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
-        assert sheet["renders"] == {"enabled": True, "model": "fake-image-model"}
-        interior, exterior = sheet["shots"]
-        assert interior["prompt"].startswith("Interior of a small street-level seafood restaurant in Test Corner, Testville.")
-        assert "Industrial chic" in interior["prompt"] or "industrial chic" in interior["prompt"]
-        assert f'sign above the entrance reads "{name}"' in exterior["prompt"] and "," not in name
-        assert all("No people" in shot["prompt"] for shot in sheet["shots"])
-
-        for shot in ("interior", "exterior"):
-            assert render(client, run_id, shot).json() == {"image": FakeImages.TINY_PNG, "model": "fake-image-model"}
-        assert [aspect for _, aspect in images.calls] == ["16:9", "16:9"]
-        assert render(client, run_id, "interior").status_code == 200 and len(images.calls) == 2  # once per run
-
-        rerun = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
-        client.post("/api/design", json={"run_id": rerun, "index": 0})
-        assert render(client, rerun, "exterior").json()["image"] == FakeImages.TINY_PNG
-        assert len(images.calls) == 2  # and reused across runs while the prompt is unchanged
-
-        assert render(client, run_id, "kitchen").status_code == 422
-
-
-def test_renders_are_capped_per_day_and_a_failed_render_can_be_retried():
-    images = FakeImages()
-    with make_client(images=images) as client:
-        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
-        client.post("/api/design", json={"run_id": run_id, "index": 0})
-        free_tier = httpx.Response(429, text="Quota exceeded for metric: generate_content_free_tier_requests, limit: 0",
-                                   request=httpx.Request("POST", "https://images.test"))
-        images.error = httpx.HTTPStatusError("429", request=free_tier.request, response=free_tier)
-        failed = render(client, run_id, "interior")
-        assert failed.status_code == 502 and "turn on billing" in failed.json()["detail"]
-        images.error = TimeoutError("queue")
-        queued = render(client, run_id, "interior")
-        assert queued.status_code == 202
-        assert queued.json() == {"image": None, "model": None, "queued": True, "detail": "Still waiting in the free volunteer queue."}
-        client.app.state.render_budget = DailyBudget(0)
-        images.error = None
-        assert render(client, run_id, "interior").json()["image"] == FakeImages.TINY_PNG  # resuming is not a new render
-        client.app.state.render_budget = DailyBudget(60)
-        images.fail = True
-        assert render(client, run_id, "exterior").json()["detail"] == "The image model could not render this right now."
-        images.fail = False
-        assert render(client, run_id, "interior").json()["image"] == FakeImages.TINY_PNG
-        client.app.state.render_budget = DailyBudget(0)
-        assert render(client, run_id, "exterior").status_code == 429
-
-
-def test_renders_are_skipped_without_an_image_model():
-    with make_client() as client:
-        run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
-        client.post("/api/design", json={"run_id": run_id, "index": 0})
-        assert render(client, run_id, "interior").json() == {"image": None, "model": None}
-
-
 def test_qloo_failure_is_reported_and_the_stream_still_ends():
     with make_client(qloo=FakeQloo(fail=True)) as client:
         events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
@@ -502,8 +413,7 @@ def test_qloo_failure_is_reported_and_the_stream_still_ends():
 def test_map_and_lookup_endpoints():
     with make_client() as client:
         health = client.get("/api/health").json()
-        assert health == {"ok": True, "qloo": True, "llm": False, "model": None, "models": [], "resting": {},
-                          "image": False, "image_model": None}
+        assert health == {"ok": True, "qloo": True, "llm": False, "model": None, "models": [], "resting": {}}
         assert len(client.get("/api/presets").json()) >= 5
         walk = client.get("/api/catchment", params={"lat": SITE[0], "lon": SITE[1], "minutes": 15}).json()
         assert walk["minutes"] == 15 and walk["radius_m"] > 1100
@@ -517,7 +427,13 @@ def test_map_and_lookup_endpoints():
 
 @pytest.mark.parametrize("params, status", [
     ({**RUN_PARAMS, "focus": "nightclubs"}, 400),
-    ({**RUN_PARAMS, "minutes": 7}, 400),
+    ({**RUN_PARAMS, "minutes": 4}, 400),
+    ({**RUN_PARAMS, "minutes": 61}, 400),
+    ({**RUN_PARAMS, "travel": "drive", "minutes": 90}, 400),
+    ({**RUN_PARAMS, "travel": "distance"}, 400),
+    ({**RUN_PARAMS, "travel": "distance", "km": 150}, 400),
+    ({**RUN_PARAMS, "travel": "boat"}, 422),
+    ({**RUN_PARAMS, "ages": "teens"}, 422),
     ({**RUN_PARAMS, "lat": 123}, 422),
     ({"lat": SITE[0]}, 422),
     ({**RUN_PARAMS, "kitchen": "industrial"}, 422),
@@ -563,12 +479,8 @@ def test_the_unit_shapes_the_concepts_and_the_design():
         sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
         assert sheet["capacity"] == "about 27–32 seated guests at most" and "Building Code" in sheet["capacity_basis"]
         assert sheet["unit"] == {"size": "60 m² (646 ft²)", "kitchen": "a light-prep kitchen", "outdoor_space": "none"}
-        assert sheet["interior"]["seating"].endswith("about 27–32 seated guests at most")
-        assert "sidewalk" not in sheet["interior"]["layout"]
-        assert sheet["interior"]["layout"].endswith("behind the counter, a compact ventless oven and a cold-prep counter")
-        assert sheet["owner_rules"][0] == coffee["owner_rules"][0]
-        assert "The room is about 60 m² (646 ft²)" in sheet["shots"][0]["prompt"]
-        assert "a compact ventless oven and a cold-prep counter" in sheet["shots"][0]["prompt"]
+        assert sheet["owner_rules"][:2] == coffee["owner_rules"][:2]  # the fit and the no-hood method, as on the card
+        assert all(constraints.parse("no hood").allows_item(item) for item in sheet["offer"])
 
 
 def test_a_unit_nothing_fits_gets_an_honest_answer():
@@ -584,17 +496,16 @@ def test_owner_notes_are_hard_rules():
         params = {**RUN_PARAMS, "notes": "no alcohol licence, about 60 m2, budget prices"}
         events = sse_events(client.get("/api/run", params=params).text)
         understood = first(events, "run")["understood"]
-        assert understood == ["no alcohol", "budget prices ($)", "unit of about 60 m²"]
+        assert understood == ["no alcohol", "budget prices", "unit of about 60 m²"]
         rows = {row["genre"]: row for row in first(events, "gaps")["rows"]}
         assert rows["Wine Bar"]["ruled_out"] == "serves alcohol"
         assert rows["Coffee shop"]["ruled_out"] is None
         assert rows["Seafood"]["fit"]["fits"] is True  # 60 m² from the notes, no kitchen limit given
         concepts = first(events, "concepts")["concepts"]
         assert "Wine Bar" not in [c["genre"] for c in concepts]
-        # A budget is the lowest level, below what the block charges, and each concept says where it sits.
-        assert all(c["price_level"] == 1 for c in concepts)
-        assert all("Budget, as your notes ask: $" in c["price_basis"] for c in concepts)
-        assert all(any(line.startswith("Budget: $") for line in c["owner_rules"]) for c in concepts)
+        # A budget carries no price; each concept says how it keeps the band.
+        assert not any("price_level" in c for c in concepts)
+        assert all(PRICE_LINES["budget"] in c["owner_rules"] for c in concepts)
         assert all("No alcohol on the menu." in c["owner_rules"] for c in concepts)
         assert all(any(line.startswith("Fits 60 m² (646 ft²)") for line in c["owner_rules"]) for c in concepts)
 
@@ -733,15 +644,14 @@ def test_a_design_sheet_outlives_a_restart_without_a_new_model_call(database_url
         run_id = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "run")["run_id"]
         sheet = client.post("/api/design", json={"run_id": run_id, "index": 0}).json()
     spent = len(requests)
-    assert sheet["mode"] == "agent" and spent == 4  # two agent turns, the baseline and the sheet
+    assert sheet["name"] == "Tide & Table" and spent == 3  # two agent turns and the baseline; the sheet asks no model
 
     # A new server on the same database: the run is not in memory, so it comes back from the saved survey.
     with make_client(llm=scripted_llm([], requests), database_url=database_url) as client:
         assert client.post("/api/design", json={"run_id": run_id, "index": 0}).json() == sheet
         assert len(requests) == spent
-        assert render(client, run_id, "interior").json() == {"image": None, "model": None}  # its shots came back too
         other = client.post("/api/design", json={"run_id": run_id, "index": 1}).json()
-        assert other["mode"] == "agent" and other["dna"] and len(requests) == spent + 1  # the restored run designs on
+        assert other["offer"] and len(requests) == spent  # the restored run designs on, still without a model call
 
 
 class GatedWalker(FakeWalker):

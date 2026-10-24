@@ -21,17 +21,16 @@ from pydantic import BaseModel, Field
 
 from . import auth, engine, schemas, scoring
 from .answers import AnswerCache
-from .catchment import ALLOWED_MINUTES, CatchmentService
+from .catchment import CatchmentService, make_reach
 from .config import ROOT, settings
 from .db import AccountStore, Database, KitStore, SurveyStore
 from .db.surveys import survey_status
 from .db.tables import utcnow
 from .geocode import Geocoder
-from .images import Images, explain_failure
 from .kits import KitBuilder
 from .llm import LLM
 from .osm import OsmClient
-from .providers import build_images, build_llm
+from .providers import build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
 from .routes import account, kits
@@ -44,7 +43,6 @@ log = logging.getLogger("walkin")
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
 RUNS_PER_HOUR = 20
 DESIGNS_PER_HOUR = 40
-RENDERS_PER_HOUR = 24
 MAP_REQUESTS_PER_HOUR = 200
 SIGN_INS_PER_HOUR = 30
 KITS_PER_HOUR = 12
@@ -100,7 +98,6 @@ class Services:
     qloo: QlooClient
     walker: CatchmentService
     llm: LLM
-    images: Images
     geocoder: Geocoder
     answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
     osm: OsmClient | None = None  # the OpenStreetMap cross-check of the gaps; without it, rows say it is off
@@ -109,7 +106,7 @@ class Services:
     async def aclose(self) -> None:
         if self.osm is not None:
             await self.osm.aclose()
-        for service in (self.qloo, self.walker, self.images, self.geocoder, self.google):
+        for service in (self.qloo, self.walker, self.geocoder, self.google):
             await service.aclose()
 
 
@@ -118,7 +115,6 @@ def default_services() -> Services:
         qloo=QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir),
         walker=CatchmentService(settings.walk_cache_dir),
         llm=build_llm(settings),
-        images=build_images(settings),
         geocoder=Geocoder(),
         answers=AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache),
         osm=OsmClient(settings.cache_dir.parent / "osm"),
@@ -128,12 +124,6 @@ def default_services() -> Services:
 class DesignRequest(BaseModel):
     run_id: str
     index: int
-
-
-class RenderRequest(BaseModel):
-    run_id: str
-    index: int
-    shot: Literal["interior", "exterior"]
 
 
 class RunRecord(BaseModel):
@@ -161,8 +151,6 @@ async def health(request: Request) -> dict:
         "model": llm.model if llm.enabled else None,
         "models": llm.models if llm.enabled else [],
         "resting": llm.resting() if llm.enabled else {},
-        "image": services.images.enabled,
-        "image_model": services.images.model,
     }
 
 
@@ -179,7 +167,10 @@ async def run(
     label: str = Query("Selected site", max_length=160),
     focus: str = Query("any"),
     notes: str = Query("", max_length=300),
-    minutes: int = Query(10),
+    minutes: int = Query(10, description="Walk or drive time, 5 to 60 minutes"),
+    travel: Literal["walk", "drive", "distance"] = Query("walk", description="How customers come: on foot, by car, or within a road distance"),
+    km: float | None = Query(None, description="Road distance, 1 to 100 km (travel=distance)"),
+    ages: Literal["all", "under_25", "25_34", "35_54", "55_plus"] = Query("all", description="Who the owner wants to serve"),
     size_m2: float | None = Query(None, ge=10, le=2000, description="Floor area of the unit in square meters"),
     kitchen: Literal["full", "light", "none"] | None = Query(None, description="The kitchen the unit has"),
     outdoor: bool | None = Query(None, description="Whether the unit has outdoor space"),
@@ -189,8 +180,10 @@ async def run(
 ) -> StreamingResponse:
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
-    if minutes not in ALLOWED_MINUTES:
-        raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
+    try:
+        reach = make_reach(travel, minutes, km)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if intent == "open" and not business.strip():
         raise HTTPException(400, "Say which business you want to open")
     if intent == "improve" and not place_id:
@@ -208,8 +201,9 @@ async def run(
         user = None
     device = auth.device_id(request)  # the survey is this browser's, and its user's once they sign in
     site = Site(
-        lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(), minutes=minutes,
-        size_m2=size_m2, kitchen=kitchen, outdoor=outdoor, intent=intent, business=business.strip(), place_id=place_id,
+        lat=lat, lon=lon, label=label.strip() or "Selected site", focus=focus, notes=notes.strip(),
+        minutes=reach.minutes, size_m2=size_m2, kitchen=kitchen, outdoor=outdoor, intent=intent,
+        business=business.strip(), place_id=place_id, travel=reach.travel, km=reach.km, ages=ages,
     )
     survey = EventLog(uuid.uuid4().hex[:12])
     queue: asyncio.Queue = asyncio.Queue()
@@ -324,9 +318,7 @@ async def design(request: Request, body: DesignRequest) -> dict:
     if not request.app.state.design_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many design requests. Try again later.")
     services: Services = request.app.state.services
-    result = await designs.design_concept(
-        services.llm, services.images, run_state, body.index, services.qloo, services.answers,
-    )
+    result = await designs.design_concept(run_state, body.index, services.qloo)
     # When two requests design the same concept, the first sheet stays, in memory as in the database.
     result = run_state.designs.setdefault(body.index, result)
     try:
@@ -336,61 +328,22 @@ async def design(request: Request, body: DesignRequest) -> dict:
     return result
 
 
-@router.post("/render", response_model=schemas.Render, response_model_exclude_unset=True)
-async def render(request: Request, body: RenderRequest) -> dict:
-    """One AI render of a design sheet's shot, made once per run and cached across runs."""
-    run_state = await request.app.state.runs.fetch(body.run_id)
-    design = run_state.designs.get(body.index) if run_state else None
-    shot = next((s for s in (design or {}).get("shots", []) if s["kind"] == body.shot), None)
-    if not shot:
-        raise HTTPException(404, "Open the design sheet first.")
-    services: Services = request.app.state.services
-    if not services.images.enabled:
-        return {"image": None, "model": None}
-    key = (body.index, body.shot)
-    task = run_state.renders.get(key)
-    if task is None:
-        saved = designs.saved_render(services.images, shot, services.answers)
-        if saved:
-            return {"image": saved[0], "model": saved[1]}
-        # Resuming a render that is still queued is not a new render, so it does not count against the limits.
-        if key not in run_state.queued:
-            if not request.app.state.render_limiter.allow(client_ip(request)):
-                raise HTTPException(429, "Too many renders from this address. Try again later.")
-            if not request.app.state.render_budget.allow():
-                raise HTTPException(429, "Today's render budget is used up. Try again tomorrow.")
-        task = asyncio.ensure_future(designs.render(services.images, shot, services.answers))
-        run_state.renders[key] = task
-    try:
-        image, model = await asyncio.shield(task)
-    except Exception as exc:
-        if run_state.renders.get(key) is task:
-            run_state.renders.pop(key)  # a failed render can be retried
-            if isinstance(exc, TimeoutError):
-                run_state.queued.add(key)
-            else:
-                run_state.queued.discard(key)
-        if isinstance(exc, TimeoutError):
-            # Still queued on free volunteer GPUs: not an error; the client asks again and resumes the job.
-            return JSONResponse({"image": None, "model": None, "queued": True, "detail": explain_failure(exc)}, 202)
-        log.warning("Render failed", exc_info=True)
-        raise HTTPException(502, explain_failure(exc)) from exc
-    run_state.queued.discard(key)
-    return {"image": image, "model": model}
-
-
 @router.get("/catchment", response_model=schemas.Catchment)
 async def catchment(
     request: Request,
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     minutes: int = Query(10),
+    travel: Literal["walk", "drive", "distance"] = Query("walk"),
+    km: float | None = Query(None),
 ) -> dict:
-    if minutes not in ALLOWED_MINUTES:
-        raise HTTPException(400, "Walk time must be 5, 10 or 15 minutes")
+    try:
+        reach = make_reach(travel, minutes, km)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not request.app.state.map_limiter.allow(client_ip(request)):
         raise HTTPException(429, "Too many map requests. Try again later.")
-    walk = await request.app.state.services.walker.walk(lat, lon, minutes)
+    walk = await request.app.state.services.walker.area(lat, lon, reach)
     return walk.public()
 
 
@@ -485,8 +438,6 @@ def create_app(
         app.state.builder = KitBuilder(app.state.kits, app.state.runs, surveys, services)
         app.state.run_limiter = RateLimiter(RUNS_PER_HOUR, 3600)
         app.state.design_limiter = RateLimiter(DESIGNS_PER_HOUR, 3600)
-        app.state.render_limiter = RateLimiter(RENDERS_PER_HOUR, 3600)
-        app.state.render_budget = DailyBudget(settings.image_daily_limit)
         app.state.map_limiter = RateLimiter(MAP_REQUESTS_PER_HOUR, 3600)
         app.state.auth_limiter = RateLimiter(SIGN_INS_PER_HOUR, 3600)
         app.state.kit_limiter = RateLimiter(KITS_PER_HOUR, 3600)

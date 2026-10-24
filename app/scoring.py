@@ -53,9 +53,6 @@ GENERIC_OFFERINGS = {
 }
 
 NON_COMMERCIAL_BRAND = re.compile(r"nonprofit|non-profit|political|government|religious|advocacy", re.IGNORECASE)
-# Makers, shops and designers can co-brand with a small storefront; media groups and corporations cannot.
-# Teams (Qloo's "entertainment" brands) are added for sports concepts only.
-PARTNER_BRAND_KINDS = {"product", "retail", "personal"}
 
 DESIGN_FAMILIES = {
     "decor": "urn:tag:decor",
@@ -808,7 +805,8 @@ def known_for(groups: dict[str, list[dict]], limit: int) -> list[str]:
 
 
 def place_link(entity: dict) -> tuple[str | None, str | None]:
-    """Where a place's own prices can be checked: its menu page, else its website, as (url, "menu" | "site")."""
+    """A place's own page, where its offer and prices can be checked: its menu page, else its website, as
+    (url, "menu" | "site")."""
     props = entity.get("properties") or {}
     for key, kind in (("menu_url", "menu"), ("website", "site")):
         url = props.get(key)
@@ -829,7 +827,6 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
         "name": entity.get("name"),
         "address": props.get("address"),
         "rating": round(float(rating), 1) if rating else None,
-        "price_level": props.get("price_level"),
         "genres": [name for _, name in genre_tags(entity) if is_business_genre(name)][:3],
         "known_for": known_for(groups, 4),
         "complaints": [inline_label(g["label"]) for g in groups["complaint"]][:3],
@@ -848,7 +845,6 @@ def place_card(entity: dict, site: tuple[float, float] | None = None) -> dict:
 def summarize_block(places: Iterable[dict]) -> dict:
     places = list(places)
     genres: Counter = Counter()
-    prices: Counter = Counter()
     ratings: list[float] = []
     classics: list[tuple[tuple, dict]] = []
     for place in places:
@@ -858,8 +854,6 @@ def summarize_block(places: Iterable[dict]) -> dict:
             genres[name] += 1
         if props.get("business_rating"):
             ratings.append(float(props["business_rating"]))
-        if props.get("price_level"):
-            prices[int(props["price_level"])] += 1
         evidence = standing(place)
         if evidence and place.get("name") and business and is_storefront_place(place):
             order = ("michelin" not in evidence, -(evidence.get("reviews") or 0))
@@ -867,7 +861,6 @@ def summarize_block(places: Iterable[dict]) -> dict:
             liked = [label for label in known_for(topic_groups([place]), 6) if "michelin" not in label.lower()]
             classics.append((order, {
                 "id": item_id(place), "name": place["name"], "genre": genre_title(primary_genre(place) or business[0]),
-                "price_level": props.get("price_level"),
                 **evidence,
                 "known_for": liked[:3],
             }))
@@ -876,7 +869,6 @@ def summarize_block(places: Iterable[dict]) -> dict:
         "place_count": len(places),
         "top_genres": genres.most_common(12),
         "avg_rating": round(mean(ratings), 2) if ratings else None,
-        "price_levels": {str(level): count for level, count in sorted(prices.items())},
         "menu": topics["menu"][:12],
         "experience": topics["experience"][:10],
         "complaints": topics["complaint"][:8],
@@ -1032,8 +1024,8 @@ def score_gaps(
 ) -> list[dict]:
     """Score every genre against same-size areas around the site (demand) and its own surroundings (supply).
 
-    - demand: how highly locals rank the genre, plus how much higher they rank it than six same-size
-      areas around the site do (comparing against the whole city inflates genres that rank high at any
+    - demand: how highly people here rank the genre, plus how much higher they rank it than same-size areas around
+      the site do (up to six, on land; comparing against the whole city inflates genres that rank high at any
       small scale);
     - supply: places within the walk versus what the surrounding density predicts, divided by the site's
       median ratio so parks, rivers and highways in the surroundings do not bias every genre. The places
@@ -1151,8 +1143,6 @@ def design_dna(places: Iterable[dict], per_family: int = 6) -> dict:
     topics = topic_groups(places)
     liked = sorted(topics["menu"] + topics["experience"], key=lambda g: (-g["mentions"], -g["places"]))
     dna["keywords"] = [g["label"] for g in liked[:10]]
-    price_levels = [int(level) for place in places if (level := (place.get("properties") or {}).get("price_level"))]
-    dna["typical_price_level"] = round(median(price_levels)) if price_levels else None
     return dna
 
 
@@ -1191,9 +1181,3 @@ def brand_kind(entity: dict) -> str | None:
         if tag.get("type") == "urn:tag:brand_type:qloo" and tag.get("name"):
             return re.sub(r"\s*brand$", "", tag["name"].strip(), flags=re.IGNORECASE).lower() or None
     return None
-
-
-def partner_brands(brands: list[dict], genre: str) -> list[dict]:
-    """Brand cards a small storefront of this genre could realistically collaborate with."""
-    kinds = PARTNER_BRAND_KINDS | ({"entertainment"} if re.search(r"sport", genre, re.IGNORECASE) else set())
-    return [brand for brand in brands if brand.get("kind") in kinds]

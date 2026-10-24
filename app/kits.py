@@ -1,5 +1,6 @@
 """Launch kits, built in the background: the concept's design sheet first when it has none (as POST /api/design makes
-it), then the kit itself (app.survey.kit.build_kit), whose payload includes the dossier.
+it), then the kit itself (app.survey.kit.build_kit), whose payload includes the dossier, and the street map its poster
+and report draw (app.basemap), fetched meanwhile.
 
 A build outlives the request that started it. On shutdown the builds still running are cancelled and their kits stay
 "building"; the next start builds them again (resume), so a restart never loses a kit.
@@ -10,6 +11,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from . import basemap
 from .db import KitStore, SurveyStore
 from .survey import design as designs
 from .survey import kit as launch_kit
@@ -36,7 +38,7 @@ async def designed(services: Services, surveys: SurveyStore, run: RunState, inde
     sheet = run.designs.get(index)
     if sheet is not None:
         return sheet
-    made = await designs.design_concept(services.llm, services.images, run, index, services.qloo, services.answers)
+    made = await designs.design_concept(run, index, services.qloo)
     sheet = run.designs.setdefault(index, made)
     try:
         await surveys.save_design(run.id, index, sheet)
@@ -52,6 +54,8 @@ class KitBuilder:
         self._store, self._runs, self._surveys, self._services = store, runs, surveys, services
         self._tasks: dict[str, asyncio.Task] = {}
         self._gate = asyncio.Semaphore(BUILDS_AT_ONCE)
+        # One street map at a time: a survey's kits ask for the same one, and the others then read it from the cache.
+        self._maps = asyncio.Semaphore(1)
 
     def start(self, token: str) -> None:
         """Builds the kit in the background, unless it is being built already."""
@@ -103,5 +107,15 @@ class KitBuilder:
         if run is None or not 0 <= index < len(run.concepts):
             raise KitUnavailable(UNSAVED)
         services = self._services
-        sheet = await designed(services, self._surveys, run, index)
-        return await launch_kit.build_kit(services.llm, run, index, sheet, services.answers)
+        # The street map is fetched while the copy is written; the kit keeps it, so it is fetched once.
+        streets = asyncio.ensure_future(self._street_map(run))
+        try:
+            sheet = await designed(services, self._surveys, run, index)
+            return await launch_kit.build_kit(services.llm, run, index, sheet, services.answers, streets)
+        finally:
+            streets.cancel()
+
+    async def _street_map(self, run: RunState) -> dict | None:
+        catchment = run.catchment
+        async with self._maps:
+            return await basemap.street_map(self._services.osm, catchment, basemap.layers_for(catchment))

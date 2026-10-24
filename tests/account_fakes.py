@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.auth import GoogleKeys
-from app.images import ImageGen
 from app.llm import LLM
 from app.main import Services, create_app
 from tests.fakes import SITE, FakeQloo, FakeWalker, StubGeocoder
@@ -105,7 +104,7 @@ def make_client(
     """The app over the fake Qloo world and a rules-only model (unless `llm`), with this Google and clock; `services`
     and `app_options` add to Services and create_app."""
     built = Services(
-        qloo=qloo or FakeQloo(), walker=FakeWalker(), llm=llm or LLM("", None, "test-model"), images=ImageGen(),
+        qloo=qloo or FakeQloo(), walker=FakeWalker(), llm=llm or LLM("", None, "test-model"),
         geocoder=StubGeocoder(), google=google.keys() if google else GoogleKeys(), **(services or {}),
     )
     app = create_app(lambda: built, database_url, **app_options)

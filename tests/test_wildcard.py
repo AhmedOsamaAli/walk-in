@@ -71,11 +71,12 @@ def test_no_wildcard_when_the_evidence_does_not_show_two_loves():
 
 
 def test_the_wildcard_keeps_the_owners_rules():
-    # Halal: a bar is never one of the two loves; the cafe and the burger place combine instead, priced $ for a budget.
+    # Halal: a bar is never one of the two loves; the cafe and the burger place combine instead, and on a budget it
+    # carries no price, only how it keeps the band.
     run = world("halal, family friendly, budget prices")
     wildcard = wildcard_of(concepts.rule_concepts(run))
     assert [side["genre"] for side in wildcard["combines"]] == ["Coffee shop", "Hamburger restaurant"]
-    assert wildcard["price_level"] == 1 and "Budget, as your notes ask: $" in wildcard["price_basis"]
+    assert "price_level" not in wildcard and concepts.PRICE_LINES["budget"] in wildcard["owner_rules"]
     assert {"Halal: no pork and no alcohol.", "Family friendly: no bar and no nightlife."} <= set(wildcard["owner_rules"])
     # No hood: nothing on it needs one, it says how it works and how it fits the unit.
     run = world("vegetarian, no extraction hood", size_m2=45, kitchen="light")
@@ -130,7 +131,7 @@ def test_the_agent_names_the_wildcard_from_the_candidate_it_is_shown():
         brief = json.loads(agent_request["messages"][1]["content"].removeprefix("Evidence pack:\n"))
         candidate = brief["wildcard_candidate"]
         assert [side["genre"] for side in candidate["combines"]] == ["Seafood", "Wine Bar"]
-        assert candidate["inside_the_walk"] == "no place is both"
+        assert candidate["inside_the_area"] == "no place is both"
         wildcard = payload["concepts"][-1]
         assert wildcard["wildcard"] is True and wildcard["name"] == "Shuck & Pour"
         assert wildcard["one_liner"] == "Oysters at the counter, a wine list to match"
@@ -140,7 +141,7 @@ def test_the_agent_names_the_wildcard_from_the_candidate_it_is_shown():
         # It has a design sheet like any concept.
         run_id = first(events, "run")["run_id"]
         sheet = client.post("/api/design", json={"run_id": run_id, "index": len(payload["concepts"]) - 1}).json()
-        assert sheet["mode"] == "agent" and sheet["offer"]
+        assert sheet["name"] == "Shuck & Pour" and sheet["offer"][:2] == ["Oysters", "Orange wine"]
 
 
 def test_a_wildcard_item_the_rules_forbid_never_reaches_the_owner():

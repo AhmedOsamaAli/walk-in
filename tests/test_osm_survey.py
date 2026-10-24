@@ -16,7 +16,6 @@ from app.survey.evidence import (
     gap_evidence,
     gap_reading,
     gap_summary,
-    price_evidence,
     public_gap,
     risk,
 )
@@ -75,11 +74,7 @@ def test_a_survey_counts_the_places_only_openstreetmap_shows_inside_the_walk():
         "dense usually has.",
         "OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list: Crumb & Co and Sunrise Pastry.",
     ]
-    # The price claim rests on Qloo's price levels: it stands, with a caution.
-    assert bakery["price"]["basis"] == (
-        "The bakeries people here love are $$ (median of 10); the 4 inside the walk are $$. Prices are Qloo's: "
-        "OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list, and their prices are not known."
-    )
+    assert "price" not in bakery
 
     seafood = after["Seafood"]
     assert [p["name"] for p in seafood["osm"]["extra"]] == ["Saltmarsh Fish Bar"]
@@ -214,7 +209,7 @@ def test_the_evidence_names_the_extras_plainly():
     assert gap_evidence(many)[2].endswith(": Bakery 0, Bakery 1, Bakery 2, Bakery 3 and 2 more.")
     # The agent sees both counts, and that nothing is known of the extras but their names.
     summary = gap_summary(row)
-    assert summary["places_within_walk"] == "3"
+    assert summary["places_inside_the_area"] == "3"
     assert summary["openstreetmap_cross_check"].startswith("the places within the walk are 1 Qloo lists and 2 only "
                                                            "OpenStreetMap shows (Joe's Bakery & Coffee Shop and Insomnia Cookies)")
 
@@ -241,17 +236,6 @@ def test_a_count_that_says_a_kind_is_short_says_when_it_was_not_cross_checked():
     assert off["relative_supply"] < 0.75 and not any("cross-checked" in line for line in gap_evidence(off))
 
 
-def test_price_claims_resting_on_qloo_get_a_caution_only_when_openstreetmap_adds_places():
-    priced = [place(f"Priced {i}", "Bakery", *offset(100, 10 * i), i) for i in range(3)]
-    row = row_with(3, ["Crumb & Co"], _nearby_entities=priced)
-    assert price_evidence(row)["caution"] == ("Prices are Qloo's: OpenStreetMap shows 1 more bakery inside the walk that "
-                                              "Qloo doesn't list, and its price is not known.")
-    assert price_evidence(row)["basis"].endswith(price_evidence(row)["caution"])
-    assert "caution" not in price_evidence(row_with(3, [], _nearby_entities=priced))
-    # Without priced places inside the walk there is no claim about them to caution.
-    assert "caution" not in price_evidence(row_with(0, ["Crumb & Co"]))
-
-
 def test_the_travel_badge_says_people_here():
     travel = score(row_with(6, [], around=12) | {"favorites_far": 5, "favorites_total": 5})[0]
     assert gap_reading(travel) == "People here travel for it"
@@ -264,11 +248,6 @@ def test_launch_claims_resting_on_qloo_say_when_openstreetmap_shows_more_places(
     row = gap_row()
     row["osm"] = row_with(2, ["Crumb & Co", "Sunrise Pastry"])["osm"]
     claims = {c["kind"]: c for c in launch.claims(launch_survey(), CONCEPT, row)}
-    assert claims["only"]["line"] == "The only $$$ bakery within a 10-minute walk"  # the claim stays as stated
-    assert claims["only"]["proof"] == (
-        "None of the 2 bakeries inside the walk that list a price is $$$; 2 of the bakeries locals love are. Prices are "
-        "Qloo's: OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list, and their prices are not known."
-    )
     assert claims["new"]["proof"].endswith(
         "Reviews are Qloo's: OpenStreetMap shows 2 more bakeries inside the walk that Qloo doesn't list, and what they are "
         "known for is not known."

@@ -13,32 +13,47 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import inspect
 import json
 import logging
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from .. import scoring
 from ..answers import AnswerCache, fingerprint
+from ..catchment import Reach
 from ..llm import LLM
 from . import launch
-from .concepts import COMMON_NAME_WORDS, place_names
+from .concepts import COMMON_NAME_WORDS, FILLER, place_names
 from .constraints import Constraints
 from .dossier import (
     build_dossier,
     business_name,
     campaign,
-    claim_level,
     concept_at,
+    map_trips,
     untested,
     usable_claims,
     walk_outline,
 )
-from .evidence import NATIONAL, NOT_NATIONAL, PROPER_WORDS, dollars, gap_for, in_sentence, offer_items, plural, singular
+from .evidence import (
+    NATIONAL,
+    NOT_NATIONAL,
+    PROPER_WORDS,
+    area_noun,
+    gap_for,
+    in_sentence,
+    is_walk,
+    number,
+    offer_items,
+    people_here,
+    plural,
+    singular,
+)
 from .models import RunState
 
 log = logging.getLogger("walkin")
@@ -62,7 +77,7 @@ UTM = {
     "spotify": ("spotify", "audio"), "nextdoor": ("nextdoor", "paid_social"), "google_search": ("google", "cpc"),
     "meta": ("facebook", "paid_social"), "poster": ("poster", "qr"),
 }
-# Who each channel reaches, so the copy says "close by" only where it is true.
+# Who each channel reaches, so the copy says "close by" only where it is true; reaches() puts in the survey's area.
 REACHES = {
     "spotify": "Listeners across the city who over-index on the area's artists and podcasts; most do not live nearby.",
     "nextdoor": "Neighbors in the neighborhoods of the walk.",
@@ -70,9 +85,12 @@ REACHES = {
     "meta": "People inside a radius that covers the walk.",
     "poster": "People passing the door: it hangs in the window.",
 }
-# Price levels in words, where a voice reads the ad or a search ad would reject '$$$'.
-AD_PRICE = {1: "low-priced", 2: "mid-priced", 3: "upscale", 4: "high-end"}
 WORDS_PER_SECOND = 2.5
+
+
+def reaches(key: str, area: str | int = 10) -> str:
+    """Who a channel reaches (REACHES), with the survey's area where it names the walk: 'the 30-minute drive'."""
+    return REACHES[key] if is_walk(area) else REACHES[key].replace("the walk", f"the {area_noun(area)}")
 
 NUMBER = re.compile(r"\d+(?:[.,:]\d+)*")
 NUMBER_WORDS = {
@@ -89,9 +107,9 @@ NUMBER_WORD = re.compile(r"\b(" + "|".join(NUMBER_WORDS) + r")\b", re.IGNORECASE
 ONES = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
         "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
 TENS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
-# Money: '$2', '3 dollars', 'two bucks'. A price level ('$$$') is no amount and stays.
+# Money: any currency sign ('$2', '$$$'), '3 dollars', 'two bucks'. Ads state no price and no price level.
 PRICE = re.compile(
-    r"[$€£]\s*\d|\d\s*[$€£¢]|\b\d+(?:[.,]\d+)?\s*(?:dollars?|bucks?|cents?|euros?|usd|eur|gbp)\b|"
+    r"[$€£¢]|\b\d+(?:[.,]\d+)?\s*(?:dollars?|bucks?|cents?|euros?|usd|eur|gbp)\b|"
     r"\b(?:a|an|one|" + "|".join(NUMBER_WORDS) + r")\s+(?:dollars?|bucks?|cents?|euros?)\b",
     re.IGNORECASE,
 )
@@ -126,6 +144,16 @@ WEB = re.compile(
     r"https?://|\bwww\.|[\w.+-]+@[\w-]+\.\w|\b[a-z0-9-]+\.(?:com|net|org|co|io|us|uk|ca|shop|store|cafe|bar|menu|app)\b",
     re.IGNORECASE,
 )
+# A walk away, said of a survey of a drive or a road distance: untrue there ('Walk in and say hello' is no distance).
+WALKING = re.compile(
+    r"\b(?:short\s+walk|walk(?:ing)?\s+distance|on\s+foot|minutes?\s+walk|min\s+walk|steps\s+(?:from|away))\b",
+    re.IGNORECASE,
+)
+# The area an 'only' claim names (launch.claims: 'within a 10-minute walk', 'within a 30-minute drive', 'within a 25 km
+# drive'): a trip of minutes, or a road distance in kilometres.
+KM = r"(?:km|kilomet(?:er|re)s?)"
+TRIP = re.compile(r"(\d+)\s*-?\s*minutes?\s+(walk|drive)", re.IGNORECASE)
+ROAD = re.compile(rf"(\d+(?:\.\d+)?)\s*-?\s*{KM}\s+drive", re.IGNORECASE)
 UNSPOKEN = re.compile(r"[$#@*/|·•_<>=~^\[\]{}]")
 # Characters after which a capitalized word starts a sentence rather than naming something.
 SENTENCE_END = set(".!?:;\"“”(–—-•·|")
@@ -223,8 +251,8 @@ def names_of(texts: Iterable[str], generic: set[str]) -> list[Name]:
 
 @dataclass(frozen=True)
 class Scope:
-    """What an 'only' claim proves: its price level ($$$, or the level in words), its kind of business and its walk. A
-    clause that says 'only', or 'no other', 'nowhere else'…, has to carry all of them."""
+    """What an 'only' claim proves: its kind of business and its area (the walk, the drive or the road distance it
+    names). A clause that says 'only', or 'no other', 'nowhere else'…, has to carry all of it."""
 
     line: str
     parts: tuple[re.Pattern, ...]
@@ -233,31 +261,40 @@ class Scope:
         return all(part.search(clause) for part in self.parts)
 
 
+def in_words(figure: str) -> str:
+    """A number as a pattern for the forms copy may write it in: '10' or 'ten', '25' or 'twenty-five'; '2.5' as is."""
+    forms = [figure, *(spelled(int(figure)) if figure.isdigit() else [])]
+    return "|".join(re.escape(form) for form in forms)
+
+
 def scope_of(claim: dict, genre: str) -> Scope:
-    """The scope of an 'only' claim, read from its line: 'The only $$$ bakery within a 10-minute walk'."""
+    """The scope of an 'only' claim, read from its line: 'The only bakery within a 10-minute walk', '… within a
+    30-minute drive', '… within a 25 km drive'. Its area is carried only as itself: a drive is no walk, and 'within
+    25 km' (a straight line) reaches farther than a 25 km drive."""
     line = fold(claim["line"])
     parts: list[re.Pattern] = []
-    level = claim_level(claim)
-    if level:
-        said = rf"(?<!\$)\${{{level}}}(?!\$)" + (rf"|\b{re.escape(AD_PRICE[level])}\b" if level in AD_PRICE else "")
-        parts.append(re.compile(said, re.IGNORECASE))
     kinds = [p for p in map(phrase_pattern, sorted({in_sentence(genre), singular(genre), plural(genre)}, key=len, reverse=True)) if p]
     if any(pattern.search(line) for pattern in kinds):
         parts.append(re.compile("|".join(pattern.pattern for pattern in kinds), re.IGNORECASE))
-    walk = re.search(r"(\d+)\s*-?\s*minutes?\s+walk", line, re.IGNORECASE)
-    if walk:
-        minutes = "|".join(re.escape(form) for form in (walk.group(1), *spelled(int(walk.group(1)))))
-        parts.append(re.compile(rf"\bwithin\s+(?:an?\s+)?(?:{minutes})\s*-?\s*minutes?\s+walk\b", re.IGNORECASE))
+    trip = TRIP.search(line)
+    if trip:
+        minutes, travel = in_words(trip.group(1)), trip.group(2).lower()
+        parts.append(re.compile(rf"\bwithin\s+(?:an?\s+)?(?:{minutes})\s*-?\s*minutes?\s+{travel}\b", re.IGNORECASE))
+    road = ROAD.search(line)
+    if road:
+        parts.append(re.compile(rf"\bwithin\s+(?:an?\s+)?(?:{in_words(road.group(1))})\s*-?\s*{KM}\s+drive\b", re.IGNORECASE))
     whole = phrase_pattern(claim["line"])
     return Scope(claim["line"], tuple(parts) if parts or not whole else (whole,))
 
 
 @dataclass
 class Facts:
-    """What the copy may say: the numbers the claims, proofs, hours, walk and name give, the scope of each 'only' claim,
+    """What the copy may say: the numbers the claims, proofs, hours, area and name give, the scope of each 'only' claim,
     and the names it must never use. The business's own name, menu and neighborhoods are its own words: masked before
     the number, price, 'only' and superlative checks, and never mistaken for another business's name. A menu item a
-    model wrote counts as the business's own only once it passes every check itself (`menu`); the others are noted."""
+    model wrote counts as the business's own only once it passes every check itself (`menu`); the others are noted.
+    `area` is the survey's ('10-minute walk', '30-minute drive'): beside a drive or a road distance, no line may say the
+    place is a walk away."""
 
     numbers: set[str]
     only: tuple[Scope, ...]
@@ -267,6 +304,7 @@ class Facts:
     constraints: Constraints
     menu: list[str] = dataclasses.field(default_factory=list)  # the model-written menu items the copy may name
     left_out: list[str] = dataclasses.field(default_factory=list)  # why the others may not, for the owner
+    area: str = "10-minute walk"
 
     def mask(self, folded: str) -> str:
         for pattern in self.own:
@@ -291,16 +329,22 @@ class Facts:
             reasons.append(f"names {listened.text}, from the audience: artists, shows, podcasts and brands are for "
                            f"targeting only")
         if PRICE.search(masked):
-            reasons.append("states a price: price levels are $ to $$$$, never amounts")
+            reasons.append("states a price: ads give no prices or price levels")
         stray = list(dict.fromkeys(token for token in numbers_in(masked) if canon(token) not in self.numbers))
         if stray:
-            reasons.append(f"states {', '.join(stray)}, a number no claim, proof, the hours or the walk gives")
+            reasons.append(f"states {', '.join(stray)}, a number no claim, proof, the hours or the {area_noun(self.area)} "
+                           f"gives")
+        if not is_walk(self.area) and WALKING.search(masked):
+            reasons.append(f"says the place is a walk away, but the area is a {self.area}")
         exclusive = self.exclusive(folded)
         if exclusive:
             reasons.append(exclusive)
         superlative = SUPERLATIVE.search(masked)
         if superlative:
             reasons.append(f'"{superlative.group(0)}" is a superlative nothing proves')
+        filler = FILLER.search(masked)
+        if filler:
+            reasons.append(f'"{filler.group(0)}" is filler nothing measured backs: say what it serves or answers')
         if DISCOUNT.search(masked):
             reasons.append("promises a discount, a deal or something free: the ads make no offer")
         if WEB.search(text):
@@ -313,7 +357,7 @@ class Facts:
 
     def exclusive(self, folded: str) -> str | None:
         """Why a line's 'only' (or 'no other', 'nowhere else'…) cannot run: no 'only' claim proves it, or the clause
-        saying it does not keep to the claim's price level, kind of business and walk."""
+        saying it does not keep to the claim's kind of business and area."""
         for clause in CLAUSE.split(folded):
             said = EXCLUSIVE.search(self.mask(clause))
             if not said:
@@ -326,6 +370,12 @@ class Facts:
         return None
 
 
+def area_numbers(run: RunState) -> set[str]:
+    """The figures of the survey's area copy may state: a walk's or a drive's minutes, a road distance's kilometres
+    (whose minutes are no figure of the area)."""
+    return {canon(token) for token in numbers_in(run.site.area)}
+
+
 def facts_for(run: RunState, concept: dict, design: dict, name: str, claims: list[dict]) -> Facts:
     """The facts a concept's copy is checked against."""
     genre = concept["genre"]
@@ -333,7 +383,7 @@ def facts_for(run: RunState, concept: dict, design: dict, name: str, claims: lis
     plan = design.get("launch") if isinstance(design.get("launch"), dict) else {}
     texts = [c["line"] for c in claims] + [c["proof"] for c in claims]
     texts += [design.get("hours") or "", name, str(concept.get("name") or "")]
-    numbers = {canon(token) for text in texts for token in numbers_in(text)} | {canon(str(run.site.minutes))}
+    numbers = {canon(token) for text in texts for token in numbers_in(text)} | area_numbers(run)
     own = [name, str(concept.get("name") or ""), scoring.genre_title(genre), singular(genre), plural(genre)]
     own += neighborhoods_of(run, design)
     own += [item["item"] for item in offer_items(row, run.constraints, limit=8)] if row else []
@@ -346,6 +396,7 @@ def facts_for(run: RunState, concept: dict, design: dict, name: str, claims: lis
         audience=names_of(audience_texts(run, plan), generic),
         own=own_patterns(own),
         constraints=run.constraints,
+        area=run.site.area,
     )
     # The sheet's offer and the concept's signature items are the model's words: the business's own only once they
     # keep every rule themselves (no other business's name, no number, price or superlative nothing proves).
@@ -370,12 +421,11 @@ def strings(value: object) -> list[str]:
 
 
 def place_texts(run: RunState) -> set[str]:
-    """Every place the survey saw: the block, each category's places inside the walk, the places locals love, anchors."""
+    """Every place the survey saw: the block, each category's places inside the walk and the places locals love."""
     names = set(place_names(run))
     for row in run.gaps + run.explored:
         for key in ("_nearby_entities", "_favorite_entities"):
             names |= {place.get("name") for place in row.get(key) or []}
-        names |= {anchor.get("name") for anchor in (row.get("price") or {}).get("anchors") or []}
     if run.place:
         names.add(run.place.get("name"))
     return {name for name in names if isinstance(name, str) and name.strip()}
@@ -406,11 +456,18 @@ Candidate = tuple[str, tuple[str, ...]]
 
 DAY_NAMES = {"Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday", "Thu": "Thursday", "Fri": "Friday", "Sat": "Saturday",
              "Sun": "Sunday"}
-# Lines true of any new business on the walk, so a channel's copy is complete even when the evidence says little.
+# Lines true of any new business on a short walk, so a channel's copy is complete even when the evidence says little.
 SAFE_HEADLINES = ("New on the block", "A short walk away", "Come say hello", "Walk in and say hello",
                   "Made for the neighborhood", "Your new neighborhood spot", "Steps from home")
 SAFE_DESCRIPTIONS = ("New on the block. Walk in and say hello.", "Made for the neighborhood, a short walk from home.",
                      "Steps from home. Come in and say hello.")
+# The same beside a long walk, a drive or a road distance, where the place is no short walk from everyone it reaches.
+FAR_HEADLINES = ("New on the block", "Now open", "Come say hello", "Walk in and say hello", "Made for the neighborhood",
+                 "Your new neighborhood spot", "Come in and say hello")
+FAR_DESCRIPTIONS = ("New on the block. Walk in and say hello.", "Made for the neighborhood. Come say hello.",
+                    "Now open. Come in and say hello.")
+# The longest walk 'a short walk away' is said of: the longest the survey offered before drives existed.
+SHORT_WALK = 15
 # Plain English words a place, an artist or a brand may be named after ('Rise', 'Proof', 'Crumb'). Copy uses them as
 # words, so a one-word name among them only counts written as a name; any other one-word name ('Patagonia', 'Mobley')
 # counts however it is written. The words the rules' own lines use are among them, so those lines always stay usable.
@@ -438,28 +495,59 @@ PLAIN_TEXT = """
     love heart soul friend friends neighbor neighbors family families folk people crowd couples kids local craft
     ritual habit story fable chapter verse rhythm tempo note melody echo origin element wander roam rest
     hello hi welcome come say walk walks minute minutes foot short away steps made neighborhood spot open new close near
-    for from with within without which there you your known crossing town only
+    for from with within without which there you your known crossing town only drive drives driving car km long now
 """
 PLAIN_WORDS = frozenset(PLAIN_TEXT.split()) | {
-    word for line in (*SAFE_HEADLINES, *SAFE_DESCRIPTIONS, *launch.PROMISES.values(), *DAY_NAMES, *DAY_NAMES.values())
+    word for line in (*SAFE_HEADLINES, *SAFE_DESCRIPTIONS, *FAR_HEADLINES, *FAR_DESCRIPTIONS, *launch.PROMISES.values(),
+                      *DAY_NAMES, *DAY_NAMES.values())
     for word in scoring.topic_text(line).split()
 }
 
 
 @dataclass
 class Brief:
-    """What the rules write from: the business, where it is, its hours and the claims it may make."""
+    """What the rules write from: the business, where it is (`reach`, the survey's area), its hours and the claims it
+    may make."""
 
     name: str
     kind: str
     title: str
     hood: str | None
-    minutes: int
+    reach: Reach
     hours: str | None
     claims: list[dict]
 
     def claim(self, kind: str) -> dict | None:
         return next((c for c in self.claims if c["kind"] == kind), None)
+
+    @property
+    def area(self) -> str:
+        """'10-minute walk', '30-minute drive', '25 km drive': after 'within a'."""
+        return self.reach.label
+
+    @property
+    def walk(self) -> bool:
+        return self.reach.travel == "walk"
+
+    @property
+    def short_walk(self) -> bool:
+        """Whether the whole area is a short walk away: a walk of SHORT_WALK minutes at most."""
+        return self.walk and self.reach.minutes <= SHORT_WALK
+
+    @property
+    def trip(self) -> str:
+        """The area as a headline: '10 minutes on foot', '30 minutes by car', '25 km by road'."""
+        if self.reach.travel == "distance":
+            return f"{self.reach.km:g} km by road"
+        return f"{self.reach.minutes} minutes {'on foot' if self.walk else 'by car'}"
+
+    @property
+    def safe_headlines(self) -> tuple[str, ...]:
+        return SAFE_HEADLINES if self.short_walk else FAR_HEADLINES
+
+    @property
+    def safe_descriptions(self) -> tuple[str, ...]:
+        return SAFE_DESCRIPTIONS if self.short_walk else FAR_DESCRIPTIONS
 
     @property
     def named(self) -> bool:
@@ -496,23 +584,19 @@ def hours_text(hours: str, spoken: bool = False) -> str:
     return re.sub(r"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", lambda m: DAY_NAMES[m.group(1)], text)
 
 
-def claim_sentences(brief: Brief, worded: bool = False, prose: bool = False, skip: tuple[str, ...] = ()) -> list[Candidate]:
-    """Each claim as a sentence; `worded` says the price level in words, for a voice or a search ad, and `prose` makes
-    the 'only' claim a full sentence for running text."""
+def claim_sentences(brief: Brief, prose: bool = False, skip: tuple[str, ...] = ()) -> list[Candidate]:
+    """Each claim as a sentence; `prose` makes an 'only' claim a full sentence for running text."""
     out = []
     for claim in brief.claims:
         kind = claim["kind"]
         if kind in skip:
             continue
-        level = claim_level(claim) if kind == "only" else None
         if kind == "only":
             text = claim["line"]
-            if worded and level in AD_PRICE:
-                text = re.sub(r"\$+", AD_PRICE[level], text, count=1)
             if prose:
                 text = f"It is {text[:1].lower()}{text[1:]}"
         elif kind == "new":
-            text = f"Come for the {mid_sentence(item_of(claim))}, which no {brief.kind} within a {brief.minutes}-minute walk is known for"
+            text = f"Come for the {mid_sentence(item_of(claim))}, which no {brief.kind} within a {brief.area} is known for"
         else:
             text = claim["line"]
         out.append((sentence(text), (claim["id"],)))
@@ -568,7 +652,7 @@ def rules_spotify(b: Brief, facts: Facts) -> dict:
     spec = FORMATS["spotify"]
     where = f" in {b.hood}" if b.hood else ""
     # The city hears it, so 'without crossing town' is left to the local channels.
-    parts = [(b.intro(where), ()), *claim_sentences(b, worded=True, prose=True, skip=("closer",))]
+    parts = [(b.intro(where), ()), *claim_sentences(b, prose=True, skip=("closer",))]
     if b.hours:
         parts.append((f"Open {hours_text(b.hours, spoken=True)}.", ()))
     closing = f"{b.name}{f', {b.hood}' if b.hood else ''}. " if b.named else ""
@@ -596,36 +680,38 @@ def rules_nextdoor(b: Brief, facts: Facts) -> dict:
 
 
 def rules_google(b: Brief, facts: Facts) -> dict:
-    spec, m = FORMATS["google_search"], b.minutes
+    spec = FORMATS["google_search"]
     where = f" in {b.hood}" if b.hood else ""
     headlines: list[Candidate] = [(b.name, ())]
     if b.hood:
         headlines += [(f"New {b.kind} in {b.hood}", ()), (f"{b.title} in {b.hood}", ())]
     headlines += [(c["line"], (c["id"],)) for c in b.claims if c["kind"] in ("closer", "promise")]
     headlines += [(item_of(c), (c["id"],)) for c in b.claims if c["kind"] == "new"]
-    headlines += [(f"A new {b.kind} near you", ()), (f"Within a {m}-minute walk", ())]
+    # The longest of them, 'Within a 60-minute drive', is 24 characters: within a headline's 30.
+    headlines += [(f"A new {b.kind} near you", ()), (f"Within a {b.area}", ())]
     headlines += [(f"Open {part}", ()) for part in (b.hours or "").split(" · ") if part]
-    headlines += [(f"{m} minutes on foot", ()), *[(text, ()) for text in SAFE_HEADLINES]]
-    descriptions = claim_sentences(b, worded=True)
+    headlines += [(b.trip, ()), *[(text, ()) for text in b.safe_headlines]]
+    descriptions = claim_sentences(b)
     if b.hours:
         descriptions.append((f"Open {hours_text(b.hours)}.", ()))
     descriptions += [(b.intro(where), ())] if b.named else []
-    descriptions += [(f"A new {b.kind}{where}. Walk in and say hello.", ()), (f"Within a {m}-minute walk. Come say hello.", ())]
-    descriptions += [(text, ()) for text in SAFE_DESCRIPTIONS]
+    descriptions += [(f"A new {b.kind}{where}. Walk in and say hello.", ()), (f"Within a {b.area}. Come say hello.", ())]
+    descriptions += [(text, ()) for text in b.safe_descriptions]
     return piece({"headlines": pick_all(headlines, facts, spec["headlines"]),
                   "descriptions": pick_all(descriptions, facts, spec["descriptions"])})
 
 
 def rules_meta(b: Brief, facts: Facts) -> dict:
     spec = FORMATS["meta"]
-    intro = b.intro(" close by")
+    # The radius covers the walk, so it is close by; around a drive or a road distance it is only somewhere in it.
+    intro = b.intro(" close by") if b.walk else b.intro(f" in {b.hood}" if b.hood else "")
     primary = [(f"{intro} {text}", ids) for text, ids in claim_sentences(b, prose=True)]
     primary += [(intro, ()), ("New on the block. Come say hello.", ())]
     headline = [(b.name, ())] if b.named else []
     headline += [(f"New {b.kind} in {b.hood}", ())] if b.hood else []
-    headline += [(f"A new {b.kind} close by", ()), ("New on the block", ())]
+    headline += [(f"A new {b.kind} close by", ()) if b.walk else (f"A new {b.kind}", ()), ("New on the block", ())]
     description = [(c["line"], (c["id"],)) for c in b.claims if c["kind"] in ("promise", "closer")]
-    description += [("A short walk away", ()), ("New on the block", ())]
+    description += [("A short walk away" if b.short_walk else "Now open", ()), ("New on the block", ())]
     return piece({"primary_text": pick(primary, facts, spec["primary_text"]),
                   "headline": pick(headline, facts, spec["headline"]),
                   "description": pick(description, facts, spec["description"])})
@@ -640,7 +726,7 @@ def rules_poster(b: Brief, facts: Facts) -> dict:
     sublines = [(text, ids) for text, ids in claim_sentences(b) if not used & set(ids)]
     if b.hours:
         sublines.append((f"Open {hours_text(b.hours)}.", ()))
-    sublines.append(("A short walk from home. Walk in and say hello.", ()))
+    sublines.append((f"{'A short walk from home' if b.short_walk else 'Now open'}. Walk in and say hello.", ()))
     return piece({"headline": headline, "subline": pick(sublines, facts, spec["subline"])})
 
 
@@ -655,17 +741,21 @@ line must be true today and provable from the claims you are given.
 Rules for every line:
 - Claim only what the claims say: rephrase a claim if you like, never stretch it. Without claims, say what the
   business is, where it is, when it is open and what is on its menu.
-- Use no number that is not in the claims, their proofs, the hours, the walk minutes or the business name.
+- Use no number that is not in the claims, their proofs, the hours, the area's minutes or kilometres or the business
+  name.
 - Never name another business, nor any artist, podcast, show or brand: platforms reject other businesses' names,
   and naming an artist or a brand implies an endorsement the owner does not have. The neighborhoods given are fine.
-- Write "only" (or "no other", "nowhere else") only to state a claim of kind "only", with its price level, its kind
-  of business and its walk.
+- Write "only" (or "no other", "nowhere else") only to state a claim of kind "only", with its kind of business and its
+  area, as the claim words it ("within a 10-minute walk", "within a 30-minute drive").
+- The area (where.area) is a walk, a drive or a road distance: never say the business is a walk away ("a short walk",
+  "steps from", "on foot") unless the area is a walk.
 - No superlatives nothing proves (best, #1, cheapest, famous, award-winning, top-rated, world-class).
-- No web addresses, phone numbers, prices in money, discounts, deals or free offers: price levels are $ to $$$$, never
-  amounts.
+- No filler nothing measured backs (cozy, chic, vibe, welcoming, inviting, curated, elevated, haven): say what it
+  serves, when it opens or what it answers.
+- No web addresses, phone numbers, prices, price levels or currency signs, discounts, deals or free offers.
 - Keep every field within its limit; characters include spaces.
 Each channel says who it reaches: say "close by" or "on your block" only where it reaches neighbors. A script is read
-aloud: no symbols, price levels in words.
+aloud: no symbols.
 For each channel, list in "claims" the ids of the claims its lines use.
 Return JSON with exactly the channels asked: {"<channel>": {"<field>": ..., "claims": [ids]}}; list fields are arrays
 of strings."""
@@ -698,14 +788,13 @@ def model_brief(run: RunState, concept: dict, design: dict, name: str, claims: l
     when = plan.get("when") or {}
     tagline = design.get("tagline")
     tagline = " ".join(tagline.split()) if isinstance(tagline, str) and tagline.strip() else None
-    level = design.get("price_level") or concept.get("price_level")
     return {
         "business": {
-            "name": name, "kind": singular(concept["genre"]), "price_level": dollars(level) or None,
+            "name": name, "kind": singular(concept["genre"]),
             "menu": facts.menu[:6],
             "tagline": tagline if tagline and not facts.check(tagline, chars=90) else None,
         },
-        "where": {"neighborhoods": neighborhoods_of(run, design), "walk_minutes": run.site.minutes},
+        "where": {"neighborhoods": neighborhoods_of(run, design), "area": run.site.area},
         "hours": design.get("hours"),
         "claims": claims,
         "voice": {
@@ -714,7 +803,7 @@ def model_brief(run: RunState, concept: dict, design: dict, name: str, claims: l
             "lead_with": [share["angle"] for share in when.get("intents") or [] if share.get("angle")][:1],
         },
         "channels": {
-            key: {"reaches": REACHES[key], "fields": {field: describe(spec) for field, spec in FORMATS[key].items()}}
+            key: {"reaches": reaches(key, run.site.area), "fields": {field: describe(spec) for field, spec in FORMATS[key].items()}}
             for key in keys
         },
     }
@@ -865,8 +954,12 @@ def channel_keys(design: dict) -> list[str]:
     return [key for key in FORMATS if key in present or key == "poster"]
 
 
-def make_poster(run: RunState, design: dict, name: str, piece: dict | None, claims: list[dict], facts: Facts) -> dict:
-    """What the poster says and the shapes it is drawn from: the walk's outline, the door, the neighborhoods."""
+def make_poster(
+    run: RunState, design: dict, name: str, piece: dict | None, claims: list[dict], facts: Facts,
+    row: dict | None = None, streets: dict | None = None,
+) -> dict:
+    """What the poster says and the shapes it is drawn from: the walk's outline, the door, the neighborhoods, and the
+    map around them (poster_map)."""
     tagline = design.get("tagline")
     tagline = " ".join(tagline.split()) if isinstance(tagline, str) and tagline.strip() else None
     if tagline and facts.check(tagline, chars=90):
@@ -881,10 +974,26 @@ def make_poster(run: RunState, design: dict, name: str, piece: dict | None, clai
         "claim": {key: lead[key] for key in ("kind", "line", "proof")} if lead else None,
         "hours": design.get("hours"),
         "minutes": run.site.minutes,
+        "area_label": run.site.area,
         "ring": walk_outline(run),
         "site": [run.site.lat, run.site.lon],
         "neighborhoods": neighborhoods_of(run, design),
+        "map": poster_map(run, row, claims, streets),
     }
+
+
+def poster_map(run: RunState, row: dict | None, claims: list[dict], streets: dict | None) -> dict:
+    """The poster's map: the street map around the survey's area (None when OpenStreetMap did not answer) and, when the
+    launch plan may say people here cross town for this kind of place (its 'closer' claim), the trips they make now as
+    distances and bearings from the door. Never a name or a location: an ad does not point at another business."""
+    km = row.get("median_far_km") if row else None
+    if not row or km is None or not any(claim.get("kind") == "closer" for claim in claims):
+        return {"streets": streets, "trips": [], "caption": None}
+    trips = [{"km": trip["km"], "bearing": trip["bearing"]} for trip in map_trips(run, row)]
+    kind = plural(row["genre"])
+    kind = in_sentence(row["genre"]) if kind.endswith(" places") else kind  # 'for seafood', 'for bakeries'
+    caption = f"{number(km)} km: where {people_here(run.site.ages)} go for {kind} now" if trips else None
+    return {"streets": streets, "trips": trips, "caption": caption}
 
 
 def make_links(keys: list[str], name: str, genre: str) -> list[dict]:
@@ -900,10 +1009,13 @@ def make_links(keys: list[str], name: str, genre: str) -> list[dict]:
 
 async def build_kit(
     llm: LLM | None, run: RunState, index: int, design: dict, answers: AnswerCache | None = None,
+    streets: dict | Awaitable[dict | None] | None = None,
 ) -> dict:
     """The launch kit for concept `index` and its design sheet: checked ad copy per channel, the poster, tracked links
     and the dossier. Works without a model: the rules then write every line. The notes tell the owner what the kit left
-    out and why, led by a plain warning when the concept is an untested wildcard."""
+    out and why, led by a plain warning when the concept is an untested wildcard. `streets` is the street map around
+    the walk for the poster's and the cover's maps (app.basemap), or what will give it, awaited once the copy is
+    written so the two are fetched at once."""
     concept = concept_at(run, index)
     genre = concept["genre"]
     name = business_name(run, concept, design)
@@ -913,19 +1025,20 @@ async def build_kit(
     warning = untested(concept)
     notes = ([warning] if warning else []) + notes + facts.left_out
     hoods = neighborhoods_of(run, design)
-    brief = Brief(name, singular(genre), scoring.genre_title(genre), hoods[0] if hoods else None, run.site.minutes,
+    brief = Brief(name, singular(genre), scoring.genre_title(genre), hoods[0] if hoods else None, run.site.reach,
                   design.get("hours"), claims)
     rules = {key: RULES[key](brief, facts) for key in keys}
     payload = json.dumps(model_brief(run, concept, design, name, claims, keys, facts), ensure_ascii=False)
     attempts, rejected = await write_copy(llm, answers, payload, keys, facts, claims)
     ads, latest = merge(keys, attempts, rules, claims)
+    streets = await streets if inspect.isawaitable(streets) else streets
     return {
         "concept": {"index": index, "name": name, "genre": genre},
         "claims": claims,
         "copy": ads,
-        "poster": make_poster(run, design, name, ads.get("poster"), claims, facts),
+        "poster": make_poster(run, design, name, ads.get("poster"), claims, facts, gap_for(run, genre), streets),
         "links": make_links(keys, str(concept.get("name") or name), genre),
-        "dossier": build_dossier(run, index, design, ads),
+        "dossier": build_dossier(run, index, design, ads, streets=streets),
         "rejected": rejected,
         "notes": notes,
         "mode": "agent" if latest is not None else "rules",

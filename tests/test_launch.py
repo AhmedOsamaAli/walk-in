@@ -2,7 +2,6 @@
 from app import scoring
 from app.catchment import Catchment
 from app.survey import launch
-from app.survey.evidence import price_evidence
 from app.survey.models import RunState, Site
 from tests.fakes import place
 
@@ -43,7 +42,6 @@ def gap_row() -> dict:
         "_favorite_entities": LOVED, "favorites": [{**scoring.place_card(e), "within_walk": False} for e in LOVED],
         "_nearby_entities": INSIDE, "competitors": [scoring.place_card(e) for e in INSIDE],
     }
-    row["price"] = price_evidence(row)
     return row
 
 
@@ -61,7 +59,7 @@ def survey() -> RunState:
     return run
 
 
-CONCEPT = {"name": "Golden Hour", "genre": "Bakery", "price_level": 3, "signature": ["Kouign amann", "Rye loaf"]}
+CONCEPT = {"name": "Golden Hour", "genre": "Bakery", "signature": ["Kouign amann", "Rye loaf"]}
 
 
 def test_the_plan_reaches_who_the_places_draw_and_what_the_area_over_indexes_on():
@@ -82,9 +80,7 @@ def test_the_plan_reaches_who_the_places_draw_and_what_the_area_over_indexes_on(
 def test_every_claim_carries_its_proof_and_none_names_a_competitor():
     plan = launch.plan(survey(), CONCEPT, gap_row())
     claims = {c["kind"]: c for c in plan["claims"]}
-    assert list(claims) == ["only", "new", "closer", "promise"]
-    assert claims["only"]["line"] == "The only $$$ bakery within a 10-minute walk"
-    assert claims["only"]["proof"] == "None of the 2 bakeries inside the walk that list a price is $$$; 2 of the bakeries locals love are."
+    assert list(claims) == ["new", "closer", "promise"]
     assert claims["new"]["line"] == "Kouign amann, which no bakery within a 10-minute walk is known for"
     assert claims["new"]["proof"] == "2 of the bakeries locals love are known for it; none inside the walk is."
     assert claims["closer"]["proof"].endswith("a median 2.1 km away.")
@@ -102,19 +98,17 @@ def test_a_proof_counts_one_place_in_the_singular():
     assert new["proof"] == "1 of the bakeries locals love is known for it; none inside the walk is."
 
 
-def test_no_only_claim_when_the_level_is_charged_inside_the_walk_or_nothing_inside_is_priced():
-    cheap = launch.claims(survey(), {**CONCEPT, "price_level": 1}, gap_row())
-    assert "only" not in {c["kind"] for c in cheap}
-    empty = gap_row()
-    empty["_nearby_entities"], empty["competitors"] = [], []
-    empty["price"] = price_evidence(empty)
-    assert "only" not in {c["kind"] for c in launch.claims(survey(), CONCEPT, empty)}
+def test_no_claim_is_about_price_even_where_the_places_list_levels():
+    # Qloo lists levels for every place here ($$$ loved, $ inside the walk), and still no line or proof says one.
+    plan = launch.plan(survey(), CONCEPT, gap_row())
+    text = " ".join(c["line"] + " " + c["proof"] for c in plan["claims"])
+    assert "only" not in {c["kind"] for c in plan["claims"]} and "$" not in text and "price" not in text.lower()
 
 
 def test_cautions_follow_what_the_plan_says():
     plan = launch.plan(survey(), CONCEPT, gap_row())
     assert plan["cautions"] == [launch.NO_COMPETITORS, launch.WALK_FIRST, launch.KEEP_PROMISES, launch.NO_ENDORSEMENT]
-    # A plan with no 'only', 'new' or promise line and no names to target needs only the rule about competitors.
+    # A plan with no 'new' or promise line and no names to target needs only the rule about competitors.
     quiet = launch.cautions([{"kind": "closer"}], {"artists": [], "podcasts": [], "screen": [], "brands": []})
     assert quiet == [launch.NO_COMPETITORS]
 
@@ -126,3 +120,14 @@ def test_channels_turn_the_plan_into_platform_settings():
     assert channels["Nextdoor"] == "Neighborhoods: Holly, East Cesar Chavez."
     assert channels["Google Ads custom segment"] == "People who browse websites like: crumb.example, rise.example."
     assert channels["Meta or Google local ads"].startswith(f"A radius of {plan['where']['reach_m']} m around your door")
+
+
+def test_no_only_claim_when_openstreetmap_shows_the_kind_even_as_places_qloo_lists_elsewhere():
+    row = gap_row()
+    row["nearby_count"], row["_nearby_entities"], row["competitors"] = 0, [], []
+    # OpenStreetMap shows two bakeries there; Qloo lists both, but under another kind or as closed.
+    row["osm"] = {"checked": True, "count": 2, "extra": []}
+    assert "only" not in {c["kind"] for c in launch.claims(survey(), CONCEPT, row)}
+    row["osm"] = {"checked": True, "count": 0, "extra": []}
+    only = next(c for c in launch.claims(survey(), CONCEPT, row) if c["kind"] == "only")
+    assert only["proof"] == "Qloo lists no bakery inside the walk, and OpenStreetMap shows none either."

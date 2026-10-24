@@ -26,7 +26,6 @@ from app.config import ROOT, Settings
 from app.db import AccountStore, Database, KitStore, SurveyStore, async_url
 from app.db.surveys import pack_state, unpack_state
 from app.db.tables import designs, kits, metadata, surveys
-from app.images import ImageGen
 from app.llm import LLM
 from app.survey import design, pipeline, snapshot
 from app.survey.models import RunState, RunStore, Site
@@ -59,7 +58,7 @@ def test_a_test_only_ever_resolves_its_own_sqlite_file(database_url, tmp_path):
     assert resolved == dict.fromkeys(resolved, database_url)
 
     services = main.Services(
-        qloo=FakeQloo(), walker=FakeWalker(), llm=LLM("", None, "test-model"), images=ImageGen(), geocoder=StubGeocoder(),
+        qloo=FakeQloo(), walker=FakeWalker(), llm=LLM("", None, "test-model"), geocoder=StubGeocoder(),
     )
     app = main.create_app(lambda: services)
 
@@ -249,7 +248,7 @@ async def survey(**brief) -> RunState:
 
     run = await pipeline.analyze_site(q, FakeWalker(), llm, RunStore(), Site(*SITE, "Test Corner, Testville", **brief), emit)
     if run.concepts:
-        run.designs[0] = await design.design_concept(llm, ImageGen(), run, 0, q)
+        run.designs[0] = await design.design_concept(run, 0, q)
     return run
 
 
@@ -259,20 +258,16 @@ async def survey(**brief) -> RunState:
     {"intent": "improve", "place_id": OWNER_PLACE["entity_id"]},
 ])
 def test_a_run_comes_back_whole_from_its_snapshot(brief):
-    async def snapshot_mid_render() -> tuple[RunState, dict]:
-        run = await survey(**brief)
-        run.renders[(0, "interior")] = asyncio.get_running_loop().create_future()
-        run.queued.add((0, "exterior"))
-        return run, snapshot.dump_run(run)
-
-    run, data = asyncio.run(snapshot_mid_render())
-    assert "renders" not in data and "queued" not in data
+    run = asyncio.run(survey(**brief))
+    data = snapshot.dump_run(run)
     restored = snapshot.load_run(json.loads(json.dumps(data, allow_nan=False)))
-    assert snapshot.dump_run(restored) == data and restored.renders == {} and restored.queued == set()
+    assert snapshot.dump_run(restored) == data
     assert isinstance(restored.catchment.ring[0], tuple) and all(isinstance(index, int) for index in restored.designs)
     # Identical but for the block summary's (genre, count) pairs, which JSON keeps as lists; they are only read as JSON.
     assert restored.summary["top_genres"] == [list(pair) for pair in run.summary["top_genres"]]
-    assert replace(restored, summary=run.summary, renders=run.renders, queued=run.queued) == run
+    assert replace(restored, summary=run.summary) == run
+    # A snapshot saved before renders were cut, or with any field a later version dropped, still loads.
+    assert snapshot.load_run({**json.loads(json.dumps(data)), "renders": {}, "queued": []}).id == run.id
 
 
 def test_a_restored_run_designs_like_the_original():
@@ -281,7 +276,7 @@ def test_a_restored_run_designs_like_the_original():
     assert restored.constraints == run.constraints and restored.explored == run.explored
 
     def sheet(of: RunState) -> dict:
-        return asyncio.run(design.design_concept(LLM("", None, "test-model"), ImageGen(), of, 1, FakeQloo()))
+        return asyncio.run(design.design_concept(of, 1, FakeQloo()))
 
     assert sheet(restored) == sheet(run)
 

@@ -3,26 +3,26 @@
 Nothing here is computed by a model. Every number is quoted from the survey's evidence, or worked out from it, and
 every section carries a basis saying where it comes from, so a reader can check it; a section the evidence cannot
 support is left out, not padded. The design sheet's own words (its tagline, its interior) are kept only when they state
-no number, so no figure a model wrote stands beside a measured one. Price levels stay Qloo's levels ($ to $$$$): Qloo
-gives no amounts, so none are made up.
+no number, so no figure a model wrote stands beside a measured one. No price level appears: Qloo's are dollar signs with
+no amounts behind them, which tell an owner nothing to charge.
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
 
-from .. import scoring, space
-from ..catchment import WALK_M_PER_MIN
+from .. import engine, scoring, space
+from ..catchment import DRIVE_M_PER_MIN, ROAD_FACTOR, WALK_M_PER_MIN
 from ..geo import distance_m
 from . import launch
 from .concepts import (
     COMMON_NAME_WORDS,
     TOO_BROAD,
     caution,
-    concept_risk,
     for_whom,
     one_liner,
     place_names,
@@ -35,20 +35,26 @@ from .evidence import (
     COMPLAINT_MOVES,
     OVER,
     STRONGER,
+    aged,
+    area_noun,
+    areas_text,
     competitor_places,
-    dollars,
+    count_of,
     example_places,
     gap_evidence,
     gap_for,
     gap_reading,
+    is_walk,
     number,
     offer_items,
+    people_here,
     plural,
-    price_evidence,
+    risk,
     singular,
     storefront_favorites,
 )
 from .experience import BASIS as TASTE_BASIS
+from .experience import basis as taste_basis
 from .models import RunState
 
 # The verdict on the owner's idea, as its stamp reads on the page.
@@ -60,7 +66,6 @@ SECTIONS = (
     "cover", "case", "alternatives", "competition", "travel", "offer", "room", "experience", "launch", "first_90_days",
     "before_you_sign", "method",
 )
-NO_AMOUNTS = "Levels are Qloo's, from $ to $$$$; Qloo gives no amounts, so none are given here."
 ALTERNATIVES_SHOWN = 6
 # Words that say what kind of business a place is rather than which one: a 'Golden Hour Bakery' takes 'Golden Hour'.
 CATEGORY_WORDS = frozenset({
@@ -79,24 +84,25 @@ UNTESTED_BASIS = ("A wildcard concept: the evidence shows locals love what it co
 
 def build_dossier(
     run: RunState, index: int, design: dict, copy: dict | None = None, *, prepared: date | None = None,
+    streets: dict | None = None,
 ) -> dict:
-    """The dossier for concept `index` and its design sheet; `copy` is the launch kit's checked ad copy, once made."""
+    """The dossier for concept `index` and its design sheet; `copy` is the launch kit's checked ad copy, once made, and
+    `streets` the street map around the walk (app.basemap), for the cover's map."""
     concept = concept_at(run, index)
     row = gap_for(run, concept["genre"])
     name = business_name(run, concept, design)
-    level = design.get("price_level") or concept.get("price_level")
     parts = {
-        "cover": cover(run, concept, design, row, name, prepared),
-        "case": case(run, concept, design, row, level) if row else None,
+        "cover": cover(run, concept, design, row, name, prepared, streets),
+        "case": case(run, concept, design, row) if row else None,
         "alternatives": alternatives(run, concept, row),
         "competition": competition(run, row) if row else None,
         "travel": travel(run, row) if row else None,
-        "offer": offer(run, design, row, level) if row else None,
+        "offer": offer(run, design, row) if row else None,
         "room": room(design),
         "experience": experience(design),
         "launch": launch_section(concept, design, copy),
-        "first_90_days": first_90_days(run, concept, design, row, name, level),
-        "before_you_sign": before_you_sign(run, concept, design, row, level),
+        "first_90_days": first_90_days(run, concept, design, row, name),
+        "before_you_sign": before_you_sign(run, concept, design, row),
         "method": method(run, design),
     }
     present = {key: value for key, value in parts.items() if value}
@@ -168,27 +174,18 @@ def campaign(name: str, genre: str = "") -> str:
     return f"{slug(name) or slug(genre) or 'walk-in'}-launch"
 
 
-def claim_level(claim: dict) -> int | None:
-    """The price level an 'only' claim is about: 'The only $$$ bakery…' -> 3."""
-    found = re.search(r"\$+", claim.get("line") or "")
-    return len(found.group(0)) if found else None
-
-
 def usable_claims(concept: dict, design: dict) -> tuple[list[dict], list[str]]:
-    """The launch plan's claims with ids ('only', 'new-1', 'new-2'…), and notes on any left out.
+    """The launch plan's claims with ids ('only', 'new-1', 'new-2', 'closer'…), and notes on any left out.
 
-    The plan prices its 'only' claim at the concept's level; when the sheet settled on another level, the claim would
-    promise a price the menu does not charge, so it is left out.
-    """
+    A sheet saved before prices were dropped may carry an 'only' claim about a price level ('The only $$ bakery…'). Its
+    proof only covers places that list a price, and the ads now leave the level out, which would widen it to every
+    place of the kind; so it is left out, with a note."""
     plan = design.get("launch") or {}
-    sheet_level = design.get("price_level")
     raw = [c for c in plan.get("claims") or [] if isinstance(c, dict) and c.get("line") and c.get("proof")]
     kept, notes = [], []
     for claim in raw:
-        level = claim_level(claim) if claim.get("kind") == "only" else None
-        if level and sheet_level and level != sheet_level:
-            notes.append(f'Left out "{claim["line"]}": the sheet prices the concept at {dollars(sheet_level)}, so the '
-                         f"claim would promise a level the menu does not charge.")
+        if claim.get("kind") == "only" and "$" in str(claim["line"]):
+            notes.append(f'Left out "{claim["line"]}": it is about a price level, which Walk-in no longer uses.')
             continue
         kept.append(claim)
     totals = Counter(c.get("kind") for c in kept)
@@ -200,19 +197,6 @@ def usable_claims(concept: dict, design: dict) -> tuple[list[dict], list[str]]:
         out.append({"id": kind if totals[kind] == 1 else f"{kind}-{seen[kind]}", "kind": kind,
                     "line": claim["line"], "proof": claim["proof"]})
     return out, notes
-
-
-def price_label(level: object) -> str | None:
-    return dollars(int(level)) if isinstance(level, int | float) and not isinstance(level, bool) and 1 <= level <= 4 else None
-
-
-def open_level(ladder: list[dict]) -> int | None:
-    """The level at least two places locals love charge and no place inside the walk does, when the walk has priced
-    places of the kind (the same reading as evidence.open_price_note)."""
-    if not sum(step["inside"] for step in ladder):
-        return None
-    steps = [step for step in ladder if step["loved"] >= 2 and not step["inside"]]
-    return max(steps, key=lambda s: (s["loved"], s["level"]))["level"] if steps else None
 
 
 def evidence_date(run: RunState) -> str:
@@ -234,7 +218,10 @@ def rank_among_gaps(run: RunState, row: dict) -> tuple[int, int]:
 
 # ---------- Cover ----------
 
-def cover(run: RunState, concept: dict, design: dict, row: dict | None, name: str, prepared: date | None) -> dict:
+def cover(
+    run: RunState, concept: dict, design: dict, row: dict | None, name: str, prepared: date | None,
+    streets: dict | None = None,
+) -> dict:
     site, catchment = run.site, run.catchment
     walk = launch.where(run, None)
     return {
@@ -245,17 +232,141 @@ def cover(run: RunState, concept: dict, design: dict, row: dict | None, name: st
         "lat": site.lat,
         "lon": site.lon,
         "walk_minutes": site.minutes,
+        "area_label": site.area,
         "walk_source": catchment.source if catchment else None,
         "area_km2": round(catchment.area_m2 / 1e6, 2) if catchment else None,
         "reach_m": walk["reach_m"],
         "ring": walk_outline(run),
         "neighborhoods": walk["neighborhoods"],
+        "map": site_map(run, row, streets),
         "evidence_date": evidence_date(run),
         "prepared_date": (prepared or datetime.now(UTC).date()).isoformat(),
         "sources": sources(run, design),
-        "basis": f"The site and the {site.minutes}-minute walk the survey measured on {evidence_date(run)}; "
-                 f"neighborhoods are those Qloo gives for the places inside the walk.",
+        "basis": f"The site and the {site.area} the survey measured on {evidence_date(run)}; "
+                 f"neighborhoods are those Qloo gives for the places inside the {area_noun(site.area)}.",
     }
+
+
+def site_map(run: RunState, row: dict | None, streets: dict | None) -> dict:
+    """The cover's map of what the report recommends: the street map around the survey's area (app.basemap; None when
+    OpenStreetMap did not answer), the places of the kind inside the area in the competition table's order, those the
+    survey numbers carrying its numbers, the places people here love of that kind outside it lettered as 'Where
+    customers go now' lists them, and the claim the two make, in one line."""
+    area = area_name(run)
+    basis = (f"Pins: the places of this kind Qloo lists inside the {area}; the first {NUMBERED} the survey lists carry "
+             f"the numbers its map gives them, and the competition table shows them. Letters: the places of this kind "
+             f"{people_here(run.site.ages)} love more than the city does, outside the {area}, at their straight-line "
+             f"distance (Qloo).")
+    if streets:
+        as_of = str(streets.get("as_of") or "")[:10]
+        basis += f" Streets and water: OpenStreetMap{f', data of {as_of}' if as_of else ''}."
+    return {
+        "streets": streets,
+        "pins": map_pins(run, row) if row else [],
+        "trips": map_trips(run, row) if row else [],
+        "caption": map_caption(run, row),
+        "basis": basis,
+    }
+
+
+def area_name(run: RunState) -> str:
+    """The survey's area as the maps name it, '10-minute walk', '30-minute drive', '25 km drive': the area the survey
+    traced (the catchment's label), else the one the owner asked for."""
+    label = getattr(run.catchment, "label", None)
+    return label if isinstance(label, str) and label else run.site.area
+
+
+# The places of a kind the survey numbers on its map: the first it lists (frontend map/pins.ts, LISTED).
+NUMBERED = 6
+
+
+def listed_numbers(row: dict) -> dict[str, int]:
+    """The numbers the survey's map gives the places of a kind, by Qloo id: 1, 2, 3… for those of the first NUMBERED
+    it lists (row['competitors']) that have a location."""
+    numbers: dict[str, int] = {}
+    count = 0
+    for card in (row.get("competitors") or [])[:NUMBERED]:
+        if card_location(card) is None:
+            continue
+        count += 1
+        if card.get("id"):
+            numbers[str(card["id"])] = count
+    return numbers
+
+
+def map_pins(run: RunState, row: dict) -> list[dict]:
+    """The places of the kind inside the area with a location, in the competition table's order and no more than it
+    lists (a big area can hold many). Those the survey numbers on its map keep its number ('n'), so a place has one
+    number on screen and on paper; the others have none and are drawn as dots."""
+    site = (run.site.lat, run.site.lon)
+    numbers = listed_numbers(row)
+    entities = row.get("_nearby_entities")
+    if entities is None:  # as competition() does: the cards stand in for places a saved row no longer holds
+        named = [card for card in row.get("competitors") or [] if card.get("name")]
+        located = [(card_location(card), True, card.get("id")) for card in named]
+    else:
+        earnest = {scoring.item_id(place) for place in competitor_places(row)}
+        named = [place for place in entities if place.get("name")]
+        located = [(scoring.place_location(place), scoring.item_id(place) in earnest, scoring.item_id(place))
+                   for place in named]
+    listed = len((competition(run, row) or {}).get("places") or [])
+    pins = []
+    for place, (where, main, place_id) in list(zip(named, located, strict=True))[:listed]:
+        if where is None:
+            continue
+        lat, lon = where
+        pins.append({"n": numbers.get(str(place_id)) if place_id else None, "name": place["name"], "lat": round(lat, 5),
+                     "lon": round(lon, 5), "main": main, "distance_m": round(distance_m(*site, lat, lon))})
+    return pins
+
+
+def card_location(card: dict) -> tuple[float, float] | None:
+    lat, lon = card.get("lat"), card.get("lon")
+    return (float(lat), float(lon)) if lat is not None and lon is not None else None
+
+
+def map_trips(run: RunState, row: dict) -> list[dict]:
+    """The places people here love of the kind outside the area, lettered in the order 'Where customers go now' lists
+    them, with their straight-line distance and bearing from the site; a place without a location keeps its letter and
+    is left off the map. None unless the favorites are the neighbors' own (as travel() requires)."""
+    if row.get("favorites_kind") != "local":
+        return []
+    site = run.site
+    trips = []
+    listed = [card for card in storefront_favorites(row)[1] if card.get("name") and not card.get("within_walk")]
+    for position, card in enumerate(listed[:26]):
+        where = card_location(card)
+        if where is None:
+            continue
+        lat, lon = where
+        meters = card.get("distance_m")
+        if meters is None:
+            meters = distance_m(site.lat, site.lon, lat, lon)
+        trips.append({"key": chr(65 + position), "name": card["name"], "lat": round(lat, 5), "lon": round(lon, 5),
+                      "km": round(meters / 1000, 1), "bearing": round(bearing(site.lat, site.lon, lat, lon))})
+    return trips
+
+
+def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """The direction from the first point to the second, in degrees clockwise from north."""
+    phi1, phi2, d_lambda = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    y = math.sin(d_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
+    return math.degrees(math.atan2(y, x)) % 360
+
+
+def map_caption(run: RunState, row: dict | None) -> str:
+    """The map's claim in one line, in the case's own numbers: 'No bakery inside the 10-minute walk; people here
+    travel a median 2.8 km for the 3 they love'."""
+    area = area_name(run)
+    if not row:
+        return f"The {area} around the site"
+    text = f"{count_of(row['genre'], row['nearby_count'], bool(row.get('nearby_capped')))} inside the {area}"
+    km, far, total = row.get("median_far_km"), row.get("favorites_far") or 0, row.get("favorites_total") or 0
+    if row.get("favorites_kind") == "local" and km is not None and far:
+        text += (f"; {people_here(run.site.ages)} travel a median {number(km)} km for the {far} they love"
+                 + ("" if far >= total else " outside it"))
+    return text
 
 
 def tagline_of(run: RunState, concept: dict, design: dict, row: dict | None) -> str | None:
@@ -264,18 +375,39 @@ def tagline_of(run: RunState, concept: dict, design: dict, row: dict | None) -> 
     for text in (design.get("tagline"), concept.get("one_liner")):
         if isinstance(text, str) and text.strip() and not re.search(r"\d", text):
             return " ".join(text.split())
-    return one_liner(row, run.site.minutes) if row else None
+    return one_liner(row, run.site.area, run.site.ages) if row else None
+
+
+def circle_rule(run: RunState) -> str:
+    """The rule the circle is drawn by when street routing fails: '80 m per minute' of a walk, 400 m per minute of a
+    drive (city traffic), 0.7 of a road distance (roads wind, so a straight line reaches less far)."""
+    reach = run.site.reach
+    if reach.travel == "distance":
+        return f"{ROAD_FACTOR:g} times the road distance, as roads wind"
+    if reach.travel == "drive":
+        return f"{DRIVE_M_PER_MIN} m per minute of driving, for city traffic"
+    return f"{WALK_M_PER_MIN} m per minute"
+
+
+def circle_size(run: RunState) -> str:
+    """The fallback circle's radius: '800 m' for a walk, as always; a drive's in km once it is that big ('12 km')."""
+    radius = round(run.site.reach.fallback_radius_m)
+    return f"{radius} m" if radius < 1000 or is_walk(run.site.area) else f"{radius / 1000:g} km"
 
 
 def sources(run: RunState, design: dict) -> list[dict]:
-    out = [{"name": "Qloo Insights API", "used_for": "Places inside the walk and around it, what locals engage with and "
-            "love, their taste in brands, artists, films, shows and podcasts, review keywords, price levels and hours"}]
+    site = run.site
+    noun = area_noun(site.area)
+    out = [{"name": "Qloo Insights API", "used_for": f"Places inside the {noun} and around it, what locals engage with "
+            "and love, their taste in brands, artists, films, shows and podcasts, review keywords and hours"}]
     catchment = run.catchment
     if catchment and catchment.source == "circle":
-        out.append({"name": f"A circle of {WALK_M_PER_MIN} m per minute of walking",
-                    "used_for": "The walk, because street routing was unavailable"})
+        rule = f"{WALK_M_PER_MIN} m per minute of walking" if is_walk(site.area) else circle_rule(run)
+        out.append({"name": f"A circle of {rule}", "used_for": f"The {noun}, because street routing was unavailable"})
     elif catchment:
-        out.append({"name": "Valhalla routing on OpenStreetMap data (FOSSGIS)", "used_for": "The walk, traced over the streets"})
+        # The trip supply is compared with ('the 20-minute walk'), or the circle that stands in without its outline.
+        used = f"The {noun}, traced over the streets, and the {catchment.around_label} that supply is compared with"
+        out.append({"name": "Valhalla routing on OpenStreetMap data (FOSSGIS)", "used_for": used})
     if design.get("capacity"):
         out.append({"name": "International Building Code, Table 1004.5", "used_for": "Capacity: occupant load factors"})
     return out
@@ -288,19 +420,28 @@ WHO_BASIS = ("Neighbors inside the walk, the trips they make to places of this k
 RISK_BASIS = "The biggest risk the measurements show, stated with its numbers."
 
 
-def case(run: RunState, concept: dict, design: dict, row: dict, level: int | None) -> dict:
+def who_basis(run: RunState) -> str:
+    """WHO_BASIS for this survey: the people inside a drive or a road distance rather than a walk's neighbors, and of
+    the owner's age focus when there is one."""
+    area, ages = run.site.area, run.site.ages
+    if is_walk(area) and not aged(ages):
+        return WHO_BASIS
+    who = f"{'Neighbors' if is_walk(area) else 'People'}{aged(ages)} inside the {area_noun(area)}"
+    return f"{who}, the trips they make to places of this kind (Qloo), and Qloo's crowd tags on the places they love."
+
+
+def case(run: RunState, concept: dict, design: dict, row: dict) -> dict:
     """The one-page pitch: the decision, the numbers behind it, who it is for and what could sink it."""
-    minutes = run.site.minutes
-    numbers = [
-        demand_number(row), supply_number(row, minutes), pull_number(row), price_number(run, row, design, level),
-        capacity_number(run, design, row),
-    ]
+    area, ages = run.site.area, run.site.ages
+    numbers = [demand_number(row, run), supply_number(run, row), pull_number(row, area, ages),
+               capacity_number(run, design, row)]
     out = {
         "decision": decision(run, concept, row),
         "numbers": [n for n in numbers if n],
-        "who": {"text": for_whom(row, minutes), "basis": WHO_BASIS},
-        "risk": {"text": concept_risk(run, row, level), "check": risk_check(run, row, level), "basis": RISK_BASIS},
-        "basis": f"Qloo measurements of {plural(row['genre'])} for this site's walk and the six same-size areas around it.",
+        "who": {"text": for_whom(row, area, ages), "basis": who_basis(run)},
+        "risk": {"text": risk(row, area, ages), "check": risk_check(row, area), "basis": RISK_BASIS},
+        "basis": f"Qloo measurements of {plural(row['genre'])} for this site's {area_noun(area)} and the "
+                 f"{areas_text(row)} around it.",
     }
     warning = caution(run, run.concepts)
     if warning:
@@ -336,62 +477,70 @@ def decision(run: RunState, concept: dict, row: dict) -> dict:
     return out
 
 
-def demand_number(row: dict) -> dict:
+def comparison_km(run: RunState | None) -> int | None:
+    """How far away the same-size comparison areas lie (engine.reference_distance), when the area is too big for 'a few
+    kilometres'; None for a walk-sized survey."""
+    catchment = run.catchment if run else None
+    away = engine.reference_distance(catchment.radius_m) if catchment else 0
+    return round(away / 1000) if away > 6000 else None
+
+
+def demand_number(row: dict, run: RunState | None = None) -> dict:
     rank, ref = row["demand_rank"], row.get("ref_rank")
     value = "outside the top 50 here" if rank >= scoring.UNRANKED else f"#{rank} here"
     if ref is not None:
         value += ", outside the top 50 around" if ref >= scoring.UNRANKED else f", #{number(ref)} in the areas around"
+    area, ages = (run.site.area, run.site.ages) if run else (10, None)
+    km = comparison_km(run)
     return {
         "label": "Demand", "value": value, "data": {"here": rank, "around": ref},
-        "basis": "Where people inside the walk rank this place type among those they engage with (Qloo; #1 is the "
-                 "strongest), against its median rank in six same-size areas a few kilometres around.",
+        "basis": f"Where people{aged(ages)} inside the {area_noun(area)} rank this place type among those they engage "
+                 f"with (Qloo; #1 is the strongest), against its median rank in {areas_text(row)} "
+                 f"{f'about {km} km away' if km else 'a few kilometres around'}.",
     }
 
 
-def supply_number(row: dict, minutes: int) -> dict:
+def around_text(run: RunState) -> str:
+    """What supply is compared with, in words: the longer trip over the streets, or a circle when there is none (only
+    an area that is itself a circle says that routing was unavailable)."""
+    catchment = run.catchment
+    noun = area_noun(run.site.area)
+    if catchment and catchment.around:
+        return (f"the count inside the area a {catchment.around_label} reaches over the streets "
+                f"({catchment.around_area_m2 / 1e6:.2f} km², so rivers and the sea count only where a bridge crosses them)")
+    if catchment and catchment.source == "circle":
+        return f"the count in a circle twice the {noun}'s radius (street routing was unavailable)"
+    return f"the count in a circle twice the {noun}'s radius"
+
+
+def supply_number(run: RunState, row: dict) -> dict:
+    area = run.site.area
+    noun = area_noun(area)
     nearby, expected = row["nearby_count"], row.get("expected_nearby")
-    value = f"{nearby}{'+' if row.get('nearby_capped') else ''} inside the walk"
+    value = f"{nearby}{'+' if row.get('nearby_capped') else ''} inside the {noun}"
     if expected is not None:
         value += f", {'at least' if row.get('around_capped') else 'about'} {number(expected)} typical"
     return {
         "label": "Supply", "value": value, "data": {"inside": nearby, "typical": expected},
-        "basis": f"Places of this kind Qloo lists inside the {minutes}-minute walk, against what a block this dense holds: "
-                 f"the count in a circle twice the walk's radius, scaled to the walk's area and to this site's median "
-                 f"supply across categories.",
+        "basis": f"Places of this kind Qloo lists inside the {area}, against what a block this dense holds: "
+                 f"{around_text(run)}, scaled to the {noun}'s area and to this site's median supply across categories.",
     }
 
 
-def pull_number(row: dict) -> dict | None:
-    """How far locals travel for the places of this kind they love: the median trip to those outside the walk (the
+def pull_number(row: dict, area: str | int = 10, ages: str | None = None) -> dict | None:
+    """How far locals travel for the places of this kind they love: the median trip to those outside the area (the
     trip a place inside it would save them), or no distance at all when it is not known."""
     total, far, km = row.get("favorites_total") or 0, row.get("favorites_far") or 0, row.get("median_far_km")
     if row.get("favorites_kind") != "local" or total < 3:
         return None
+    noun = area_noun(area)
     return {
         "label": "Pull",
-        "value": f"{far} of {total} loved places outside the walk" + (f"; median distance {number(km)} km" if km is not None else ""),
+        "value": f"{far} of {total} loved places outside the {noun}" + (f"; median distance {number(km)} km" if km is not None else ""),
         "data": {"outside": far, "of": total, "median_km": km},
-        "basis": "Places of this kind that people inside the walk love more than the city does (Qloo)"
-                 + (f", and the median straight-line distance from the site of the {far} outside the walk." if km is not None
+        "basis": f"Places of this kind that people{aged(ages)} inside the {noun} love more than the city does (Qloo)"
+                 + (f", and the median straight-line distance from the site of the {far} outside the {noun}." if km is not None
                     else "."),
-    }
-
-
-def price_number(run: RunState, row: dict, design: dict, level: int | None) -> dict | None:
-    if not level:
-        return None
-    price = row.get("price") or price_evidence(row, run.constraints)
-    opened, loved = open_level(price.get("ladder") or []), price.get("loved")
-    if opened == level:
-        value = f"{dollars(level)}: a level locals love that no place inside the walk charges"
-    elif opened:
-        value = f"{dollars(level)}; the open level is {dollars(opened)}"
-    else:
-        value = dollars(level) + (f"; the places locals love are {dollars(loved)}" if loved and loved != level else "")
-    return {
-        "label": "Price position", "value": value,
-        "data": {"level": level, "open": opened, "loved": loved, "inside": price.get("nearby")},
-        "basis": f"{design.get('price_basis') or price['basis']} {NO_AMOUNTS}",
     }
 
 
@@ -407,12 +556,9 @@ def capacity_number(run: RunState, design: dict, row: dict) -> dict | None:
     }
 
 
-def risk_check(run: RunState, row: dict, level: int | None) -> str:
-    """How to test the risk concepts.concept_risk names, branch for branch, before signing."""
-    loved = (row.get("price") or {}).get("loved")
-    if loved and level and loved - level >= 1:
-        return ("Read the menus of the places locals love (linked under Offer) and make sure the value and the speed "
-                "make up for the lower price level.")
+def risk_check(row: dict, area: str | int = 10) -> str:
+    """How to test the risk evidence.risk names, branch for branch, before signing."""
+    noun = area_noun(area)
     if row.get("evidence") == "thin":
         return ("Visit the nearest places of this kind at a busy hour and count their customers: Qloo knows too few "
                 "around here to judge demand.")
@@ -420,12 +566,13 @@ def risk_check(run: RunState, row: dict, level: int | None) -> str:
         return ("Check whether the places locals love of this kind sit in hotels or malls; if most do, test demand with "
                 "a pop-up before signing.")
     if (row.get("relative_supply") or 0) >= OVER and not row.get("around_capped"):
-        return ("Count the customers of the places inside the walk at their busy hours: full rooms leave space for one "
-                "more, half-empty ones do not.")
+        return (f"Count the customers of the places inside the {noun} at their busy hours: full rooms leave space for one "
+                f"more, half-empty ones do not.")
     if (row.get("lift") or 0) <= -STRONGER:
         return "Test demand before committing, with a pop-up, a market stall or pre-orders: locals rank it lower here."
     if row["nearby_count"] >= 8:
-        return "Visit the competitors inside the walk at their busy hours and note what all of them miss: that is the opening."
+        return (f"Visit the competitors inside the {noun} at their busy hours and note what all of them miss: that is the "
+                f"opening.")
     if row.get("favorites_kind") != "local":
         return ("Count passers-by at the door on a weekday and a weekend: the case rests on the ranking and the supply "
                 "count, not on trips locals are known to make.")
@@ -457,9 +604,9 @@ def alternatives(run: RunState, concept: dict, row: dict | None) -> dict | None:
         items.append(item)
     return {
         "items": items,
-        "basis": "The site's gap table, 0 to 100, by gap score: demand against six same-size areas around, supply "
-                 "against what a block this dense holds, and the trips locals make; the unit and your notes decide what "
-                 "fits. Categories the agent tested live are scored on the same scale.",
+        "basis": "The site's gap table, 0 to 100, by gap score: demand against same-size areas around, supply "
+                 f"against what a block this dense holds, and the trips {people_here(run.site.ages)} make; the unit and "
+                 "your notes decide what fits. Categories the agent tested live are scored on the same scale.",
     }
 
 
@@ -470,8 +617,8 @@ def why_line(run: RunState, row: dict) -> str:
     if not fit.get("fits", True):
         return f"The unit cannot host it: it {fit['reason']}."
     if row.get("evidence") in ("thin", "atypical"):
-        return gap_evidence(row, run.site.minutes)[-1]
-    return one_liner(row, run.site.minutes)
+        return gap_evidence(row, run.site.area, run.site.ages)[-1]
+    return one_liner(row, run.site.area, run.site.ages)
 
 
 def why_not(run: RunState, concept: dict, row: dict) -> str:
@@ -501,7 +648,7 @@ def why_not(run: RunState, concept: dict, row: dict) -> str:
 # ---------- Competition ----------
 
 def competition(run: RunState, row: dict) -> dict | None:
-    """Every place of the kind inside the walk, what its reviews hold against it, and the promises that answer that."""
+    """Every place of the kind inside the area, what its reviews hold against it, and the promises that answer that."""
     site = (run.site.lat, run.site.lon)
     entities = row.get("_nearby_entities")
     if entities is None:  # a row without its places: only the cards' complaint labels are known, not their counts
@@ -527,14 +674,13 @@ def competition(run: RunState, row: dict) -> dict | None:
         {**theme, "promise": launch.PROMISES[key], "move": COMPLAINT_MOVES.get(key)}
         for theme in ordered if (key := theme["theme"][:1].upper() + theme["theme"][1:]) in launch.PROMISES
     ][:3]
-    minutes = run.site.minutes
     out = {
         "places": rivals,
         "count": row["nearby_count"],
         "capped": bool(row.get("nearby_capped")),
         "themes": ordered,
-        "basis": f"Every place of this kind Qloo lists inside the {minutes}-minute walk, the main ones first; ratings and "
-                 f"price levels from their Qloo records. Complaints are their review keywords grouped into themes; "
+        "basis": f"Every place of this kind Qloo lists inside the {run.site.area}, the main ones first; ratings from "
+                 f"their Qloo records. Complaints are their review keywords grouped into themes; "
                  f"mentions are how often reviews use those keywords.",
     }
     if answers:
@@ -553,7 +699,6 @@ def rival(card: dict, complaints: list[dict] | None, main: bool) -> dict:
         listed = [{"theme": g["label"], "mentions": g["mentions"], "keywords": g["keywords"][:3]} for g in complaints]
     return {
         "name": card["name"], "url": card.get("url"), "link": card.get("link"), "rating": card.get("rating"),
-        "price_level": card.get("price_level"), "price": price_label(card.get("price_level")),
         "known_for": card.get("known_for") or [], "complaints": listed, "distance_m": card.get("distance_m"), "main": main,
     }
 
@@ -561,7 +706,7 @@ def rival(card: dict, complaints: list[dict] | None, main: bool) -> dict:
 # ---------- Where customers go now ----------
 
 def travel(run: RunState, row: dict) -> dict | None:
-    """The places locals love outside the walk. Only places they love more than the city does count: the city's famous
+    """The places locals love outside the area. Only places they love more than the city does count: the city's famous
     places are everyone's favorites and say nothing about trips."""
     if row.get("favorites_kind") != "local":
         return None
@@ -574,24 +719,26 @@ def travel(run: RunState, row: dict) -> dict | None:
             meters = distance_m(run.site.lat, run.site.lon, card["lat"], card["lon"])
         places.append({
             "name": card["name"], "url": card.get("url"), "link": card.get("link"),
-            "km": round(meters / 1000, 1) if meters is not None else None, "price": price_label(card.get("price_level")),
+            "km": round(meters / 1000, 1) if meters is not None else None,
             "known_for": (card.get("known_for") or [])[:3],
         })
     if not places:
         return None
     km = row.get("median_far_km")
-    median = f"; the median is over the {row['favorites_far']} outside the walk" if km is not None else ""
+    noun = area_noun(run.site.area)
+    median = f"; the median is over the {row['favorites_far']} outside the {noun}" if km is not None else ""
     return {
         "places": places, "outside": row["favorites_far"], "of": row["favorites_total"], "median_km": km,
-        "basis": f"Places of this kind that people inside the walk love more than the city does (Qloo), outside the walk, "
-                 f"with their straight-line distance from the site{median}. Hotels and malls are left out.",
+        "basis": f"Places of this kind that people{aged(run.site.ages)} inside the {noun} love more than the city does "
+                 f"(Qloo), outside the {noun}, with their straight-line distance from the site{median}. Hotels and malls "
+                 f"are left out.",
     }
 
 
-# ---------- Offer and prices ----------
+# ---------- Offer ----------
 
-def offer(run: RunState, design: dict, row: dict, level: int | None) -> dict | None:
-    """What to sell, from what the places locals love are known for, and what to charge, from what they charge."""
+def offer(run: RunState, design: dict, row: dict) -> dict | None:
+    """What to sell, from what the places locals love are known for."""
     loved = len(example_places(row))
     items = [{"item": i["item"], "places": i["places"], "of": loved, "new_here": i["new_here"]}
              for i in offer_items(row, run.constraints, limit=8)]
@@ -603,66 +750,34 @@ def offer(run: RunState, design: dict, row: dict, level: int | None) -> dict | N
         match = known.get(scoring.item_key(name))
         sheet.append({"item": name, "places": match["places"] if match else None,
                       "new_here": match["new_here"] if match else None})
-    price = row.get("price") or price_evidence(row, run.constraints)
-    ladder = [{"level": step["level"], "label": dollars(step["level"]), "loved": step["loved"], "inside": step["inside"]}
-              for step in price.get("ladder") or []]
-    anchors = design.get("price_anchors") if "price_anchors" in design else price.get("anchors")
-    if not items and not sheet and not level and not any(s["loved"] or s["inside"] for s in ladder):
+    if not items and not sheet:
         return None
     return {
         "items": items,
         "sheet": sheet,
-        "price": {
-            "level": level, "label": dollars(level) or None, "basis": design.get("price_basis") or price["basis"],
-            "ladder": ladder, "open_note": price.get("open_note"), "anchors": anchors or [],
-        },
         "basis": f"What the {loved} {plural(row['genre'])} locals love are known for (Qloo tags and review keywords), "
-                 f"each marked new when no place inside the walk is known for it; the sheet's offer is matched against "
-                 f"them. {NO_AMOUNTS} Anchors link real places' own menus or websites.",
+                 f"each marked new when no place inside the {area_noun(run.site.area)} is known for it; the sheet's offer "
+                 f"is matched against them.",
     }
 
 
 # ---------- The room ----------
 
 def room(design: dict) -> dict | None:
-    """The room as the design sheet draws it. Its interior is a model's words, so any line of it that states a number
-    is left out (as tagline_of leaves out a tagline): only the computed capacity estimate counts guests."""
+    """The unit, what it holds and when to open: the owner's own figures, the building code's estimate and the hours the
+    places locals love keep. A sheet saved before the cuts may still carry an interior or design DNA; neither is shown."""
     out: dict = {}
-    interior = design.get("interior")
-    if isinstance(interior, dict):
-        kept = {key: value for key, value in ((key, unnumbered(value, design.get("capacity"))) for key, value in interior.items()) if value}
-        if kept:
-            out["interior"] = kept
     if design.get("unit"):
         out["unit"] = design["unit"]
     if design.get("capacity"):
         out["capacity"], out["capacity_basis"] = design["capacity"], design.get("capacity_basis") or CAPACITY_BASIS
     if design.get("hours"):
         out["hours"], out["hours_basis"] = design["hours"], design.get("hours_basis")
-    dna = {key: value for key, value in (design.get("dna") or {}).items() if value and key != "typical_price_level"}
-    if dna:
-        out["dna"] = dna
     if not out:
         return None
-    out["basis"] = ("The interior is the design sheet's, drawn from the design DNA: the decor, ambience, amenity and "
-                    "menu tags most common among the places locals love; a line of it stating a number is left out. Hours "
-                    "are those places' median hours; capacity is a building-code planning estimate.")
+    out["basis"] = ("The unit as you described it; capacity is a building-code planning estimate; hours are the median "
+                    "hours of the places locals love of this kind.")
     return out
-
-
-def unnumbered(value: object, computed: object = None) -> object:
-    """A sheet's words with every line that states a number left out (None for a line, the rest of a list); the
-    `computed` text, the capacity estimate, is not the model's and may stand in a line."""
-    if isinstance(value, list):
-        return [item for item in value if unnumbered(item, computed)]
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int | float):
-        return None
-    if isinstance(value, str):
-        rest = value.replace(computed, " ") if isinstance(computed, str) and computed else value
-        return value if not re.search(r"\d", rest) else None
-    return value
 
 
 # ---------- The experience ----------
@@ -708,10 +823,10 @@ def launch_section(concept: dict, design: dict, copy: dict | None) -> dict | Non
 
 # ---------- The first 90 days ----------
 
-# The walk first, then the city, then the people who now travel elsewhere for it.
+# The area first, then the city, then the people who now travel elsewhere for it; {area} is the survey's ('walk').
 CHANNEL_STEPS = (
-    ("Nextdoor", "Opening week", "Nextdoor, for the neighborhoods of the walk"),
-    ("Meta or Google local ads", "Opening week", "A radius ad that covers the walk"),
+    ("Nextdoor", "Opening week", "Nextdoor, for the neighborhoods of the {area}"),
+    ("Meta or Google local ads", "Opening week", "A radius ad that covers the {area}"),
     ("Spotify Ads", "Weeks 2–4", "Spotify, for awareness across the city"),
     ("Google Ads custom segment", "Weeks 2–4", "The Google segment, for people who now travel to places like it"),
 )
@@ -721,11 +836,10 @@ def step(when: str, do: str, basis: str) -> dict:
     return {"when": when, "do": do, "basis": basis}
 
 
-def first_90_days(
-    run: RunState, concept: dict, design: dict, row: dict | None, name: str, level: int | None,
-) -> dict | None:
+def first_90_days(run: RunState, concept: dict, design: dict, row: dict | None, name: str) -> dict | None:
     """Steps keyed to the evidence; a step whose evidence is missing is left out."""
-    minutes = run.site.minutes
+    area = run.site.area
+    noun = area_noun(area)
     plan = design.get("launch") if isinstance(design.get("launch"), dict) else {}
     claims, _ = usable_claims(concept, design)
     when = plan.get("when") or {}
@@ -733,9 +847,11 @@ def first_90_days(
     steps = []
     checked = [c for c in claims if c["kind"] in ("only", "new")]
     if checked:
+        # A walk is walked; a drive or a road distance is too big to walk, so it is checked on maps and on the ground.
+        recheck = f"Walk the {area}" if is_walk(area) else f"Check the {area} on maps and on the ground"
         steps.append(step(
             "Before signing",
-            f"Walk the {minutes}-minute walk and re-check what the ads will claim: "
+            f"{recheck} and re-check what the ads will claim: "
             + "; ".join(f'"{c["line"]}"' for c in checked) + ".",
             f"True of the places Qloo knows as of {evidence_date(run)}; a place may have opened since. "
             + " ".join(c["proof"] for c in checked),
@@ -745,13 +861,6 @@ def first_90_days(
         "Before signing", f"Count passers-by at the door on a weekday and on a weekend{busy}.",
         "Qloo measures taste, not foot traffic: nothing in this dossier counts people walking past.",
     ))
-    anchors = [a for a in design.get("price_anchors") or [] if a.get("name")]
-    if level and anchors:
-        steps.append(step(
-            "Before opening",
-            f"Set prices at {dollars(level)} after reading the menus of {scoring.natural_list([a['name'] for a in anchors])}.",
-            f"{design.get('price_basis') or ''} {NO_AMOUNTS}".strip(),
-        ))
     promise = next((c for c in claims if c["kind"] == "promise"), None)
     if promise:
         steps.append(step("Before opening", f"Build the service to keep the promise the ads make: {promise['line']}.",
@@ -775,7 +884,7 @@ def first_90_days(
     for channel, period, label in CHANNEL_STEPS:
         found = channels.get(channel)
         if found:
-            steps.append(step(period, f"{label}: {scoring.inline_label(found['setting'])}", found["why"]))
+            steps.append(step(period, f"{label.format(area=noun)}: {scoring.inline_label(found['setting'])}", found["why"]))
     if channels:
         tag = campaign(str(concept.get("name") or name), concept["genre"])
         steps.append(step(
@@ -786,8 +895,8 @@ def first_90_days(
         ))
     if row:
         steps.append(step(
-            "Day 60", "Run Walk-in again on the same pin and walk to see whether the gap closed.",
-            f"Today: {supply_number(row, minutes)['value']}; gap score {row['gap_score']} of 100.",
+            "Day 60", f"Run Walk-in again on the same pin and {noun} to see whether the gap closed.",
+            f"Today: {supply_number(run, row)['value']}; gap score {row['gap_score']} of 100.",
         ))
     return {"steps": steps, "basis": "Each step answers something this survey measured, or could not measure."}
 
@@ -802,7 +911,7 @@ def question(ask: str, basis: str) -> dict:
     return {"ask": ask, "basis": basis}
 
 
-def before_you_sign(run: RunState, concept: dict, design: dict, row: dict | None, level: int | None) -> dict:
+def before_you_sign(run: RunState, concept: dict, design: dict, row: dict | None) -> dict:
     """Questions for the landlord from what the business needs against the unit, and the checks the risks call for."""
     site = run.site
     genre = row["genre"] if row else concept["genre"]
@@ -867,7 +976,8 @@ def before_you_sign(run: RunState, concept: dict, design: dict, row: dict | None
                        "check": "Test demand before you sign, with a pop-up, a market stall or pre-orders.",
                        "basis": UNTESTED_BASIS})
     if row:
-        checks.append({"risk": concept_risk(run, row, level), "check": risk_check(run, row, level), "basis": RISK_BASIS})
+        checks.append({"risk": risk(row, run.site.area, run.site.ages), "check": risk_check(row, run.site.area),
+                       "basis": RISK_BASIS})
     if checks:
         out["checks"] = checks
     return out
@@ -883,35 +993,62 @@ LIMITS = (
 )
 
 
+def limits(run: RunState) -> list[str]:
+    """LIMITS for this survey: beside a drive or a road distance, the straight lines are not routes by road either."""
+    if is_walk(run.site.area):
+        return list(LIMITS)
+    return [line.replace("not walking routes", "not routes by road") for line in LIMITS]
+
+
+def area_method(run: RunState) -> dict | None:
+    """How the area was drawn: over the street network on foot or by car, or within a road distance; a circle by the
+    travel mode's rule when street routing was unavailable."""
+    site, catchment = run.site, run.catchment
+    if not catchment:
+        return None
+    topic = f"The {area_noun(site.area)}"
+    if catchment.source == "circle":
+        return {"topic": topic, "how": f"A circle of {circle_size(run)} around the pin ({circle_rule(run)}), because "
+                                       f"street routing was unavailable."}
+    far = launch.walk_reach_m(run)
+    if is_walk(site.area):
+        return {"topic": topic, "how": (
+            f"The area reachable in {site.minutes} minutes on foot over the street network (Valhalla on OpenStreetMap "
+            f"data), so rivers, parks and highways cut it: {catchment.area_m2 / 1e6:.2f} km², reaching {far} m at its "
+            f"farthest point."
+        )}
+    reach = site.reach
+    trip = f"within {reach.km:g} km by road" if reach.travel == "distance" else f"reachable in {site.minutes} minutes by car"
+    farthest = f"{far} m" if far is None or far < 1000 else f"{far / 1000:.1f} km"
+    return {"topic": topic, "how": (
+        f"The area {trip} over the street network (Valhalla on OpenStreetMap data), so rivers and the sea cut it where "
+        f"no bridge crosses: {catchment.area_m2 / 1e6:.2f} km², reaching {farthest} at its farthest point."
+    )}
+
+
 def method(run: RunState, design: dict) -> dict:
     """How each number is computed, how fresh the data is and where it stops."""
-    minutes, catchment = run.site.minutes, run.catchment
-    items = []
-    if catchment and catchment.source == "circle":
-        items.append({"topic": "The walk", "how": f"A circle of {minutes * WALK_M_PER_MIN} m around the pin ({WALK_M_PER_MIN} m "
-                                                  f"per minute), because street routing was unavailable."})
-    elif catchment:
-        reach = launch.walk_reach_m(run)
-        items.append({"topic": "The walk", "how": (
-            f"The area reachable in {minutes} minutes on foot over the street network (Valhalla on OpenStreetMap data), "
-            f"so rivers, parks and highways cut it: {catchment.area_m2 / 1e6:.2f} km², reaching {reach} m at its "
-            f"farthest point."
-        )})
+    area, ages = run.site.area, run.site.ages
+    noun, people = area_noun(area), f"people{aged(ages)}"
+    km = comparison_km(run)
+    metro = round(engine.metro_m(run.catchment) / 1000) if run.catchment else round(engine.METRO_M / 1000)
+    drawn = area_method(run)
+    items = [drawn] if drawn else []
     items += [
-        {"topic": "Demand", "how": "Qloo ranks the place types people inside the walk engage with. The same ranking for six "
-                                   "same-size areas a few kilometres away gives a median rank to compare with: comparing a "
-                                   "neighborhood with a whole city is biased by scale."},
-        {"topic": "Supply", "how": "Places of the type inside the walk, against the count in a circle twice the walk's "
-                                   "radius scaled to the walk's area, then set against this site's median across categories "
-                                   "so parks and rivers around do not bias every category."},
-        {"topic": "Pull", "how": "Places of the type that people inside the walk love more than the city does: Qloo ranks "
-                                 "places for the walk and for a 20 km circle, and the shared favorites are set aside; locals' "
-                                 "favorites count as their own only when at least four remain. Distances are medians."},
+        {"topic": "Demand", "how": f"Qloo ranks the place types {people} inside the {noun} engage with. The same ranking "
+                                   f"for six same-size areas {f'about {km} km' if km else 'a few kilometres'} away gives a "
+                                   f"median rank to compare with: comparing a neighborhood with a whole city is biased by "
+                                   f"scale. An area where Qloo lists almost no place (open water, a rail yard) is moved "
+                                   f"nearer, farther or a little to the side, or left out."},
+        {"topic": "Supply", "how": f"Places of the type inside the {noun}, against {around_text(run)}, scaled to the "
+                                   f"{noun}'s area, then set against this site's median across categories so parks and "
+                                   f"rivers around do not bias every category."},
+        {"topic": "Pull", "how": f"Places of the type that {people} inside the {noun} love more than the city does: Qloo "
+                                 f"ranks places for the {noun} and for a {metro} km circle, and the shared favorites are set "
+                                 f"aside; locals' favorites count as their own only when at least four remain. Distances "
+                                 f"are medians."},
         {"topic": "Gap score", "how": "0 to 100, from demand, supply and pull, each discounted when the data is thin or "
                                       "atypical."},
-        {"topic": "Price levels", "how": "Qloo's levels, $ to $$$$. A concept's level follows the median level of the places "
-                                         "locals love of its type, within your notes' range; levels are never turned into "
-                                         "amounts."},
         {"topic": "Review themes", "how": "Qloo's review keywords grouped into themes, so one complaint written five ways "
                                           "counts once; mentions are how often reviews use the keywords, without polarity."},
         {"topic": "Hours", "how": "The median opening and closing hours, by day group, of the places locals love that list "
@@ -920,13 +1057,13 @@ def method(run: RunState, design: dict) -> dict:
     if design.get("capacity"):
         items.append({"topic": "Capacity", "how": design.get("capacity_basis") or CAPACITY_BASIS})
     if design.get("experience") or design.get("launch"):
-        items.append({"topic": "Taste and audiences", "how": TASTE_BASIS})
+        items.append({"topic": "Taste and audiences", "how": taste_basis(run)})
     return {
         "items": items,
-        "freshness": f"Surveyed on {evidence_date(run)}. The server keeps Qloo's answers in a cache without an expiry date, "
-                     f"so parts of this evidence may be older; Qloo has no opening dates, so a place that opened recently "
-                     f"may be missing.",
-        "limits": list(LIMITS) + (["Capacity is a planning estimate; the local code and the unit's certificate decide."]
-                                  if design.get("capacity") else []),
+        "freshness": f"Surveyed on {evidence_date(run)}. The server reuses Qloo's answers for up to a week, and an older "
+                     f"one only when Qloo cannot answer, so parts of this evidence may be a few days older; Qloo has no "
+                     f"opening dates, so a place that opened recently may be missing.",
+        "limits": limits(run) + (["Capacity is a planning estimate; the local code and the unit's certificate decide."]
+                                 if design.get("capacity") else []),
         "basis": "How each number in this dossier is computed.",
     }

@@ -34,11 +34,3 @@ services:
         value: "45"
       - key: GROQ_API_KEY
         sync: false
-      - key: IMAGE_PROVIDER
-        value: cloudflare,horde
-      - key: IMAGE_DAILY_LIMIT
-        value: "60"
-      - key: CLOUDFLARE_ACCOUNT_ID
-        sync: false
-      - key: CLOUDFLARE_API_TOKEN
-        sync: false

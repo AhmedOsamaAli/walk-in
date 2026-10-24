@@ -1,4 +1,5 @@
-"""The owner's rules are hard rules: a budget is the lowest price level, a unit without a hood gets nothing that needs one,
+"""The owner's rules are hard rules: nothing is described against the price band (a budget place is never premium), a unit
+without a hood gets nothing that needs one,
 a size is a fit every concept states, and every concept has a real name. The model is told the rules; the server checks
 its answer, repairs what it can once and drops the rest, saying why in the payload's notes."""
 from __future__ import annotations
@@ -8,11 +9,10 @@ import asyncio
 import pytest
 
 from app import scoring
-from app.llm import LLM
 from app.survey import concepts, constraints, design
-from app.survey.evidence import annotate, price_evidence
+from app.survey.evidence import annotate
 from app.survey.models import RunState, Site
-from tests.fakes import FakeImages, place, slug
+from tests.fakes import place, slug
 from tests.test_e2e import RUN_PARAMS, first, make_client, scripted_llm, sse_events, tool_call
 
 SITE = (40.7145, -73.9580)
@@ -79,17 +79,16 @@ def model_concept(name: str, genre: str, signature: list[str], one_liner: str = 
     return {"name": name, "genre": genre, "one_liner": one_liner, "signature": signature, **fields}
 
 
-# ---------- Budget ----------
+# ---------- Price bands ----------
 
 @pytest.mark.parametrize("notes", [
     "budget prices", "halal, family friendly, budget prices", "cheap eats", "affordable", "low prices", "low-cost",
     "keep prices low", "we are on a budget", "inexpensive", "wallet-friendly menu", "not too expensive",
     "good value for money", "budget-friendly",
 ])
-def test_any_plain_budget_phrasing_means_the_lowest_level(notes):
+def test_any_plain_budget_phrasing_is_the_budget_band(notes):
     rules = constraints.parse(notes)
-    assert rules.budget and rules.price == (1, 1) and "budget prices ($)" in rules.understood
-    assert rules.price_level(2) == 1 and rules.price_level(4) == 1
+    assert rules.budget and rules.price == "budget" and "budget prices" in rules.understood
 
 
 @pytest.mark.parametrize("notes", ["not cheap", "no budget limit, upscale", "premium cocktails"])
@@ -97,47 +96,51 @@ def test_a_negated_or_other_price_word_is_not_a_budget(notes):
     assert not constraints.parse(notes).budget
 
 
-def test_a_budget_concept_is_priced_below_the_block_and_says_so():
-    run = world("budget prices")
-    row = concepts.gap_for(run, "Coffee shop")
-    # The places people here love and the five inside the walk are $$: budget is $, below them, never $$.
-    assert concepts.grounded_price(run, row, 2)[0] == 1 and concepts.grounded_price(run, row, None)[0] == 1
-    price = row["price"]
-    assert price["level"] == 1 and price["budget"]["usual"] == 2 and price["budget"]["below"] is True
-    assert price["basis"].endswith(
-        "Budget, as your notes ask: $, below the block's usual $$ for coffee shops (the median of the 5 inside the walk)."
-    )
-    assert concepts.price_line(run, row, 1) == "Budget: $, below the block's usual $$ for coffee shops."
+@pytest.mark.parametrize(("notes", "band"), [("mid-range prices", "mid-range"), ("an upscale wine bar", "upscale")])
+def test_the_other_bands_are_read_in_words(notes, band):
+    rules = constraints.parse(notes)
+    assert rules.price == band and f"{band} prices" in rules.understood and "$" not in " ".join(rules.understood)
 
 
-def test_without_priced_places_of_its_kind_the_whole_block_sets_the_comparison():
-    run = world("budget")
-    row = concepts.gap_for(run, "Coffee shop")
-    for entity in row["_nearby_entities"]:
-        entity["properties"]["price_level"] = None
-    block = {"level": 3, "places": 12}
-    basis = price_evidence(row, run.constraints, block)["basis"]
-    assert basis.endswith("Budget, as your notes ask: $, below the block's usual $$$ (the median of the 12 places inside "
-                          "the walk that list a price).")
-    # When the block is $ already, budget is still $, and it says it competes on value instead.
-    cheap = price_evidence(row, run.constraints, {"level": 1, "places": 8})["budget"]
-    assert cheap["below"] is False and cheap["line"].startswith("Budget: $, the lowest level")
+def test_each_band_rules_out_the_words_that_contradict_it():
+    budget, mid, upscale = (constraints.parse(notes) for notes in ("budget", "mid-range", "upscale"))
+    assert budget.item_problem("Premium wagyu sando") == "calls a budget place upscale"
+    assert budget.item_problem("Cheap and cheerful") is None
+    assert upscale.item_problem("Bargain bites") == "calls an upscale place cheap"
+    assert upscale.item_problem("A fine dining tasting menu") is None
+    assert mid.item_problem("Luxury caviar") == "calls a mid-range place upscale"
+    assert mid.item_problem("Cheap eats") == "calls a mid-range place cheap"
+    assert constraints.parse("").item_problem("Premium wagyu sando") is None
 
 
-def test_the_model_cannot_price_a_budget_concept_at_two_dollars():
+def test_no_concept_carries_a_price_and_a_budget_one_says_how_it_keeps_the_band():
     run = world("budget prices")
     notes: list[str] = []
-    cleaned = concepts.clean_concepts(run, [model_concept("Ube & Oak", "Coffee shop", ["Ube latte"], price_level=2)], notes)
-    assert cleaned[0]["price_level"] == 1 and "Budget, as your notes ask: $" in cleaned[0]["price_basis"]
-    assert "Budget: $, below the block's usual $$ for coffee shops." in cleaned[0]["owner_rules"]
-    assert "Ube & Oak: priced $ for your budget, not $$." in notes
+    proposed = model_concept("Ube & Oak", "Coffee shop", ["Ube latte"], price_level=2)
+    cleaned = concepts.clean_concepts(run, [proposed], notes)[0]
+    assert not {"price_level", "price_basis", "price_anchors"} & set(cleaned)
+    assert concepts.PRICE_LINES["budget"] in cleaned["owner_rules"]
+    assert "$" not in str(cleaned) and not any("$" in note for note in notes)
     upscale = model_concept("Gilded Bean", "Coffee shop", ["Ube latte"], "An upscale espresso salon")
     assert concepts.clean_concepts(run, [upscale], notes)[0]["one_liner"] != "An upscale espresso salon"
+    assert any(note.startswith("Gilded Bean: its one-liner mentioned 'upscale'") for note in notes)
 
 
-def test_rule_concepts_are_budget_too():
+def test_premium_names_and_items_give_way_on_a_budget():
     run = world("budget prices")
-    assert all(c["price_level"] == 1 and "Budget" in c["price_basis"] for c in concepts.rule_concepts(run))
+    notes: list[str] = []
+    proposed = model_concept("Premium Pour", "Coffee shop", ["Premium pour-over", "Ube latte"])
+    cleaned = concepts.clean_concepts(run, [proposed], notes)[0]
+    assert cleaned["name"] != "Premium Pour" and "Premium pour-over" not in cleaned["signature"]
+    assert any(note.startswith("Premium Pour was renamed") for note in notes)
+
+
+def test_rule_concepts_carry_no_price_and_keep_the_band():
+    run = world("budget prices")
+    made = concepts.rule_concepts(run)
+    assert made and all(not {"price_level", "price_basis", "price_anchors"} & set(c) for c in made)
+    assert all(concepts.PRICE_LINES["budget"] in c["owner_rules"] for c in made)
+    assert "$" not in str(made)
 
 
 # ---------- No hood, no kitchen ----------
@@ -248,6 +251,25 @@ def test_a_one_liner_that_promises_what_the_rules_forbid_gives_way_to_the_eviden
                      "evidence's own line replaces it."]
 
 
+def test_filler_and_figures_the_evidence_does_not_give_yield_to_the_evidence():
+    run = world("")
+    evidence_line = concepts.one_liner(concepts.gap_for(run, "Coffee shop"), 10)
+
+    def positioned(line: str, notes: list[str] | None = None) -> str:
+        return concepts.clean_concepts(run, [model_concept("Bean & Bloom", "Coffee shop", ["Ube latte"], line)], notes)[0][
+            "one_liner"]
+
+    notes: list[str] = []
+    assert positioned("A cozy neighborhood haven for slow mornings", notes) == evidence_line
+    assert notes == ["Bean & Bloom: its one-liner leaned on 'cozy', which nothing measured backs; the evidence's own "
+                     "line replaces it."]
+    for line in ("Ube lattes, poured here since 1998", "Ube lattes for the 300 neighbors who walk past"):
+        assert positioned(line) == evidence_line, line
+    # Figures the evidence gives may stand: the trip people here make for the coffee shops they love.
+    trip = "Ube lattes, so people here stop crossing 2.5 km of town for the coffee shops they love"
+    assert positioned(trip) == trip
+
+
 def test_each_concept_states_its_hood_free_method():
     run = world("no extraction hood", kitchen="light")
     assert concepts.kitchen_line(run, "Coffee shop", ["Ube latte", "Orange olive oil muffin"]) == (
@@ -265,12 +287,12 @@ def test_each_concept_states_its_hood_free_method():
 
 
 def test_the_rules_are_stated_as_hard_rules_to_the_model():
-    for words in ("Hard rules", "price_level 1 ($)", "deep fryer", "pizza oven", "Breakfast, Zamalek", "people here"):
+    for words in ("Hard rules", "Price band", "deep fryer", "pizza oven", "Breakfast, Zamalek", "people here"):
         assert words in concepts.CONCEPT_SYSTEM, words
     assert "locals" not in concepts.CONCEPT_SYSTEM.replace('never "locals"', "")
-    assert "ventless oven" in design.DESIGN_SYSTEM and "price_level is 1" in design.DESIGN_SYSTEM
+    assert "price_level" not in concepts.CONCEPT_SYSTEM
     rules = constraints.parse("halal, family friendly, budget prices").as_evidence()
-    assert rules["budget"].startswith("price_level 1 ($) only") and rules["price_levels_allowed"] == [1]
+    assert rules["price"].startswith("budget: never describe it") and "$" not in str(rules)
 
 
 # ---------- Size ----------
@@ -385,7 +407,7 @@ def test_a_model_name_taken_by_a_place_with_a_category_word_is_replaced():
 
 def test_the_agents_concepts_are_repaired_or_dropped_and_the_payload_says_why():
     submit = [tool_call("c1", "submit_concepts", {"concepts": [
-        {"name": "Tide & Table", "genre": "Seafood", "one_liner": "Raw bar", "price_level": 3,
+        {"name": "Tide & Table", "genre": "Seafood", "one_liner": "A premium raw bar", "price_level": 3,
          "signature": ["Oysters", "Fried calamari"]},
         {"name": "Corner Pour", "genre": "Wine Bar", "one_liner": "Natural wine", "signature": ["Orange wine"]},
         {"name": "Breakfast, Test Corner", "genre": "Brunch", "one_liner": "Eggs all day", "signature": ["Croissant"]},
@@ -397,10 +419,11 @@ def test_the_agents_concepts_are_repaired_or_dropped_and_the_payload_says_why():
     payload = first(events, "concepts")
     assert payload["mode"] == "agent"
     ranked = [c for c in payload["concepts"] if not c.get("wildcard")]
-    assert "Wine Bar" not in [c["genre"] for c in ranked] and all(c["price_level"] == 1 for c in ranked)
+    assert "Wine Bar" not in [c["genre"] for c in ranked] and not any("price_level" in c for c in ranked)
     notes = payload["notes"]
     assert "Dropped Corner Pour (Wine Bar): your notes rule it out (it serves alcohol)." in notes
-    assert "Tide & Table: priced $ for your budget, not $$$." in notes
+    assert any(note.startswith("Tide & Table: its one-liner mentioned 'premium'") for note in notes)
+    assert not any("$" in note for note in notes)
     assert any(note.startswith("Breakfast, Test Corner was renamed ") for note in notes)
     assert "Dropped Ghost Kitchen: 'Not A Genre' is not a category the survey measured." in notes
     assert not any(c["name"] == "Breakfast, Test Corner" for c in payload["concepts"])
@@ -414,47 +437,35 @@ def test_a_submission_sent_as_a_json_string_is_read():
 
 # ---------- Design sheets ----------
 
-class DesignLLM:
-    """A model that writes a design sheet breaking every rule it can."""
-
-    enabled = True
-
-    def __init__(self, reply: dict) -> None:
-        self.reply = reply
-
-    async def complete_json(self, system: str, user: str):
-        return dict(self.reply), "test-model"
-
-
-def test_design_sheets_keep_the_rules_the_model_breaks():
+def test_a_design_sheet_is_the_concept_plus_the_evidence_and_keeps_the_rules():
     run = world("vegetarian, budget prices, no extraction hood", size_m2=45, kitchen="light")
     run.concepts = concepts.rule_concepts(run)
     index = next(i for i, c in enumerate(run.concepts) if c["genre"] == "Cocktail bar")
-    reply = {
-        "name": "Cocktail Bar, Williamsburg", "tagline": "Premium small plates and an upscale cocktail list",
-        "interior": {"mood": "moody", "materials": ["brass"], "lighting": "low", "seating": "stools",
-                     "layout": "Open kitchen with a wood-fired oven behind the bar"},
-        "offer": ["Banana espresso martini", "Truffle pizza", "Crispy potatoes", "Grilled octopus"], "price_level": 3,
-        "music": {}, "partners": [], "image_prompt": "A bar with a glowing wood-fired pizza oven and a range hood",
-    }
-    sheet = asyncio.run(design.design_concept(DesignLLM(reply), FakeImages(enabled=False), run, index))
-    assert sheet["name"] == run.concepts[index]["name"]
-    assert sheet["offer"][:2] == ["Banana espresso martini", "Deviled eggs"] and "Truffle pizza" not in sheet["offer"]
-    assert sheet["price_level"] == 1 and "Budget, as your notes ask: $" in sheet["price_basis"]
-    assert sheet["tagline"] == run.concepts[index]["one_liner"]
-    assert sheet["interior"]["layout"] == (
-        "Long bar along one wall, low tables by the window; behind the counter, a compact ventless oven and a cold-prep "
-        "counter"
-    )
-    assert "wood-fired" not in sheet["shots"][0]["prompt"] and "compact ventless oven" in sheet["shots"][0]["prompt"]
+    concept = run.concepts[index]
+    sheet = asyncio.run(design.design_concept(run, index))
+    # The card and the sheet never disagree: the same name, the one-liner as the tagline, the signature first.
+    assert (sheet["name"], sheet["tagline"]) == (concept["name"], concept["one_liner"])
+    assert sheet["offer"][:len(concept["signature"])] == concept["signature"]
+    assert sheet["offer"][:2] == ["Banana espresso martini", "Deviled eggs"] and len(sheet["offer"]) <= design.OFFER_SIZE
+    assert all(run.constraints.allows_item(item) for item in sheet["offer"])  # no fried potatoes, no octopus
     assert sheet["owner_rules"][0] == "Fits 45 m² (484 ft²): a bar counter and about 20–24 seats at most."
-    assert any(note.startswith("Took out of the offer Truffle pizza") for note in sheet["notes"])
+    assert concepts.PRICE_LINES["budget"] in sheet["owner_rules"]
+    # Nothing a search or a chatbot could write instead: no decor, mood, renders, partners, prices or design DNA.
+    cut = {"interior", "concept_statement", "mood", "shots", "renders", "partners", "music", "dna", "image_prompt",
+           "facade_prompt", "price_level", "price_basis", "price_anchors"}
+    assert not cut & set(sheet)
 
 
-def test_a_rules_made_sheet_for_a_unit_without_a_hood_has_no_cooking_line():
+def test_a_sheet_for_a_unit_without_a_hood_offers_nothing_that_needs_one():
     run = world("no hood", size_m2=45)
     run.concepts = concepts.rule_concepts(run)
-    sheet = asyncio.run(design.design_concept(LLM("", None, "test-model"), FakeImages(enabled=False), run, 0))
-    assert sheet["interior"]["layout"].endswith("behind the counter, a compact ventless oven and a cold-prep counter")
-    assert all(constraints.parse("no hood").allows_item(item) for item in sheet["offer"])
-    assert design.shows_hood_fixtures("An open grill and a fryer") and not design.shows_hood_fixtures("no hood, no grill")
+    sheet = asyncio.run(design.design_concept(run, 0))
+    assert sheet["offer"] and all(constraints.parse("no hood").allows_item(item) for item in sheet["offer"])
+    assert any(line.startswith(("No hood needed", "Needs no hood")) for line in sheet["owner_rules"])
+
+
+def test_the_business_name_and_the_site_are_its_own_words_in_a_one_liner():
+    run = world("", label="New Haven, Connecticut")
+    line = "Route 66 Coffee: ube lattes for New Haven, where people here travel 2.5 km for coffee"
+    cleaned = concepts.clean_concepts(run, [model_concept("Route 66 Coffee", "Coffee shop", ["Ube latte"], line)], [])
+    assert cleaned[0]["one_liner"] == line  # '66' is the name's, 'Haven' the city's, 2.5 km the evidence's

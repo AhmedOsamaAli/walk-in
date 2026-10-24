@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from ..catchment import Catchment
+from ..catchment import Catchment, Reach
 from .constraints import Constraints
 
 Emit = Callable[[str, dict], Awaitable[None]]
@@ -31,6 +31,20 @@ class Site:
     intent: str = "explore"
     business: str = ""
     place_id: str = ""
+    # How far customers come from: a walk or a drive of `minutes`, or a road distance of `km` (catchment.Reach).
+    travel: str = "walk"
+    km: float | None = None
+    # Who the owner wants to serve (demographics.AGES): "all", or an age band Qloo's rankings lean toward.
+    ages: str = "all"
+
+    @property
+    def reach(self) -> Reach:
+        return Reach(self.travel, self.minutes, self.km)
+
+    @property
+    def area(self) -> str:
+        """The area in a sentence: '10-minute walk', '30-minute drive', '25 km drive'."""
+        return self.reach.label
 
 
 @dataclass
@@ -53,8 +67,6 @@ class RunState:
     improve: dict | None = None
     concepts: list[dict] = field(default_factory=list)
     designs: dict[int, dict] = field(default_factory=dict)
-    renders: dict[tuple[int, str], asyncio.Future] = field(default_factory=dict)  # (concept, shot) -> render
-    queued: set[tuple[int, str]] = field(default_factory=set)  # shots whose render is still waiting in a free queue
     created_at: float = field(default_factory=time.time)
 
 

@@ -1,7 +1,6 @@
 """A run's state as JSON and back, so a finished survey outlives the process that ran it.
 
-A restored run can be designed and rendered like the original. Renders in progress (asyncio futures) and the render
-queue belong to the process and are left out; renders themselves are cached on disk (app.answers).
+A restored run can be designed and given a launch kit like the original.
 """
 from __future__ import annotations
 
@@ -13,12 +12,10 @@ from ..db import SurveyStore
 from .constraints import Constraints
 from .models import RunState, Site
 
-LIVE_ONLY = {"renders", "queued"}
-
 
 def dump_run(run: RunState) -> dict:
     """The run as JSON-safe data: dataclasses become objects, tuples and sets lists, design sheets keyed by text."""
-    data = {f.name: plain(getattr(run, f.name)) for f in fields(run) if f.name not in LIVE_ONLY}
+    data = {f.name: plain(getattr(run, f.name)) for f in fields(run)}
     data["designs"] = {str(index): plain(sheet) for index, sheet in run.designs.items()}
     return data
 
@@ -30,12 +27,17 @@ def load_run(data: dict) -> RunState:
     values = known(RunState, data)
     values["site"] = Site(**known(Site, data["site"]))
     constraints = known(Constraints, data.get("constraints") or {})
-    if constraints.get("price"):
-        constraints["price"] = tuple(constraints["price"])
+    if isinstance(constraints.get("price"), list | tuple):
+        # Older snapshots kept the band as the Qloo price levels it allowed: [1, 1], [2, 2] or [3, 4].
+        constraints["price"] = {1: "budget", 2: "mid-range"}.get(constraints["price"][0], "upscale")
     values["constraints"] = Constraints(**constraints)
     if data.get("catchment"):
         catchment = known(Catchment, data["catchment"])
-        values["catchment"] = Catchment(**{**catchment, "ring": [tuple(point) for point in catchment["ring"]]})
+        around = catchment.get("around")
+        values["catchment"] = Catchment(**{
+            **catchment, "ring": [tuple(point) for point in catchment["ring"]],
+            "around": [tuple(point) for point in around] if around else None,
+        })
     values["designs"] = {int(index): sheet for index, sheet in (data.get("designs") or {}).items()}
     return RunState(**values)
 
@@ -67,6 +69,6 @@ def plain(value: Any) -> Any:
 
 
 def known(cls: type, data: dict) -> dict:
-    """The entries of `data` that are fields of the dataclass `cls`, minus the live-only ones."""
-    names = {f.name for f in fields(cls) if f.init} - LIVE_ONLY
+    """The entries of `data` that are fields of the dataclass `cls`; anything an older version saved is left out."""
+    names = {f.name for f in fields(cls) if f.init}
     return {name: value for name, value in data.items() if name in names}

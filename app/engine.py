@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import re
 from collections.abc import Awaitable
 
 from . import osm, scoring
 from .catchment import Catchment
+from .demographics import age_signal
 from .geo import distance_m, point_wkt
 from .qloo import QlooClient, QlooError
 
@@ -31,7 +33,33 @@ TASTE_DOMAINS = {
 
 
 def around_radius(catchment: Catchment) -> int:
+    """The fallback around area when routing failed: a circle twice the walk's radius."""
     return max(MIN_AROUND_M, round(2 * catchment.radius_m))
+
+
+# A drive or a long road distance can be wider than the walk-sized defaults: the favorites, the city's favorites and the
+# taste neighborhood grow with the area, so the places people travel to still lie beyond it.
+def favorites_m(catchment: Catchment) -> int:
+    return max(FAVORITES_M, round(2.5 * catchment.radius_m))
+
+
+def metro_m(catchment: Catchment) -> int:
+    return max(METRO_M, round(3 * catchment.radius_m))
+
+
+def taste_m(catchment: Catchment) -> int:
+    return max(TASTE_M, round(catchment.radius_m))
+
+
+def around_filter(catchment: Catchment) -> dict:
+    """Where supply is compared: the area a walk twice as long reaches over the streets, or the fallback circle."""
+    if catchment.around:
+        return {"filter.location": catchment.around_wkt, "filter.location.radius": 0}
+    return circle_filter(catchment.lat, catchment.lon, around_radius(catchment))
+
+
+def around_area_m2(catchment: Catchment) -> float:
+    return catchment.around_area_m2 or math.pi * around_radius(catchment) ** 2
 
 
 def offset_point(lat: float, lon: float, distance_m: float, bearing_deg: float) -> tuple[float, float]:
@@ -41,9 +69,49 @@ def offset_point(lat: float, lon: float, distance_m: float, bearing_deg: float) 
 
 
 def reference_points(lat: float, lon: float, radius_m: float, bearings=REF_BEARINGS) -> list[tuple[float, float]]:
-    """Same-size comparison areas a few kilometres away, used instead of the whole city to avoid scale bias."""
-    distance = max(2500.0, 3.5 * radius_m)
+    """Same-size comparison areas a few kilometres away, used instead of the whole city to avoid scale bias; before
+    use, each is checked for land (land_centres)."""
+    distance = reference_distance(radius_m)
     return [offset_point(lat, lon, distance, bearing) for bearing in bearings]
+
+
+# A comparison area where Qloo lists fewer places than this is open water, a rail yard or an airfield, not a neighborhood.
+MIN_REF_PLACES = 3
+# Where to look instead, in order: nearer and farther along the bearing, then turned a little either way.
+REF_ALTERNATIVES = ((0.7, 0), (1.4, 0), (1.0, 30), (1.0, -30), (0.7, 30), (0.7, -30))
+
+
+async def populated(q: QlooClient, point: tuple[float, float], radius: float) -> bool:
+    places = await places_in(q, circle_filter(*point, round(radius)), take=MIN_REF_PLACES, include_closed=True)
+    return len(places) >= MIN_REF_PLACES
+
+
+async def land_centres(
+    q: QlooClient, lat: float, lon: float, radius_m: float, distance_m: float, bearings,
+) -> list[tuple[float, float]]:
+    """The comparison centres: each bearing's point when Qloo lists places around it, otherwise the first alternative
+    nearer, farther or a little to either side that has some; a bearing with none (open sea) is left out, and an
+    alternative within a radius of another centre is kept once."""
+    async def centre(bearing: float) -> tuple[float, float] | None:
+        for factor, turn in ((1.0, 0), *REF_ALTERNATIVES):
+            point = offset_point(lat, lon, distance_m * factor, bearing + turn)
+            if await populated(q, point, radius_m):
+                return point
+        return None
+
+    kept: list[tuple[float, float]] = []
+    for point in await asyncio.gather(*(centre(bearing) for bearing in bearings)):
+        if point and all(distance_m_between(point, other) >= radius_m for other in kept):
+            kept.append(point)
+    return kept
+
+
+def reference_distance(radius_m: float) -> float:
+    return max(2500.0, 3.5 * radius_m)
+
+
+def distance_m_between(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return distance_m(a[0], a[1], b[0], b[1])
 
 
 async def places_in(
@@ -117,14 +185,21 @@ async def _genre_ranking(q: QlooClient, signal: dict) -> list[dict]:
     return [tag for tag in scoring.tags(data) if tag.get("name") and scoring.item_id(tag)]
 
 
-async def demand_genres(q: QlooClient, catchment: Catchment) -> tuple[list[dict], list[str]]:
-    """Place genres the people in the catchment engage with, ranked here and in same-size areas around."""
+async def demand_genres(q: QlooClient, catchment: Catchment, ages: str = "all") -> tuple[list[dict], list[str]]:
+    """Place genres the people in the catchment engage with, ranked here and in same-size areas around (on land).
+
+    With an age focus, every ranking leans toward that age group (Qloo's demographic signal), here and around alike.
+    """
     radius = max(300, round(catchment.radius_m))
+    centres = await land_centres(
+        q, catchment.lat, catchment.lon, radius, reference_distance(catchment.radius_m), REF_BEARINGS,
+    )
+    focus = age_signal(ages)
     local, *references = await asyncio.gather(
-        _genre_ranking(q, {"signal.location": catchment.wkt}),
+        _genre_ranking(q, {"signal.location": catchment.wkt, **focus}),
         *(
-            _genre_ranking(q, {"signal.location": point_wkt(lat, lon), "signal.location.radius": radius})
-            for lat, lon in reference_points(catchment.lat, catchment.lon, catchment.radius_m)
+            _genre_ranking(q, {"signal.location": point_wkt(lat, lon), "signal.location.radius": radius, **focus})
+            for lat, lon in centres
         ),
     )
     reference_ranks = []
@@ -145,6 +220,8 @@ async def demand_genres(q: QlooClient, catchment: Catchment) -> tuple[list[dict]
             scoring.reference_rank([ranks.get(genre["id"]) for ranks in reference_ranks])
             if len(reference_ranks) >= 3 else None
         )
+        # How many comparison areas the median is over: fewer than six when some fell in open water.
+        genre["ref_areas"] = len(reference_ranks) if genre["ref_rank"] is not None else 0
     return business, cues[:6]
 
 
@@ -159,16 +236,18 @@ def near(entities: list[dict], lat: float, lon: float, limit_m: float = 1.5 * FA
     return out
 
 
-async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> dict:
+async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict, ages: str = "all") -> dict:
     lat, lon = catchment.lat, catchment.lon
-    favorites_area = circle_filter(lat, lon, FAVORITES_M)
+    reach = favorites_m(catchment)
+    favorites_area = circle_filter(lat, lon, reach)
+    focus = age_signal(ages)  # whose favorites: the owner's age focus, or everyone's
     inside, around, local_favorites, city_favorites = await asyncio.gather(
         places_found(q, walk_filter(catchment), genre["id"], NEARBY_LIMIT),
-        places_upto(q, circle_filter(lat, lon, around_radius(catchment)), genre["id"], AROUND_LIMIT),
-        places_in(q, {"signal.location": catchment.wkt, **favorites_area}, tag=genre["id"], take=20),
+        places_upto(q, around_filter(catchment), genre["id"], AROUND_LIMIT),
+        places_in(q, {"signal.location": catchment.wkt, **favorites_area, **focus}, tag=genre["id"], take=20),
         places_in(
             q,
-            {"signal.location": point_wkt(lat, lon), "signal.location.radius": METRO_M, **favorites_area},
+            {"signal.location": point_wkt(lat, lon), "signal.location.radius": metro_m(catchment), **favorites_area, **focus},
             tag=genre["id"],
             take=20,
         ),
@@ -177,8 +256,8 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
     # Hotels and malls among the favorites make the comparison atypical; places Qloo merely tags with the genre (a
     # museum with a bar for 'Cocktail bar') say nothing about it and are left out of the favorites.
     storefront = scoring.storefront_share(local_favorites[:10])
-    local_favorites = near(scoring.relevant(local_favorites, genre["id"], genre["name"]), lat, lon)
-    city_favorites = near(scoring.relevant(city_favorites, genre["id"], genre["name"]), lat, lon)
+    local_favorites = near(scoring.relevant(local_favorites, genre["id"], genre["name"]), lat, lon, 1.5 * reach)
+    city_favorites = near(scoring.relevant(city_favorites, genre["id"], genre["name"]), lat, lon, 1.5 * reach)
     kind, favorites = scoring.split_favorites(local_favorites, city_favorites)
     row = scoring.gap_signals(
         genre["id"], genre["name"], genre["rank"], genre.get("ref_rank"),
@@ -190,6 +269,7 @@ async def genre_evidence(q: QlooClient, catchment: Catchment, genre: dict) -> di
     nearby = scoring.best_examples(nearby, genre["id"], genre["name"])
     favorites = scoring.best_examples(favorites, genre["id"], genre["name"])
     row["competitors"] = [scoring.place_card(p, (lat, lon)) for p in nearby[:8]]
+    row["ref_areas"] = genre.get("ref_areas", 0)
     row["favorites"] = [
         {**scoring.place_card(p, (lat, lon)), "within_walk": bool(loc and catchment.contains(*loc))}
         for p, loc in ((p, scoring.place_location(p)) for p in favorites)
@@ -235,7 +315,7 @@ async def cross_check(q: QlooClient, rows: list[dict], check: osm.CrossCheck | N
 
 async def gap_table(
     q: QlooClient, catchment: Catchment, genres: list[dict], focus: str = "any",
-    checked: osm.CrossCheck | Awaitable[osm.CrossCheck] | None = None,
+    checked: osm.CrossCheck | Awaitable[osm.CrossCheck] | None = None, ages: str = "all",
 ) -> list[dict]:
     """Rank the neighborhood's top genres by how underserved they are within the walking catchment.
 
@@ -243,10 +323,9 @@ async def gap_table(
     only after Qloo's evidence is in, and applied before the rows are scored, so supply counts both maps.
     """
     candidates = [genre for genre in genres if scoring.matches_focus(genre["name"], focus)][:GAP_GENRES]
-    rows = list(await asyncio.gather(*(genre_evidence(q, catchment, genre) for genre in candidates)))
+    rows = list(await asyncio.gather(*(genre_evidence(q, catchment, genre, ages) for genre in candidates)))
     await cross_check(q, rows, await checked if inspect.isawaitable(checked) else checked)
-    around_area = math.pi * around_radius(catchment) ** 2
-    return scoring.score_gaps(rows, catchment.area_m2, around_area)
+    return scoring.score_gaps(rows, catchment.area_m2, around_area_m2(catchment))
 
 
 async def find_genre(q: QlooClient, ranked: list[dict], query: str) -> tuple[dict | None, str | None]:
@@ -301,26 +380,29 @@ def _normalize_genre(text: str) -> str:
     return text[:-1] if text.endswith("s") and not text.endswith("ss") else text
 
 
-async def probe_genre(q: QlooClient, catchment: Catchment, genre: dict, table: list[dict]) -> dict:
+async def probe_genre(q: QlooClient, catchment: Catchment, genre: dict, table: list[dict], ages: str = "all") -> dict:
     """Live evidence for one more genre, scored on the same supply baseline as the site's gap table and cross-checked
     with the survey's OpenStreetMap places (osm.current())."""
-    row = await genre_evidence(q, catchment, genre)
+    row = await genre_evidence(q, catchment, genre, ages)
     await cross_check(q, [row], osm.current())
-    around_area = math.pi * around_radius(catchment) ** 2
-    return scoring.score_gaps([row], catchment.area_m2, around_area, baseline_rows=table)[0]
+    return scoring.score_gaps([row], catchment.area_m2, around_area_m2(catchment), baseline_rows=table)[0]
 
 
-async def fan_taste(q: QlooClient, lat: float, lon: float, tag_id: str, take: int = 15) -> dict:
-    """Brands and artists that people who love a genre also love (Qloo cross-domain affinity, biased to the site).
+async def fan_taste(
+    q: QlooClient, lat: float, lon: float, tag_id: str, take: int = 15, ages: str = "all", radius: int = TASTE_M,
+) -> dict:
+    """Brands and artists that people who love a genre also love (Qloo cross-domain affinity, biased to the site and,
+    with an age focus, to that age group).
 
     Mostly the category's audience at large rather than locals: seafood lovers rank much the same in Brooklyn and Cairo.
     """
     signal = {
         "signal.interests.tags": tag_id,
         "signal.location": point_wkt(lat, lon),
-        "signal.location.radius": TASTE_M,
+        "signal.location.radius": radius,
         "filter.popularity.min": 0.1,
         "take": take,
+        **age_signal(ages),
     }
     brands, artists = await asyncio.gather(
         q.insights({"filter.type": "urn:entity:brand", **signal}),
@@ -335,26 +417,30 @@ async def fan_taste(q: QlooClient, lat: float, lon: float, tag_id: str, take: in
     }
 
 
-async def _ranked(q: QlooClient, entity_type: str, lat: float, lon: float, radius: int, take: int = 30) -> list[dict]:
+async def _ranked(
+    q: QlooClient, entity_type: str, lat: float, lon: float, radius: int, take: int = 30, ages: str = "all",
+) -> list[dict]:
     return scoring.entities(await q.insights({
         "filter.type": entity_type,
         "filter.popularity.min": 0.1,
         "signal.location": point_wkt(lat, lon),
         "signal.location.radius": radius,
         "take": take,
+        **age_signal(ages),
     }))
 
 
-async def local_taste(q: QlooClient, lat: float, lon: float) -> dict:
+async def local_taste(q: QlooClient, lat: float, lon: float, ages: str = "all", radius: int = TASTE_M) -> dict:
     """What the neighborhood loves and over-indexes on versus same-size areas around, across taste domains.
 
     Brands and artists keep their popular lists too (they show when Qloo ranks the categories' fans like everyone
-    else); for films, shows and podcasts only the distinctive ones are kept: popular ones are popular everywhere.
+    else); for films, shows and podcasts only the distinctive ones are kept: popular ones are popular everywhere. With
+    an age focus, here and around alike lean toward that age group.
     """
-    refs = reference_points(lat, lon, TASTE_M, TASTE_REF_BEARINGS)
+    refs = await land_centres(q, lat, lon, radius, reference_distance(radius), TASTE_REF_BEARINGS)
     kinds = list(TASTE_DOMAINS.values())
     lists = await asyncio.gather(*(
-        _ranked(q, kind, r_lat, r_lon, TASTE_M) for kind in kinds for r_lat, r_lon in [(lat, lon), *refs]
+        _ranked(q, kind, r_lat, r_lon, radius, ages=ages) for kind in kinds for r_lat, r_lon in [(lat, lon), *refs]
     ))
     per_kind = len(refs) + 1
     taste: dict[str, list[dict]] = {}
@@ -366,6 +452,65 @@ async def local_taste(q: QlooClient, lat: float, lon: float) -> dict:
             taste[domain] = [scoring.entity_card(e) for e in local if scoring.is_safe_name(e.get("name"))][:12]
         taste[f"distinctive_{domain}"] = [scoring.entity_card(e) for e in scoring.distinctive_by_rank(local, references)]
     return taste
+
+
+def same_category(query: str, name: str) -> bool:
+    """Whether the owner typed a category's own name ('bakeries' for 'Bakery'), not a brand that contains it."""
+    return _normalize_genre(query).replace(" ", "") == _normalize_genre(name).replace(" ", "")
+
+
+# Words a chain's name or the owner's query can carry without changing which chain it is: 'a Starbucks franchise',
+# 'Blue Bottle' for 'Blue Bottle Coffee'.
+CHAIN_FILLER = {"a", "an", "the", "new", "franchise", "branch", "store", "shop", "outlet", "location", "cafe", "café",
+                "coffee", "restaurant", "bar", "company", "co"}
+
+
+def _name_words(text: str) -> list[str]:
+    text = text.lower().replace("’", "'").replace("'s", "s").replace("'", "")
+    return re.findall(r"[a-z0-9&]+", text)
+
+
+def is_brand_named(query: str, name: str) -> bool:
+    """Whether the owner named this chain. Qloo's brand search is fuzzy ('bakery' finds Carlo's Bakery, 'Joe Coffee'
+    finds Trader Joe's), so a chain counts only when all its name's words are in the query and the query adds only
+    filler, or when the query is its name without trailing filler and still at least two words ('Blue Bottle')."""
+    words, brand = _name_words(query), _name_words(name)
+    core = [w for w in brand if w not in CHAIN_FILLER]
+    if not words or not core:
+        return False
+    extra = set(words) - set(brand)
+    if set(brand) <= set(words) and extra <= CHAIN_FILLER and len("".join(brand)) >= 4:
+        return True
+    return len(core) >= 2 and core == [w for w in words if w not in CHAIN_FILLER]
+
+
+async def find_brand(q: QlooClient, query: str) -> dict | None:
+    """The chain the owner named ('Starbucks', 'a Shake Shack'), when Qloo knows one by that name."""
+    if not _name_words(query):
+        return None
+    data = await q.search({"query": query.strip()[:80], "types": "urn:entity:brand", "take": 5})
+    results = data.get("results")
+    for brand in results if isinstance(results, list) else []:
+        if isinstance(brand, dict) and brand.get("entity_id") and is_brand_named(query, brand.get("name") or ""):
+            return brand
+    return None
+
+
+async def brand_stores(q: QlooClient, location: dict, brand_id: str, limit: int) -> list[dict]:
+    """The open places of a chain in an area (Qloo's filter.references_brand), page by page up to `limit`."""
+    found: dict[str, dict] = {}
+    offset = 0
+    while offset < limit:
+        params = {"filter.type": "urn:entity:place", "filter.references_brand": brand_id, **location, "take": PAGE}
+        if offset:
+            params["offset"] = offset
+        page = scoring.entities(await q.insights(params))
+        for place in page:
+            found.setdefault(scoring.item_id(place) or f"#{len(found)}", place)
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    return [place for place in found.values() if scoring.is_open(place)][:limit]
 
 
 async def search_places(q: QlooClient, query: str, lat: float, lon: float, miles: int = 2, take: int = 8) -> list[dict]:

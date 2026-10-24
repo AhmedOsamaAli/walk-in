@@ -545,6 +545,8 @@ class CrossCheck:
         self.scan = scan
         self._contains = catchment.contains if catchment else None
         self._site = (catchment.lat, catchment.lon) if catchment else None
+        # The area in the notes: 'the walk' as always, or 'the 30-minute drive'.
+        self._here = catchment.label if catchment and catchment.travel != "walk" else "walk"
         self._known: list[_Known] = []
         self._ids: set[str] = set()
         self._verdicts: dict[str, bool] = {}
@@ -612,7 +614,7 @@ class CrossCheck:
         result = {"checked": True, "count": len(places), "extra": [], "as_of": self.scan.as_of, "credit": CREDIT}
         if capped:
             # Qloo has more of these inside the walk than it returns, so its list cannot tell which ones it lacks.
-            return {**result, "note": f"Qloo lists more places of this kind inside the walk than it returns, so the "
+            return {**result, "note": f"Qloo lists more places of this kind inside the {self._here} than it returns, so the "
                                       f"{len(places)} OpenStreetMap shows are not compared one by one."}
         extra = [self._card(place) for place in sorted(places, key=self._distance) if not self.known(place)]
         return {**result, "extra": extra}
@@ -815,6 +817,67 @@ class OsmClient:
                 self.calls += 1
                 as_of = (data.get("osm3s") or {}).get("timestamp_osm_base")
                 return {"source": host, "as_of": as_of, "elements": elements}
+            raise OsmError("; ".join(problems) or "no time left to ask OpenStreetMap")
+        finally:
+            self._gate.release()
+
+    # ---------- Other queries: the kit's street map (app.basemap) ----------
+
+    async def ask(
+        self, query: str, shape: Callable[[dict], dict], *, name: str, timeout: float = TIMEOUT_S,
+        budget: float | None = None,
+    ) -> dict:
+        """Another Overpass query, asked the way the cross-check's is: the same instances in the same order, each resting
+        after it fails, two queries at a time at most, and the answer kept on disk for a week, as '{name}-{hash}.json'.
+        `shape` turns an Overpass answer into what is kept, raising OsmError when it holds nothing usable, so the next
+        instance is asked. Raises OsmError when none answers in `budget` seconds and no older answer is on disk."""
+        key = hashlib.sha1(query.encode("utf-8")).hexdigest()
+        cache_file = self._cache_dir / f"{name}-{key}.json"
+        saved = _saved(cache_file)
+        if saved and time.time() - saved[1] < self._max_age_s:
+            self.cache_hits += 1
+            return saved[0]
+        try:
+            data = await self._fetch_shaped(query, shape, timeout, self._budget if budget is None else budget)
+        except OsmError as exc:
+            if not saved:
+                raise
+            log.warning("OpenStreetMap did not answer (%s); using its answer from %s", exc, time.ctime(saved[1]))
+            self.cache_hits += 1
+            return saved[0]
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return data
+
+    async def _fetch_shaped(self, query: str, shape: Callable[[dict], dict], timeout: float, budget: float) -> dict:
+        deadline = time.monotonic() + budget
+        try:
+            async with asyncio.timeout(budget):
+                await self._gate.acquire()
+        except TimeoutError:
+            raise OsmError("other queries were asking OpenStreetMap") from None
+        try:
+            problems = []
+            for url in self._order():
+                remaining = deadline - time.monotonic()
+                if remaining < 1:
+                    break
+                limit = min(timeout, remaining)
+                host = urlsplit(url).hostname or url
+                try:
+                    async with asyncio.timeout(limit):
+                        response = await self._http.post(
+                            url, data={"data": query}, timeout=httpx.Timeout(limit, connect=min(CONNECT_S, limit)),
+                        )
+                    data = _answer_of(response)
+                    kept = shape(data)
+                except (httpx.HTTPError, TimeoutError, OsmError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                    self._failed[url] = time.monotonic()
+                    problems.append(f"{host}: {_describe(exc)}")
+                    continue
+                self._failed.pop(url, None)
+                self.calls += 1
+                return {"source": host, "as_of": (data.get("osm3s") or {}).get("timestamp_osm_base"), **kept}
             raise OsmError("; ".join(problems) or "no time left to ask OpenStreetMap")
         finally:
             self._gate.release()

@@ -16,8 +16,6 @@ class Health(BaseModel):
     model: str | None
     models: list[str] = Field(description="The model and its fallbacks, in order")
     resting: dict[str, float] = Field(description="Models resting after rate limits, with seconds left")
-    image: bool
-    image_model: str | None
 
 
 class Preset(BaseModel):
@@ -30,10 +28,14 @@ class Preset(BaseModel):
 
 class Catchment(BaseModel):
     minutes: int
-    source: str = Field(description="'isochrone' for a street-network walk, 'circle' when routing is unavailable")
-    ring: list[list[float]] = Field(description="The walk's outline as [lat, lon] points")
+    source: str = Field(description="'street network' when traced over the streets, 'circle' when routing is unavailable")
+    ring: list[list[float]] = Field(description="The area's outline as [lat, lon] points")
     area_km2: float
     radius_m: int = Field(description="Radius of a circle with the same area")
+    travel: str = Field("walk", description="'walk', 'drive' or 'distance'")
+    km: float | None = Field(None, description="The road distance, for travel 'distance'")
+    label: str = Field("", description="The area in a sentence: '10-minute walk', '30-minute drive', '25 km drive'")
+    short: str = Field("", description="'10-min walk', '30-min drive', '25 km drive'")
 
 
 class HeatCell(BaseModel):
@@ -62,20 +64,6 @@ class PlaceHit(BaseModel):
     lat: float
     lon: float
     distance_m: int
-
-
-class Render(BaseModel):
-    image: str | None = Field(description="A data URL, or null when renders are off")
-    model: str | None
-    queued: bool = False
-    detail: str | None = None
-
-
-class Shot(BaseModel):
-    kind: str
-    label: str
-    aspect: str
-    prompt: str
 
 
 class OsmPlace(BaseModel):
@@ -143,12 +131,6 @@ class Concept(BaseModel):
     gap_score: int | None = Field(None, description="The category's gap score; null for the wildcard, which is never ranked")
     one_liner: str | None = None
     for_whom: str | None = None
-    price_level: int | None = Field(None, description="Qloo's 1-4; always 1 ($) when the owner's notes ask for budget prices")
-    price_basis: str | None = Field(
-        None, description="What the places people here love and the places inside the walk charge, and where a budget "
-                          "concept sits against the block ('below the block's usual $$')",
-    )
-    price_anchors: list[dict] = Field(default_factory=list)
     why_here: list[str] = Field(default_factory=list)
     beat_competitors: str | None = None
     signature: list[str] = Field(default_factory=list, description="What people would come for, within the owner's rules")
@@ -157,105 +139,37 @@ class Concept(BaseModel):
     owner_rules: list[str] = Field(
         default_factory=list,
         description="How it meets each rule the owner gave, one line each: the unit ('Fits 45 m² (484 ft²): a counter and "
-                    "about 20–24 seats at most.'), the kitchen ('No hood needed: …'), the price ('Budget: $, below the "
-                    "block's usual $$.'), the diet and families",
+                    "about 20–24 seats at most.'), the kitchen ('No hood needed: …'), the price band ('Budget prices: "
+                    "nothing in it is called upscale or premium.'), the diet and families",
     )
     wildcard: bool = Field(False, description="True for the extra concept after the ranked ones: two loves combined, untested")
     combines: list[LoveItem] | None = Field(None, description="For the wildcard: the two things people here love it combines")
     caution: str | None = Field(None, description="For the wildcard: why it is untested")
 
 
-class MoodTile(BaseModel):
-    """A name on the mood board: an artist, film, show or brand people here over-index on, with Qloo's image of it."""
-
-    name: str
-    kind: str = Field(description="'artist', 'film', 'show' or 'brand'")
-    image: str = Field(description="Qloo's image (images.qloo.com), credited 'Images: Qloo'")
-    year: int | None = Field(None, description="A film's or show's release year")
-    since: int | None = Field(None, description="The year an artist started")
-    via: str | None = Field(
-        None, description="Set only when the area's own names were too few to fill the board: 'fans' for what this "
-                          "category's fans also love, 'loved' for what people here rank highest, not more than around",
-    )
-
-
-class MoodSwatch(BaseModel):
-    hex: str = Field(description="'#RRGGBB'")
-    name: str
-
-
-class MoodEra(BaseModel):
-    """What the years of the names people here over-index on add up to (artists by the year they started, films and
-    shows by release)."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    label: str | None = Field(description="The decades most of them come from ('1970s–80s'); null when too few have a "
-                                          "year (under 5) or no span holds half of them")
-    from_: int | None = Field(alias="from", description="The span's first year; null without an era")
-    to: int | None = Field(description="The span's last year, this year at most; null without an era")
-    classic_share: float | None = Field(description="Share of the names with a year that are 20 or more years old")
-    dated: int = Field(description="Names with a year")
-    classic: int = Field(description="Of which 20 or more years old")
-
-
-class MoodDirection(BaseModel):
-    """The design the renders follow: the era's row of a rules table, or the design DNA of the places people here love
-    when there is no era."""
-
-    name: str = Field(description="'Seventies warmth', or the style the design DNA points to ('Industrial')")
-    palette: list[MoodSwatch] = Field(description="Four or five colors")
-    materials: list[str]
-    lighting: str
-    type: str = Field(description="The lettering of the sign and the menus")
-    music: str | None = Field(None, description="The era of records to play; null without an era")
-    source: str = Field(description="'era'; 'dna' without an era; 'default' when the design DNA has no tags either")
-    cues: list[str] = Field(default_factory=list, description="The design DNA tags a 'dna' direction follows")
-
-
-class Mood(BaseModel):
-    """The mood board: the faces, posters and brands people here over-index on, the era they point to and the design
-    direction the renders follow. Never names in the renders, and the names are for the mood, not for decor or ads."""
-
-    tiles: list[MoodTile] = Field(description="Six to nine, the kinds taking turns; fewer when Qloo has fewer images")
-    era: MoodEra
-    direction: MoodDirection
-    statement: str = Field(description="One or two sentences on how the room should feel, from the board alone")
-    statement_by: str = Field(description="'agent' when the design model wrote it and it kept to the board, else 'rules'")
-    basis: str = Field(description="How the era was read, in words, or why there is none")
-    source: str = Field(description="Where the tiles come from")
-    credit: str = Field(description="'Images: Qloo'")
-
-
 class DesignSheet(BaseModel):
-    """A concept's design sheet. The model writes the creative fields (loosely typed, since a model can return any
-    shape and that must not fail the request); everything factual comes from the evidence and is typed."""
+    """A concept's design sheet, from the evidence: the concept's own name, positioning and signature, what to sell,
+    when to open, what the unit holds, the experience and launch plans, and how it meets each of the owner's rules.
+    Sheets saved before the cuts may carry more fields (interior, mood, renders); they pass through untyped."""
 
     model_config = ConfigDict(extra="allow")
 
+    # Loosely typed where a sheet saved before the change (written by a model) may have another shape.
     name: Any = None
-    tagline: Any = None
-    interior: Any = None
-    offer: Any = None
-    music: dict
-    partners: list[dict]
-    price_level: int | None = Field(None, description="Price level the evidence supports, within the owner's range")
-    price_basis: str | None = Field(None, description="What the places locals love and the places inside the walk charge")
-    price_anchors: list[dict] = Field(
-        default_factory=list, description="Real places at this price level, with their menu page or website to check prices"
-    )
-    hours: str | None = Field(description="Typical hours of the places locals love of this type")
-    hours_basis: str | None
-    capacity: str | None = Field(description="Most guests the unit holds, from building-code load factors")
-    capacity_basis: str | None
-    unit: dict | None
-    experience: dict | None = Field(description="Soundtrack, screen and talks from the neighborhood's signature taste")
-    mood: Mood | None = Field(None, description="The mood board; null in sheets made before it existed")
+    tagline: Any = Field(None, description="The concept's one-liner")
+    offer: Any = Field(None, description="The concept's signature, then what the places people here love are known for")
+    hours: str | None = Field(None, description="Typical hours of the places locals love of this type")
+    hours_basis: str | None = None
+    capacity: str | None = Field(None, description="Most guests the unit holds, from building-code load factors")
+    capacity_basis: str | None = None
+    unit: dict | None = None
+    experience: dict | None = Field(None, description="Soundtrack, screen and talks from the neighborhood's signature taste")
     launch: dict | None = Field(
         None, description="Who to reach, where, when and what can be said, with platform settings and the proof of each claim"
     )
-    dna: dict
-    mode: str = Field(description="'agent' when a language model wrote it, 'rules' otherwise")
-    model: str | None
-    shots: list[Shot]
-    renders: dict
+    audience: dict | None = Field(
+        None, description="Who the places people here love of this kind draw (Qloo audience leans), and the ad setting it implies"
+    )
+    owner_rules: list[str] = Field(default_factory=list, description="How it meets each rule the owner gave")
+    mode: str = Field("rules", description="'rules': every sheet is assembled from the evidence")
+    model: str | None = None

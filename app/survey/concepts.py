@@ -1,12 +1,14 @@
 """Business concepts for a site: the agent with live Qloo tools, the evidence rules behind it, and the
 grounding that keeps both to what the evidence says.
 
-The owner's rules are hard rules for both: a budget means the lowest price level, a unit without a hood means nothing
-that needs one, a size means every concept fits it, and every concept says how it meets each rule (owner_rules). The
-agent is told the rules, and its answer is checked after it answers: what breaks a rule is repaired once (items taken
-out and replaced from the evidence, the price set, a real name given) and a concept that still breaks one is dropped,
+The owner's rules are hard rules for both: a price band means nothing the concept says about itself contradicts it (a
+budget place is never called upscale), a unit without a hood means nothing that needs one, a size means every concept
+fits it, and every concept says how it meets each rule (owner_rules). No concept carries a price level: Qloo's are
+dollar signs with no amounts behind them. The agent is told the rules, and its answer is checked after it answers: what
+breaks a rule is repaired once (items taken out and replaced from the evidence, the evidence's own line, a real name
+given) and a concept that still breaks one is dropped,
 with the reason in the payload's notes. A wildcard may follow the ranked concepts: two things people here love, combined
-into a business no place inside the walk is.
+into a business no place inside the area is.
 """
 from __future__ import annotations
 
@@ -22,16 +24,17 @@ from itertools import combinations
 
 from .. import engine, scoring, space
 from ..answers import AnswerCache, fingerprint
+from ..catchment import area_text
+from ..demographics import ages_label
 from ..llm import LLM, LLMUnavailable
 from ..qloo import QlooClient, QlooError
-from .constraints import UPSCALE
 from .evidence import (
+    aged,
     annotate,
-    block_price,
+    area_noun,
     competition,
     count_of,
     crowd_of,
-    dollars,
     evidence_brief,
     fits,
     gap_evidence,
@@ -40,11 +43,11 @@ from .evidence import (
     in_running_text,
     in_sentence,
     inspect_payload,
+    is_walk,
     love_evidence,
     offer_items,
+    people_here,
     plural,
-    price_anchors,
-    price_evidence,
     public_gap,
     risk,
     short_label,
@@ -66,17 +69,17 @@ def ground_names(names: list[str] | None, allowed: set[str]) -> list[str]:
 
 def clean_concepts(run: RunState, concepts: list[dict], notes: list[str] | None = None) -> list[dict]:
     """Keep only concepts whose genre exists in the evidence and that the unit and the owner's notes allow, one per kind
-    of business, citing real places under original names, priced and stocked as the evidence and the notes say.
+    of business, citing real places under original names, stocked as the evidence and the notes say.
 
     The model contributes the creative parts (name, positioning, signature items). Every factual line (why here, who
-    for, the competition, the price, the risk) is rebuilt from the measured evidence, so a misread number never reaches
-    the owner. What breaks the owner's rules is repaired once; a concept that still breaks one is dropped. Repairs and
-    drops are added to `notes`, in plain words.
+    for, the competition, the risk) is rebuilt from the measured evidence, so a misread number never reaches the owner.
+    What breaks the owner's rules is repaired once; a concept that still breaks one is dropped. Repairs and drops are
+    added to `notes`, in plain words.
     """
     notes = notes if notes is not None else []
     cleaned: list[dict] = []
     known_places = place_names(run)
-    minutes = run.site.minutes
+    area, ages = run.site.area, run.site.ages
     for concept in concepts or []:
         if not isinstance(concept, dict):
             continue
@@ -103,23 +106,20 @@ def clean_concepts(run: RunState, concepts: list[dict], notes: list[str] | None 
         ]
         concept["name"] = concept_name(run, row, proposed, {c["name"] for c in cleaned}, known_places, notes)
         concept["one_liner"] = ruled_line(run, row, str(concept.get("one_liner") or ""), concept["name"], notes)
-        level = concept.get("price_level")
-        concept["price_level"], concept["price_basis"] = grounded_price(run, row, level)
-        if run.constraints.budget and isinstance(level, int) and level > 1:
-            notes.append(f"{concept['name']}: priced $ for your budget, not {dollars(min(level, 4))}.")
-        concept["price_anchors"] = price_anchors(row, concept["price_level"])
+        for key in ("price_level", "price_basis", "price_anchors"):
+            concept.pop(key, None)
         signature, removed = ruled_signature(concept.get("signature"), row, run)
         if removed:
             notes.append(f"{concept['name']}: took out {removed_text(removed)}.")
         if removed and not signature:
             notes.append(f"Dropped {concept['name']} ({scoring.genre_title(row['genre'])}): nothing on its menu works "
-                         f"under your rules, and the places people here love offer nothing that does.")
+                         f"under your rules, and the places {people_here(ages)} love offer nothing that does.")
             continue
         concept["signature"] = signature
-        concept["for_whom"] = for_whom(row, minutes)
-        concept["why_here"] = gap_evidence(row, minutes)
-        concept["beat_competitors"] = competition(row, minutes, run.constraints)
-        concept["risk"] = concept_risk(run, row, concept["price_level"])
+        concept["for_whom"] = for_whom(row, area, ages)
+        concept["why_here"] = gap_evidence(row, area, ages)
+        concept["beat_competitors"] = competition(row, area, run.constraints, ages)
+        concept["risk"] = risk(row, area, ages)
         concept["evidence"] = concept["why_here"]
         concept["owner_rules"] = owner_rule_lines(run, row, concept)
         problems = rule_problems(run, row, concept)
@@ -144,18 +144,20 @@ def removed_text(removed: list[tuple[str, str]]) -> str:
 
 def ruled_line(run: RunState, row: dict, text: str, name: str, notes: list[str]) -> str:
     """The model's positioning, grounded (grounded_line), unless it describes something the owner's rules forbid (fried
-    chicken in a unit without a hood, 'upscale' on a budget); then the evidence's own line."""
-    line = grounded_line(text, row, run.site)
+    chicken in a unit without a hood, 'upscale' on a budget) or leans on filler ('cozy', 'vibe') where it should say
+    what the place is; then the evidence's own line."""
+    line = grounded_line(text, row, run.site, also=name)
     clash = run.constraints.item_clash(line)
+    filler = FILLER.search(without_names(line, (name, run.site.label)))
     if clash:
         notes.append(f"{name}: its one-liner mentioned '{clash[0]}', which {clash[1]}; the evidence's own line "
                      f"replaces it.")
-    elif run.constraints.budget and UPSCALE.search(line):
-        notes.append(f"{name}: its one-liner called it upscale, and your notes ask for budget prices; the evidence's own "
-                     f"line replaces it.")
+    elif filler:
+        notes.append(f"{name}: its one-liner leaned on '{filler.group(0)}', which nothing measured backs; the "
+                     f"evidence's own line replaces it.")
     else:
         return line
-    return one_liner(row, run.site.minutes)
+    return one_liner(row, run.site.area, run.site.ages)
 
 
 # A count of seats or guests, or a floor area: facts about a unit the model has never seen.
@@ -163,17 +165,59 @@ UNIT_CLAIM = re.compile(
     r"\b(\d[\d,.]*)\s*-?\s*(seats?|seater|covers?|guests?|people|m2|m²|sq\.?\s?ft|square\s(?:feet|foot|met(?:er|re)s?))\b",
     re.IGNORECASE,
 )
-# Competitors are measured inside the walk, never placed next to the unit.
+# Competitors are measured inside the area, never placed next to the unit.
 NEXT_DOOR = re.compile(r"\b(?:next door|across the (?:street|road|block))\b", re.IGNORECASE)
+# Words that describe a feeling instead of the place, and that no measurement can back: a line leaning on them says
+# nothing a chatbot would not. Positioning and ads say what the place is, serves or answers instead.
+FILLER = re.compile(
+    r"\b(?:cozy|cosy|cozier|chic|vibes?|vibey|vibrant|welcoming|inviting|curated|elevated|haven|oasis|sanctuary|"
+    r"hidden gem|must[- ]visit|one[- ]of[- ]a[- ]kind|trendy|stylish|sophisticated|charming|laid[- ]back|"
+    r"unforgettable|ambian[cs]e)\b",
+    re.IGNORECASE,
+)
+DIGITS = re.compile(r"\d+(?:[.,]\d+)?")
 
 
-def grounded_line(text: str, row: dict, site: Site) -> str:
-    """The model's positioning, unless it states a capacity or floor area the unit does not have (then the evidence's
-    own line); competitors it places next door are only known to be nearby."""
+def without_names(text: str, names) -> str:
+    """The text with the given names (the business's own, the site's, and each part of a label such as 'New Haven,
+    Connecticut') blanked, so 'Haven' in 'New Haven' or '5' in 'Bakery on 5th' is not read as filler or a figure."""
+    parts = {part.strip() for name in names if isinstance(name, str) for part in (name, *name.split(","))}
+    for name in sorted((p for p in parts if len(p) > 1), key=len, reverse=True):
+        text = re.sub(re.escape(name), " ", text, flags=re.IGNORECASE)
+    return text
+
+
+def grounded_line(text: str, row: dict, site: Site, also: str = "") -> str:
+    """The model's positioning, unless it states a number the evidence does not give: a capacity or floor area the
+    unit does not have, or any other figure ('since 1998', 'a warm 200-seat room'); then the evidence's own line.
+    `also` is the business's own name, whose figures are its own. Competitors it places next door are only known to be
+    nearby."""
     text = " ".join(text.split())
-    if not text or any(not unit_supports(match, row, site) for match in UNIT_CLAIM.finditer(text)):
-        return one_liner(row, site.minutes)
+    if not text or any(not unit_supports(match, row, site) for match in UNIT_CLAIM.finditer(text)) \
+            or stray_numbers(without_names(text, (also, site.label)), row, site):
+        return one_liner(row, site.area, site.ages)
     return NEXT_DOOR.sub("nearby", text)
+
+
+def plain_number(token: str) -> str:
+    """'3.30' -> '3.3', '1,200' -> '1200', so a figure matches however it is written."""
+    token = token.replace(",", "")
+    return token.rstrip("0").rstrip(".") if "." in token else token
+
+
+def area_figures(site: Site) -> str:
+    """The figures a line may take from the survey itself: the area's minutes or kilometres ('30-minute drive'), and the
+    owner's age focus ('25–34'). A road distance's minutes are no figure of the area, so they are not among them."""
+    return f"{site.area} {ages_label(site.ages) or ''}"
+
+
+def stray_numbers(text: str, row: dict, site: Site) -> list[str]:
+    """The figures in a line that neither the gap's evidence, the area's own figures nor a capacity or floor area the
+    unit supports give."""
+    said = " ".join([*gap_evidence(row, site.area, site.ages), one_liner(row, site.area, site.ages), area_figures(site)])
+    allowed = {plain_number(token) for token in DIGITS.findall(said)}
+    allowed |= {plain_number(m.group(1)) for m in UNIT_CLAIM.finditer(text) if unit_supports(m, row, site)}
+    return [token for token in DIGITS.findall(text) if plain_number(token) not in allowed]
 
 
 def unit_supports(claim: re.Match, row: dict, site: Site) -> bool:
@@ -191,17 +235,6 @@ def unit_supports(claim: re.Match, row: dict, site: Site) -> bool:
         return abs(stated - site.size_m2) <= 0.1 * site.size_m2
     capacity = (row.get("fit") or {}).get("capacity")
     return bool(capacity) and capacity["low"] * 0.8 <= number <= capacity["high"]
-
-
-def concept_risk(run: RunState, row: dict, level: int | None) -> str:
-    """The evidence's biggest risk, or the price gap when the owner's range sets the concept below what people here
-    pay."""
-    price = row.get("price") or price_evidence(row, run.constraints, block_price(run))
-    loved = price.get("loved")
-    if loved and level and loved - level >= 1:
-        return (f"The {plural(row['genre'])} people here love are {'$' * loved}; at {'$' * level} the concept has to win "
-                f"on value and speed, not on the same experience.")
-    return risk(row, run.site.minutes)
 
 
 # Below this gap score a category is not a recommendation when stronger ones fit; the owner's own request always is.
@@ -237,21 +270,6 @@ def caution(run: RunState, concepts: list[dict]) -> str | None:
         return None
     return (f"No strong gap here: the best category scores {max(scores)} of 100, so demand and supply are close to "
             f"typical. Treat these as options to test, not as gaps waiting to be filled.")
-
-
-def grounded_price(run: RunState, row: dict, proposed: object) -> tuple[int | None, str]:
-    """The agent's price level when the evidence supports it (within one level of what the places people here love
-    charge), otherwise the evidence's own; the owner's price range always applies, and a budget is always $."""
-    evidence = row.get("price") or price_evidence(row, run.constraints, block_price(run))
-    try:
-        level = max(1, min(4, int(proposed))) if proposed is not None else None
-    except (TypeError, ValueError):
-        level = None
-    supported = evidence["evidence_level"]
-    if level is None or supported is not None and abs(level - supported) > 1:
-        level = supported
-    level = run.constraints.price_level(level) if level else evidence["level"]
-    return level, evidence["basis"]
 
 
 # Signature items are what people come for; the room, the seats and the mood belong to the design sheet.
@@ -466,33 +484,46 @@ def concept_name(run: RunState, row: dict, proposed: str, taken: set[str], place
     return name
 
 
-def one_liner(row: dict, minutes: int) -> str:
+def neighbors(area: str | int, ages: str | None = None) -> str:
+    """Who the gap is for, in the concepts' words: 'neighbors' within a walk, 'people here' within a drive or a road
+    distance; either 'aged 25–34' with an age focus."""
+    return f"neighbors{aged(ages)}" if is_walk(area) else people_here(ages)
+
+
+def one_liner(row: dict, area: str | int, ages: str | None = None) -> str:
     """The case for the concept in one sentence, led by its strongest evidence. Trips are measured to the favorites
-    outside the walk (median_far_km); without that measure, no distance is given."""
+    outside the area (median_far_km); without that measure, no distance is given."""
     title = scoring.genre_title(row["genre"])
     places = plural(row["genre"])
     nearby, expected, km = supply(row), row.get("expected_nearby"), row.get("median_far_km")
     leakage = row.get("leakage")
     travels = row.get("favorites_kind") == "local" and leakage is not None and leakage >= 0.65 and row["favorites_far"] >= 3
     under = expected is not None and (row.get("relative_supply", 1) <= 0.75 or nearby == 0 and expected >= 1)
+    walk, people, noun = is_walk(area), people_here(ages), area_noun(area)
+    # Favorites outside a walk are across town; outside a drive they are farther still, and the concept only closer.
+    close = "close to home" if walk else "closer to home"
     if travels and nearby == 0:
         away = f", their favorites a median {km} km away" if km else ""
-        return f"The {places} people here now cross town for: none inside the {minutes}-minute walk{away}."
+        go = "cross town" if walk else "travel far"
+        return f"The {places} {people} now {go} for: none inside the {area_text(area)}{away}."
     if travels and under:
         trip = f" {km} km" if km else ""
-        return (f"{title} close to home: {nearby} inside the walk where a block this dense has about {expected:g}, and "
-                f"people here travel{trip} for their favorites.")
+        return (f"{title} {close}: {nearby} inside the {noun} where a block this dense has about {expected:g}, and "
+                f"{people} travel{trip} for their favorites.")
     if travels:
         trip = f" a median {km} km" if km else ""
-        return f"{title} close to home: people here travel{trip} for the {places} they love most."
+        return f"{title} {close}: {people} travel{trip} for the {places} they love most."
     if under:
-        return f"{title} for a block with {nearby} where its density predicts about {expected:g}."
+        return f"{title} for {'a block' if walk else 'an area'} with {nearby} where its density predicts about {expected:g}."
     ref = row.get("ref_rank")
+    who = neighbors(area, ages)
     if ref is not None and ref - row["demand_rank"] >= 3:
-        return f"{title} for neighbors who rank it #{row['demand_rank']}, against #{round(ref)} in the areas around."
+        return f"{title} for {who} who rank it #{row['demand_rank']}, against #{round(ref)} in the areas around."
     if row["demand_rank"] <= 3:
-        return f"{title} for the neighborhood's #{row['demand_rank']} interest, better than the {nearby} already inside the walk."
-    return f"{title} for neighbors who rank it #{row['demand_rank']} among the place types they engage with."
+        interest = (f"the neighborhood's #{row['demand_rank']} interest" if who == "neighbors"
+                    else f"the #{row['demand_rank']} interest of {who}")
+        return f"{title} for {interest}, better than the {nearby} already inside the {noun}."
+    return f"{title} for {who} who rank it #{row['demand_rank']} among the place types they engage with."
 
 
 # Genres too broad to open as a business ('Personal care' is salons, barbers, spas and gyms at once): they stay in the
@@ -529,23 +560,24 @@ def loses_signature(run: RunState, row: dict) -> bool:
 TOP_DEMAND = 10
 
 
-def for_whom(row: dict, minutes: int) -> str:
-    """Who the evidence points to. Qloo's age and gender skews describe visitors inconsistently, so none are guessed;
-    who the places people here love of this kind draw comes from Qloo's tags on those places. The trip is measured to
-    the favorites outside the walk (median_far_km), and left out when that measure is missing."""
-    neighbors = f"Neighbors within a {minutes}-minute walk"
+def for_whom(row: dict, area: str | int, ages: str | None = None) -> str:
+    """Who the evidence points to. Qloo's age and gender skews describe visitors inconsistently, so none are guessed: an
+    age said here is the owner's own focus, which the rankings and favorites lean toward. Who the places people here
+    love of this kind draw comes from Qloo's tags on those places. The trip is measured to the favorites outside the
+    area (median_far_km), and left out when that measure is missing."""
+    who = f"{'Neighbors' if is_walk(area) else 'People'}{aged(ages)} within a {area_text(area)}"
     crowd = [in_running_text(label) for label in crowd_of(row)]
-    draws = f"; the {plural(row['genre'])} people here love draw {scoring.natural_list(crowd)}" if crowd else ""
+    draws = f"; the {plural(row['genre'])} {people_here(ages)} love draw {scoring.natural_list(crowd)}" if crowd else ""
     if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3:
         names = [c["name"] for c in storefront_favorites(row)[1] if c.get("name") and not c.get("within_walk")][:2]
         like = f" such as {scoring.natural_list(names)}" if names else ""
         km = row.get("median_far_km")
         trip = f"travel a median {km} km to" if km else "travel to"
-        return f"{neighbors} who now {trip} {plural(row['genre'])}{like}{draws}"
+        return f"{who} who now {trip} {plural(row['genre'])}{like}{draws}"
     if row["demand_rank"] <= TOP_DEMAND:
-        rank = f"{neighbors}, who rank {in_sentence(row['genre'])} #{row['demand_rank']} among the place types they engage with"
+        rank = f"{who}, who rank {in_sentence(row['genre'])} #{row['demand_rank']} among the place types they engage with"
         return rank + draws
-    return neighbors + draws
+    return who + draws
 
 
 def rule_concepts(run: RunState) -> list[dict]:
@@ -558,25 +590,21 @@ def rule_concepts(run: RunState) -> list[dict]:
 
 def rule_concept(run: RunState, row: dict, taken: set[str] | None = None) -> dict:
     """A concept built from the evidence alone, within the owner's rules; `taken` holds names other concepts have."""
-    minutes = run.site.minutes
+    area, ages = run.site.area, run.site.ages
     _, cards = storefront_favorites(row)
-    price = row.get("price") or price_evidence(row, run.constraints, block_price(run))
     concept = {
         "name": invent_name(run, row["genre"], set(taken or ())),
         "genre": row["genre"],
         "genre_id": row["genre_id"],
         "gap_score": row["gap_score"],
-        "one_liner": one_liner(row, minutes),
-        "for_whom": for_whom(row, minutes),
-        "price_level": price["level"],
-        "price_basis": price["basis"],
-        "price_anchors": price["anchors"],
-        "why_here": gap_evidence(row, minutes),
-        "beat_competitors": competition(row, minutes, run.constraints),
+        "one_liner": one_liner(row, area, ages),
+        "for_whom": for_whom(row, area, ages),
+        "why_here": gap_evidence(row, area, ages),
+        "beat_competitors": competition(row, area, run.constraints, ages),
         "signature": [i["item"] for i in offer_items(row, run.constraints, limit=3)],
         "inspired_by": [card["name"] for card in cards[:3] if card.get("name")],
-        "risk": concept_risk(run, row, price["level"]),
-        "evidence": gap_evidence(row, minutes),
+        "risk": risk(row, area, ages),
+        "evidence": gap_evidence(row, area, ages),
     }
     concept["owner_rules"] = owner_rule_lines(run, row, concept)
     return concept
@@ -658,26 +686,27 @@ def kitchen_line(run: RunState, genre: str, items: list[str]) -> str | None:
     return f"No hood needed: {made}; nothing is fried, grilled or cooked on a flat-top."
 
 
-def price_line(run: RunState, row: dict | None, level: int | None) -> str | None:
-    """Where the concept's price sits, when the owner's notes set a price range."""
-    rules = run.constraints
-    if rules.budget:
-        price = (row or {}).get("price") or {}
-        budget = price.get("budget") or (price_evidence(row, rules, block_price(run)).get("budget") if row else None)
-        return budget["line"] if budget else "Budget: $, the lowest level."
-    if rules.price and level:
-        label = "Mid-range" if rules.price == (2, 2) else "Upscale" if rules.price[0] >= 3 else "Priced"
-        return f"{label}: {dollars(level)}, as your notes ask."
-    return None
+# How a concept keeps the owner's price band, in words: no price level is given, so the band is kept in what the
+# concept says about itself (Constraints.price_words).
+PRICE_LINES = {
+    "budget": "Budget prices: nothing in it is called upscale or premium.",
+    "mid-range": "Mid-range prices: nothing in it is called upscale or cheap.",
+    "upscale": "Upscale prices: nothing in it is called cheap or budget.",
+}
+
+
+def price_line(run: RunState) -> str | None:
+    """How the concept keeps the price band the owner's notes set; None when they set none."""
+    return PRICE_LINES.get(run.constraints.price or "")
 
 
 def owner_rule_lines(run: RunState, row: dict | None, concept: dict) -> list[str]:
-    """How the concept meets each rule the owner gave, in plain words: the unit's size, the kitchen, the price, the
-    diet and who it is for."""
+    """How the concept meets each rule the owner gave, in plain words: the unit's size, the kitchen, the price band,
+    the diet and who it is for."""
     rules = run.constraints
     genre = concept.get("genre") or (row or {}).get("genre") or ""
     items = [item for item in concept.get("signature") or [] if isinstance(item, str)]
-    lines = [unit_line(run, genre), kitchen_line(run, genre, items), price_line(run, row, concept.get("price_level"))]
+    lines = [unit_line(run, genre), kitchen_line(run, genre, items), price_line(run)]
     if rules.vegetarian:
         lines.append("Vegetarian: no meat or fish on the menu.")
     if rules.halal:
@@ -693,16 +722,11 @@ def rule_problems(run: RunState, row: dict, concept: dict) -> list[str]:
     """What still breaks the owner's rules after the repair, each as a phrase; empty when the concept keeps them all."""
     rules = run.constraints
     problems = [] if fits(row) else [misfit(row)]
-    level = concept.get("price_level")
-    if rules.price and level is not None and not rules.price[0] <= level <= rules.price[1]:
-        problems.append(f"it is priced {dollars(level)}, outside the prices your notes allow")
     problems += [f"{item} {why}" for item in concept.get("signature") or [] if (why := rules.item_problem(item))]
     for key, label in (("name", "name"), ("one_liner", "one-liner")):
         why = rules.item_problem(str(concept.get(key) or ""))
         if why:
             problems.append(f"its {label} names something that {why}")
-    if rules.budget and UPSCALE.search(str(concept.get("one_liner") or "")):
-        problems.append("it is described as upscale on a budget")
     if placeholder_name(str(concept.get("name") or ""), concept["genre"], run.site.label):
         problems.append("it has no real name")
     said = " ".join(concept.get("owner_rules") or [])
@@ -710,8 +734,8 @@ def rule_problems(run: RunState, row: dict, concept: dict) -> list[str]:
         problems.append("it does not say how it fits the unit")
     if rules.hood_free and not re.search(r"\b(hood|kitchen)\b", said):
         problems.append("it does not say how it works without a hood")
-    if rules.budget and "Budget" not in said:
-        problems.append("it does not say where its price sits")
+    if rules.price and price_line(run) not in (concept.get("owner_rules") or []):
+        problems.append("it does not say how it keeps your price band")
     return problems
 
 
@@ -750,20 +774,20 @@ def carries(place: dict, row: dict) -> bool:
 
 
 def combined_inside(run: RunState, first: dict, second: dict) -> bool:
-    """Whether a place inside the walk is already both kinds of business."""
+    """Whether a place inside the area is already both kinds of business."""
     places = [*run.block, *(first.get("_nearby_entities") or []), *(second.get("_nearby_entities") or [])]
     return any(carries(place, first) and carries(place, second) for place in places)
 
 
 def wildcard_pair(run: RunState) -> tuple[dict, str, dict, str] | None:
     """The two categories people here demonstrably love (love_evidence) that combine into the business no place inside
-    the walk already is, both allowed by the unit and the owner's notes: (first, its evidence, second, its evidence),
+    the area already is, both allowed by the unit and the owner's notes: (first, its evidence, second, its evidence),
     the stronger love first. None when no pair qualifies."""
     loved = []
     for row in run.gaps:
         if not fits(row) or scoring.genre_key(row["genre"]) in TOO_BROAD or not scoring.strict_kind(row["genre"]):
             continue
-        love = love_evidence(row)
+        love = love_evidence(row, run.site.ages)
         if love and not loses_signature(run, row):
             loved.append((row, love))
     best = None
@@ -786,15 +810,14 @@ def article(phrase: str) -> str:
     return f"{'an' if phrase[:1].lower() in 'aeiou' else 'a'} {phrase}"
 
 
-def wildcard_line(first: dict, second: dict, minutes: int) -> str:
-    """The wildcard's positioning when the model gave none: what it combines, and that the walk has nothing like it."""
+def wildcard_line(first: dict, second: dict, area: str | int, ages: str | None = None) -> str:
+    """The wildcard's positioning when the model gave none: what it combines, and that the area has nothing like it."""
+    loves = f"two things {people_here(ages)} love, and nothing inside the {area_text(area)} is both."
     for day, night in ((first, second), (second, first)):
         if LIGHT_FORMAT.search(day["genre"]) and scoring.genre_kind(night["genre"]) in ("bar", "venue"):
             return (f"{article(singular(day['genre'])).capitalize()} by day and {article(singular(night['genre']))} by "
-                    f"night, under one roof: two things people here love, and nothing inside the {minutes}-minute walk "
-                    f"is both.")
-    return (f"{article(singular(first['genre'])).capitalize()} and {article(singular(second['genre']))} in one: two "
-            f"things people here love, and nothing inside the {minutes}-minute walk is both.")
+                    f"night, under one roof: {loves}")
+    return f"{article(singular(first['genre'])).capitalize()} and {article(singular(second['genre']))} in one: {loves}"
 
 
 def wildcard_items(run: RunState, first: dict, second: dict) -> list[str]:
@@ -809,7 +832,7 @@ def wildcard_items(run: RunState, first: dict, second: dict) -> list[str]:
 
 def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None, notes: list[str] | None = None) -> dict | None:
     """At most one concept after the ranked ones, when the evidence supports it: two things people here love, combined
-    into a business no place inside the walk is. It keeps the owner's rules like any concept, carries `wildcard`,
+    into a business no place inside the area is. It keeps the owner's rules like any concept, carries `wildcard`,
     `combines` and a plain caution, and is never ranked (no gap score). `proposed` is the model's name, one-liner and
     signature for it, kept where they pass the same checks."""
     notes = notes if notes is not None else []
@@ -817,7 +840,7 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
     if not pair:
         return None
     first, why_first, second, why_second = pair
-    minutes = run.site.minutes
+    area, ages = run.site.area, run.site.ages
     proposal = proposed if isinstance(proposed, dict) else {}
     taken = {c["name"] for c in ranked}
     places = place_names(run)
@@ -826,19 +849,21 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
             or name.lower() in {t.lower() for t in taken} or run.constraints.item_problem(name):
         name = invent_name(run, first["genre"], taken, second=second["genre"])
     line = " ".join(str(proposal.get("one_liner") or "").split())
-    if not line or UNIT_CLAIM.search(line) or run.constraints.item_problem(line) or (
-            run.constraints.budget and UPSCALE.search(line)):
-        line = wildcard_line(first, second, minutes)
+    plain = without_names(line, (name, run.site.label))
+    figures = set(DIGITS.findall(area_figures(run.site)))  # the area's minutes or kilometres, and the age focus
+    if not line or UNIT_CLAIM.search(line) or run.constraints.item_problem(line) or FILLER.search(plain) \
+            or any(token not in figures for token in DIGITS.findall(plain)):
+        line = wildcard_line(first, second, area, ages)
     signature, removed = ruled_items(proposal.get("signature"), wildcard_items(run, first, second), run, fallback=4)
     if removed:
         notes.append(f"{name}: took out {removed_text(removed)}.")
-    level, basis = grounded_price(run, first, proposal.get("price_level"))
     cards = [card for row in (first, second) for card in storefront_favorites(row)[1][:2] if card.get("name")]
     both = f"{article(singular(first['genre']))} and {article(singular(second['genre']))}"
     halves = [count_of(row["genre"], supply(row), row.get("nearby_capped"))
               for row in (first, second) if supply(row)]
-    beat = (f"No place inside the walk is both; the nearest competition is the {' and the '.join(halves)} inside the "
-            f"walk, each doing one half." if halves else "No place inside the walk is either.")
+    noun = area_noun(area)
+    beat = (f"No place inside the {noun} is both; the nearest competition is the {' and the '.join(halves)} inside the "
+            f"{noun}, each doing one half." if halves else f"No place inside the {noun} is either.")
     concept = {
         "name": name,
         "genre": first["genre"],
@@ -851,15 +876,12 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
         ],
         "caution": WILDCARD_CAUTION,
         "one_liner": NEXT_DOOR.sub("nearby", line),
-        "for_whom": f"Neighbors within a {minutes}-minute walk who love both {plural(first['genre'])} and "
-                    f"{plural(second['genre'])}",
-        "price_level": level,
-        "price_basis": basis,
-        "price_anchors": price_anchors(first, level),
+        "for_whom": f"{'Neighbors' if is_walk(area) else 'People'}{aged(ages)} within a {area_text(area)} who love both "
+                    f"{plural(first['genre'])} and {plural(second['genre'])}",
         "why_here": [
             f"{why_first[:1].upper() + why_first[1:]}.",
             f"{why_second[:1].upper() + why_second[1:]}.",
-            f"No place inside the {minutes}-minute walk is both {both}.",
+            f"No place inside the {area_text(area)} is both {both}.",
         ],
         "beat_competitors": beat,
         "signature": signature,
@@ -889,7 +911,7 @@ def wildcard_brief(run: RunState) -> dict | None:
     first, why_first, second, why_second = pair
     return {
         "combines": [{"genre": first["genre"], "evidence": why_first}, {"genre": second["genre"], "evidence": why_second}],
-        "inside_the_walk": "no place is both",
+        "inside_the_area": "no place is both",
         "loved_items": wildcard_items(run, first, second),
     }
 
@@ -904,10 +926,12 @@ def agent_brief(run: RunState) -> dict:
 
 
 CONCEPT_SYSTEM = """You are a retail and hospitality strategist who designs businesses for empty storefronts.
-You only reason from Qloo evidence about the people inside the site's walking catchment: residents, workers and visitors
-alike, so call them "people here", never "locals".
-Demand is compared with six same-size areas around the site, not the whole city; supply is compared with what a block
-this dense would typically hold. Only claim that people here travel for something when the evidence says so; when it
+You only reason from Qloo evidence about the people inside the site's area (catchment.area in the evidence: a walk, a
+drive or a road distance, such as "10-minute walk" or "30-minute drive"): residents, workers and visitors alike, so call
+them "people here", never "locals". Never call the area a walk unless it is one. When the site has an age_focus, the
+rankings, favorites and taste lean toward that age group: they are what people here of that age rank and love.
+Demand is compared with same-size areas around the site (on land), not the whole city; supply is compared with what a
+block this dense would typically hold. Only claim that people here travel for something when the evidence says so; when it
 says their favorites are just the city's famous places, there is no travel evidence. Distances are medians, not
 averages.
 Work like an analyst, in as few turns as possible. Tools called in the same turn run in parallel, so batch them:
@@ -921,14 +945,15 @@ Work like an analyst, in as few turns as possible. Tools called in the same turn
    (a weak test result is a finding, not a concept), unless it is the owner's request.
 Give every tool call a one-sentence reason that names the evidence behind it.
 Your job in submit_concepts is to choose, name and position. The server writes every factual line itself from the
-measured evidence (why here, who it is for, the competition, the price basis, the risk and how each concept meets the
-owner's rules), so do not restate numbers.
+measured evidence (why here, who it is for, the competition, the risk and how each concept meets the owner's rules),
+so do not restate numbers.
 Hard rules. The server checks every concept against them after you answer: what breaks one is repaired once and a
 concept that still breaks one is dropped, so keep them exactly.
 - owner_constraints and the unit: never a category ruled_out_by_owner_notes or whose fits_the_unit starts with "no"
   (test categories that fit instead), and nothing in the offer they forbid.
-- Budget (owner_constraints.budget): price_level 1 ($), below what the block charges; $$ is never budget, and a
-  budget concept is never described as upscale or premium.
+- Price band (owner_constraints.price): a budget concept is never described as upscale, premium, luxury, high-end or
+  fine dining, in its name, its one_liner or its items; an upscale one is never described as cheap, budget, a bargain
+  or discounted; a mid-range one is neither.
 - No hood (owner_constraints.no_hood, or a light kitchen): no signature item that needs a deep fryer, a griddle or
   flat-top, a grill or charcoal, a wok or a pizza oven (no fries, crispy potatoes, tempura, katsu, karaage, falafel or
   taameya, donuts, churros, burgers, kebabs or kofta, steaks, fried chicken or pizza, and no one_liner that promises
@@ -943,12 +968,12 @@ this site, and the other two are the strongest alternatives; respect the owner's
 Be specific enough that an owner could act on it, never filler such as "great vibes" or "quality and atmosphere":
 - three concepts are three different businesses (not brunch and breakfast, not a café and a coffee shop), each one a
   business someone can open: never a broad genre such as Personal care; test a specific one instead (gym, barbershop);
-- one_liner is the positioning in one sentence: what it is and how it differs from the competitors inside the walk.
-  It states no number the evidence does not give (no seat counts, floor areas, years or prices) and places no
-  competitor "next door" (they are inside the walk);
+- one_liner is the positioning in one sentence: what it is and how it differs from the competitors inside the area.
+  It states no number the evidence does not give (no seat counts, floor areas, years or prices), places no
+  competitor "next door" (they are inside the area) and uses no word nothing measured backs (cozy, chic, vibe,
+  welcoming, inviting, curated, elevated, haven); a one_liner that does is replaced by the evidence's own line;
 - signature items come first from inspect_gap's menu_gap: what the places people here love are known for and no place
-  inside the walk is;
-- price_level follows the price_evidence and the owner's price range.
+  inside the area is.
 When the evidence has a wildcard_candidate, also submit wildcard: one business that combines exactly its two loves,
 with a name, a one_liner and signature items drawn from its loved_items, under the same hard rules. It is shown after
 the three concepts as untested and is never ranked."""
@@ -968,7 +993,7 @@ CONCEPT_TOOLS = [
         "type": "function",
         "function": {
             "name": "test_category",
-            "description": "Test a business category that is not in the gap table, live against Qloo: places inside the walk, "
+            "description": "Test a business category that is not in the gap table, live against Qloo: places inside the area, "
                            "what the surroundings predict, places people here love versus the city's, and a gap score on "
                            "the same scale as the table. At most 3 per survey.",
             "parameters": {
@@ -1002,8 +1027,9 @@ CONCEPT_TOOLS = [
         "type": "function",
         "function": {
             "name": "inspect_gap",
-            "description": "Competitors within walking distance (with what reviews know them for and complain about) and "
-                           "the favorite places of people here of one genre, plus the design DNA of those favorites.",
+            "description": "Competitors inside the area (with what reviews know them for and complain about) and "
+                           "the favorite places of people here of one genre, plus what those favorites offer (menu, "
+                           "offerings, amenities and what reviews mention).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1029,8 +1055,7 @@ CONCEPT_TOOLS = [
                             "properties": {
                                 "name": {"type": "string", "description": "A memorable venue name"},
                                 "genre": {"type": "string", "description": "Genre exactly as written in the gap table or a test result"},
-                                "one_liner": {"type": "string", "description": "The positioning: what it is and how it differs from the competitors inside the walk"},
-                                "price_level": {"type": "integer", "minimum": 1, "maximum": 4},
+                                "one_liner": {"type": "string", "description": "The positioning: what it is and how it differs from the competitors inside the area"},
                                 "signature": {"type": "array", "items": {"type": "string"},
                                               "description": "3-4 short items (2-6 words each): dishes, drinks or experiences "
                                                              "people would come for; never the room, seating or mood"},
@@ -1099,7 +1124,7 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
         return await engine.find_genre(q, run.genres, query)
 
     async def measure(genre: dict) -> dict:
-        row = annotate(run, await engine.probe_genre(q, run.catchment, genre, run.gaps))
+        row = annotate(run, await engine.probe_genre(q, run.catchment, genre, run.gaps, run.site.ages))
         row["source"] = "agent"
         run.explored.append(row)
         trail.append(["explored", {"genre": genre}])
@@ -1120,7 +1145,7 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
             existing = gap_for(run, genre["name"])
             if existing:
                 await record("finding", {"text": f"{existing['genre']} is already in the gap table (gap {existing['gap_score']})."})
-                return {"already_measured": True, **gap_summary(existing)}
+                return {"already_measured": True, **gap_summary(existing, run.site.area, run.site.ages)}
             if not scoring.matches_focus(genre["name"], run.site.focus):
                 return await refuse(f"{genre['name']} is outside the owner's focus.")
             if len(testing) >= MAX_LIVE_TESTS:
@@ -1130,7 +1155,8 @@ async def agent_concepts(llm: LLM, q: QlooClient, run: RunState, emit: Emit) -> 
             row = await asyncio.shield(testing[genre["id"]])
         except QlooError as exc:
             return await refuse(f"Qloo test of {genre['name']} failed: {exc}")
-        return {"tested_live": True, **gap_summary(row), "evidence": gap_evidence(row, run.site.minutes)}
+        area, ages = run.site.area, run.site.ages
+        return {"tested_live": True, **gap_summary(row, area, ages), "evidence": gap_evidence(row, area, ages)}
 
     async def fan_taste(args: dict) -> dict:
         nonlocal fan_checks
@@ -1244,7 +1270,7 @@ async def replay_agent(
     """Re-emits a saved investigation for identical evidence; live tests are re-measured from the Qloo cache."""
     for event, data in saved.get("trail", []):
         if event == "explored":
-            row = annotate(run, await engine.probe_genre(q, run.catchment, data["genre"], run.gaps))
+            row = annotate(run, await engine.probe_genre(q, run.catchment, data["genre"], run.gaps, run.site.ages))
             row["source"] = "agent"
             run.explored.append(row)
             await emit("explored", {"row": public_gap(row)})

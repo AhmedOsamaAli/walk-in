@@ -15,7 +15,7 @@ from app.survey.dossier import SECTIONS, VERDICT_STAMPS, build_dossier
 from app.survey.evidence import gap_for
 from app.survey.models import RunStore, Site
 from tests.fakes import SITE as FAKE_SITE
-from tests.fakes import FakeImages, FakeQloo, FakeWalker
+from tests.fakes import FakeQloo, FakeWalker
 from tests.test_kit import RING, sheet, world
 
 PREPARED = date(2026, 10, 22)
@@ -53,17 +53,13 @@ def test_the_case_numbers_are_the_evidence():
     row = gap_for(run, "Bakery")
     case = dossier_of(run, design)["case"]
     numbers = {n["label"]: n for n in case["numbers"]}
-    assert list(numbers) == ["Demand", "Supply", "Pull", "Price position", "Capacity"]
+    assert list(numbers) == ["Demand", "Supply", "Pull", "Capacity"]
     assert numbers["Demand"]["data"] == {"here": row["demand_rank"], "around": row["ref_rank"]}
     assert numbers["Demand"]["value"] == "#6 here, #14.5 in the areas around"
     assert numbers["Supply"]["data"] == {"inside": row["nearby_count"], "typical": row["expected_nearby"]}
     assert numbers["Supply"]["value"] == "2 inside the walk, about 5.2 typical"
     assert numbers["Pull"]["data"] == {"outside": row["favorites_far"], "of": row["favorites_total"], "median_km": 2.8}
     assert numbers["Pull"]["value"] == "3 of 3 loved places outside the walk; median distance 2.8 km"
-    price = numbers["Price position"]
-    assert price["data"] == {"level": design["price_level"], "open": 3, "loved": row["price"]["loved"], "inside": row["price"]["nearby"]}
-    assert price["value"] == "$$$: a level locals love that no place inside the walk charges"
-    assert price["basis"].startswith(row["price"]["basis"])
     assert numbers["Capacity"]["data"] == space.fit("Bakery", 60, None)["capacity"] == {"mode": "seated", "low": 23, "high": 27}
     assert numbers["Capacity"]["value"] == "About 23–27 seated guests at most in 60 m² (646 ft²)"
     assert case["decision"] == {
@@ -75,11 +71,11 @@ def test_the_case_numbers_are_the_evidence():
     assert case["risk"]["text"] and case["risk"]["check"] and case["risk"]["text"] != case["risk"]["check"]
 
 
-def test_no_price_level_is_turned_into_money():
+def test_no_price_appears_anywhere_in_the_report():
+    # Every place in this world lists a Qloo price level, and still none reaches the page, as $ or in money.
     run = world()
     text = json.dumps(dossier_of(run), ensure_ascii=False)
-    assert "$$$" in text
-    assert not re.search(r"\$\s*\d", text)
+    assert "$" not in text and "price_level" not in text and "Price position" not in text
     assert not re.search(r"\b(USD|dollars?|€|£)\b", text, re.IGNORECASE)
 
 
@@ -93,7 +89,8 @@ def test_competitors_carry_their_complaints_with_counts():
         ("Long waits and lines", 4), ("Hygiene", 2)]
     assert places["Dawn Rolls"]["complaints"][1]["keywords"] == ["dirty tables"]
     corner = places["Corner Loaf"]
-    assert (corner["price"], corner["rating"], corner["known_for"], corner["main"]) == ("$", 4.4, ["sourdough"], True)
+    assert (corner["rating"], corner["known_for"], corner["main"]) == (4.4, ["sourdough"], True)
+    assert "price" not in corner
     assert competition["themes"] == [
         {"theme": "Long waits and lines", "places": 2, "mentions": 11},
         {"theme": "Rude staff", "places": 1, "mentions": 3},
@@ -112,19 +109,15 @@ def test_travel_lists_where_locals_go_now():
     assert (travel["outside"], travel["of"], travel["median_km"]) == (3, 3, 2.8)
 
 
-def test_the_offer_marks_what_is_new_and_prices_by_level():
+def test_the_offer_marks_what_is_new_and_carries_no_price():
     run = world()
     offer = dossier_of(run)["offer"]
     items = {i["item"]: i for i in offer["items"]}
     assert items["Kouign amann"] == {"item": "Kouign amann", "places": 2, "of": 3, "new_here": True}
-    assert all(i["places"] for i in offer["sheet"])  # the rules sheet's offer is the evidence's own
-    assert offer["price"]["ladder"] == [
-        {"level": 1, "label": "$", "loved": 0, "inside": 2}, {"level": 2, "label": "$$", "loved": 1, "inside": 0},
-        {"level": 3, "label": "$$$", "loved": 2, "inside": 0}, {"level": 4, "label": "$$$$", "loved": 0, "inside": 0},
-    ]
-    assert [(a["name"], a["url"]) for a in offer["price"]["anchors"]] == [
-        ("Crumb", "https://crumb.example/"), ("Rise", "https://rise.example/")]
-    assert offer["price"]["label"] == "$$$" and offer["price"]["open_note"].startswith("No $$$ bakery inside the walk")
+    # The sheet leads with the concept's own signature; an item the loved places are known for carries their count.
+    assert offer["sheet"][:2] == [{"item": "Kouign amann", "places": 2, "new_here": True},
+                                  {"item": "Rye loaf", "places": None, "new_here": None}]
+    assert "price" not in offer
 
 
 def test_alternatives_mark_the_chosen_gap_and_say_why_not_the_stronger_ones():
@@ -174,37 +167,37 @@ def test_missing_evidence_leaves_sections_out_instead_of_inventing_them():
     design = sheet(run)
     dossier = dossier_of(run, design)
     assert "competition" not in dossier and "travel" not in dossier
-    assert [n["label"] for n in dossier["case"]["numbers"]] == ["Demand", "Supply", "Price position"]
+    assert [n["label"] for n in dossier["case"]["numbers"]] == ["Demand", "Supply"]
     assert "capacity" not in dossier["room"] and design["capacity"] is None
     assert "International Building Code, Table 1004.5" not in [s["name"] for s in dossier["cover"]["sources"]]
     asks = [q["ask"] for q in dossier["before_you_sign"]["questions"]]
     assert "What is the floor area, and what occupant load does the certificate of occupancy allow?" in asks
     assert "guests at most" not in json.dumps(dossier, ensure_ascii=False)
-    assert {c["kind"] for c in dossier["launch"]["claims"]} == {"new"}  # nothing priced inside: no 'only', no promise
+    assert {c["kind"] for c in dossier["launch"]["claims"]} == {"only", "new"}  # none of the kind inside: 'only', no promise
     # A sheet without a launch plan or an experience plan has no such sections, and no channel steps.
     bare = dossier_of(run, {**design, "launch": None, "experience": None})
     assert "launch" not in bare["sections"] and "experience" not in bare["sections"]
-    assert [s["when"] for s in bare["first_90_days"]["steps"]] == ["Before signing", "Before opening", "Opening week", "Day 60"]
+    assert [s["when"] for s in bare["first_90_days"]["steps"]] == ["Before signing", "Opening week", "Day 60"]
 
 
 def test_the_first_90_days_follow_the_evidence():
     run = world()
     steps = dossier_of(run)["first_90_days"]["steps"]
     assert [s["when"] for s in steps] == [
-        "Before signing", "Before signing", "Before opening", "Before opening", "Opening week", "Opening week",
+        "Before signing", "Before signing", "Before opening", "Opening week", "Opening week",
         "Opening week", "Opening week", "Weeks 2–4", "Weeks 2–4", "Day 30", "Day 60",
     ]
-    assert '"The only $$$ bakery within a 10-minute walk"' in steps[0]["do"] and "Kouign amann" in steps[0]["do"]
+    assert '"Kouign amann, which no bakery within a 10-minute walk is known for"' in steps[0]["do"]
     assert steps[1]["do"].endswith("(morning).") and "foot traffic" in steps[1]["basis"]
-    assert steps[2]["do"] == "Set prices at $$$ after reading the menus of Crumb and Rise."
-    assert steps[3]["do"] == f"Build the service to keep the promise the ads make: {launch.PROMISES['Long waits and lines']}."
-    assert steps[4]["do"].startswith("Open Mon–Thu 11 am–10 pm") and steps[5]["do"] == launch.INTENT_ANGLE["Routine visit"]
-    assert [s["do"].split(":")[0] for s in steps[6:10]] == [
+    assert steps[2]["do"] == f"Build the service to keep the promise the ads make: {launch.PROMISES['Long waits and lines']}."
+    assert not any("$" in s["do"] or "price" in s["do"].lower() for s in steps)
+    assert steps[3]["do"].startswith("Open Mon–Thu 11 am–10 pm") and steps[4]["do"] == launch.INTENT_ANGLE["Routine visit"]
+    assert [s["do"].split(":")[0] for s in steps[5:9]] == [
         "Nextdoor, for the neighborhoods of the walk", "A radius ad that covers the walk",
         "Spotify, for awareness across the city", "The Google segment, for people who now travel to places like it",
     ]
-    assert "utm_campaign=golden-hour-launch" in steps[10]["do"]
-    assert steps[11]["basis"] == "Today: 2 inside the walk, about 5.2 typical; gap score 64 of 100."
+    assert "utm_campaign=golden-hour-launch" in steps[9]["do"]
+    assert steps[10]["basis"] == "Today: 2 inside the walk, about 5.2 typical; gap score 64 of 100."
 
 
 def test_landlord_questions_come_from_what_the_business_needs():
@@ -225,19 +218,15 @@ def test_landlord_questions_come_from_what_the_business_needs():
     assert wine[1] == "Does the lease's permitted use, and the zoning, allow a wine bar, and can the unit get a liquor licence?"
 
 
-def test_the_room_keeps_no_number_the_design_model_wrote():
+def test_the_room_is_the_unit_its_capacity_and_its_hours_only():
     run = world()
     design = sheet(run)
-    rules_room = dossier_of(run, design)["room"]
-    # The rules sheet's seating carries the computed capacity estimate, which is not the model's: it stays.
-    assert rules_room["interior"]["seating"] == design["interior"]["seating"]
-    assert design["capacity"] in rules_room["interior"]["seating"]
-    written = {**design, "interior": {**design["interior"], "seating": "Communal tables for 40 guests",
-                                      "mood": "Warm and bright", "materials": ["Oak", "2 kinds of tile"], "seats": 40}}
-    room = dossier_of(run, written)["room"]
-    assert "seating" not in room["interior"] and "seats" not in room["interior"]
-    assert room["interior"]["mood"] == "Warm and bright" and room["interior"]["materials"] == ["Oak"]
+    room = dossier_of(run, design)["room"]
+    assert set(room) == {"unit", "capacity", "capacity_basis", "hours", "hours_basis", "basis"}
     assert room["capacity"] == design["capacity"] == "about 23–27 seated guests at most"
+    # A sheet saved before the cuts still carries a model's interior and the design DNA; the report shows neither.
+    old = {**design, "interior": {"mood": "Warm and bright", "materials": ["Oak"]}, "dna": {"decor": ["Industrial chic"]}}
+    assert dossier_of(run, old)["room"] == room
 
 
 def test_the_pull_is_the_trip_to_the_loved_places_outside_the_walk():
@@ -277,7 +266,7 @@ def test_a_real_survey_run_yields_a_traceable_dossier():
         llm = LLM("", None, "test-model")
         site = Site(*FAKE_SITE, "Test Corner, Testville", size_m2=80)
         run = await pipeline.analyze_site(q, FakeWalker(), llm, RunStore(), site, ignore)
-        return run, await design_concept(llm, FakeImages(enabled=False), run, 0, q)
+        return run, await design_concept(run, 0, q)
 
     run, design = asyncio.run(survey())
     dossier = build_dossier(run, 0, design, prepared=PREPARED)
@@ -288,3 +277,104 @@ def test_a_real_survey_run_yields_a_traceable_dossier():
     assert dossier["competition"]["count"] == row["nearby_count"] == len(dossier["competition"]["places"])
     assert dossier["method"]["items"][0]["how"].startswith("A circle of 800 m around the pin")
     assert not re.search(r"\$\s*\d", json.dumps(dossier, ensure_ascii=False))
+
+
+def test_an_old_price_level_only_claim_is_left_out_with_a_note():
+    from app.survey.dossier import usable_claims
+    old = {"launch": {"claims": [
+        {"kind": "only", "line": "The only $$ bakery within a 10-minute walk", "proof": "None of the 2 that list a price"},
+        {"kind": "new", "line": "Kouign amann, which no bakery nearby is known for", "proof": "2 of 3 loved places"},
+    ]}}
+    claims, notes = usable_claims({}, old)
+    assert [c["kind"] for c in claims] == ["new"]
+    assert notes == ['Left out "The only $$ bakery within a 10-minute walk": it is about a price level, which Walk-in '
+                     'no longer uses.']
+
+
+def test_supply_says_routing_failed_only_when_the_walk_itself_is_a_circle():
+    from app.catchment import Catchment, circle_catchment
+    from app.survey.dossier import around_text
+    run = world()
+    traced = run.catchment
+    assert traced.source != "circle" and traced.around is None  # a traced walk saved before the around area existed
+    assert around_text(run) == "the count in a circle twice the walk's radius"
+    run.catchment = circle_catchment(traced.lat, traced.lon, 10)
+    assert around_text(run).endswith("(street routing was unavailable)")
+    run.catchment = Catchment(traced.lat, traced.lon, 10, "street network", traced.ring, traced.ring)
+    assert around_text(run).startswith("the count inside the area a 20-minute walk reaches over the streets")
+
+
+def test_the_number_of_comparison_areas_is_the_number_used():
+    from app.survey.evidence import areas_text
+    assert areas_text({"ref_areas": 6}) == "six same-size areas"
+    assert areas_text({"ref_areas": 4}) == "four same-size areas"  # two fell in open water
+    assert areas_text({}) == "same-size areas"
+
+
+# ---------- The cover's map ----------
+
+STREETS = {
+    "box": [[30.25, -97.73], [30.27, -97.71]], "layers": ["primary", "secondary", "residential", "pedestrian"],
+    "streets": {"primary": [[[30.26, -97.73], [30.26, -97.71]]], "secondary": [], "residential": [], "pedestrian": []},
+    "water": [], "parks": [], "points": 2, "tolerance_m": 2.0, "dropped": [], "credit": "© OpenStreetMap contributors",
+    "source": "first.test", "as_of": "2026-10-23T17:33:41Z",
+}
+
+
+def test_the_cover_map_pins_the_competition_tables_places_with_the_surveys_numbers():
+    run = world()
+    dossier = build_dossier(run, 0, sheet(run), prepared=PREPARED, streets=STREETS)
+    cover_map = dossier["cover"]["map"]
+    table = dossier["competition"]["places"]
+    assert [pin["name"] for pin in cover_map["pins"]] == [place["name"] for place in table] == ["Corner Loaf", "Dawn Rolls"]
+    assert [(pin["n"], pin["main"]) for pin in cover_map["pins"]] == [(1, True), (2, True)]
+    assert [pin["distance_m"] for pin in cover_map["pins"]] == [place["distance_m"] for place in table]
+    assert cover_map["streets"] == STREETS and "area" not in cover_map  # the cover's area_label names the area
+    assert cover_map["basis"].endswith("Streets and water: OpenStreetMap, data of 2026-10-23.")
+    assert dossier_of(run)["cover"]["map"]["streets"] is None  # no street map: the cover says so, nothing is drawn up
+
+
+def test_only_the_places_the_survey_numbers_carry_numbers_and_a_place_without_a_location_has_no_pin():
+    from app import scoring
+    from tests.test_kit import SITE, bakery
+    run = world()
+    row = gap_for(run, "Bakery")
+    more = [bakery(f"Loaf {k}", 20 + k, 1, 0.0004 * k) for k in range(1, 7)]
+    more[0]["location"] = None  # Qloo gives this one no location
+    row["_nearby_entities"] = row["_nearby_entities"] + more
+    row["competitors"] = [scoring.place_card(place, SITE) for place in row["_nearby_entities"][:8]]
+    dossier = dossier_of(run)
+    pins = dossier["cover"]["map"]["pins"]
+    # The survey lists six and numbers those with a location 1, 2, 3…; the rest of the table's places are dots.
+    assert [(pin["name"], pin["n"]) for pin in pins] == [
+        ("Corner Loaf", 1), ("Dawn Rolls", 2), ("Loaf 2", 3), ("Loaf 3", 4), ("Loaf 4", 5), ("Loaf 5", None),
+        ("Loaf 6", None),
+    ]
+    assert [place["name"] for place in dossier["competition"]["places"]][2] == "Loaf 1"  # in the table, without a pin
+
+
+def test_the_cover_map_letters_the_trips_as_the_travel_list_and_states_the_claim():
+    dossier = dossier_of(world())
+    cover_map = dossier["cover"]["map"]
+    assert [(t["key"], t["name"], t["km"], t["bearing"]) for t in cover_map["trips"]] == [
+        ("A", "Crumb", 2.2, 0), ("B", "Rise", 2.8, 0), ("C", "Proof", 3.3, 0)]
+    assert [t["name"] for t in cover_map["trips"]] == [p["name"] for p in dossier["travel"]["places"]]
+    assert cover_map["caption"] == ("2 bakeries inside the 10-minute walk; people here travel a median 2.8 km for the 3 "
+                                    "they love")
+    # Favorites that are the whole city's, not the neighbors' own, are no trips: the line keeps to the count.
+    citywide = dossier_of(world(favorites_kind="citywide"))["cover"]["map"]
+    assert citywide["trips"] == [] and citywide["caption"] == "2 bakeries inside the 10-minute walk"
+    none = dossier_of(world(nearby_count=0, _nearby_entities=[], competitors=[]))["cover"]["map"]
+    assert none["pins"] == [] and none["caption"].startswith("No bakery inside the 10-minute walk; ")
+
+
+def test_a_drive_area_is_named_by_its_label_and_its_pins_are_the_tables_rows():
+    from app.catchment import Catchment
+    run = world()
+    traced = run.catchment
+    run.catchment = Catchment(traced.lat, traced.lon, 30, "street network", traced.ring, travel="drive")
+    dossier = dossier_of(run)
+    cover_map = dossier["cover"]["map"]
+    assert cover_map["caption"].startswith("2 bakeries inside the 30-minute drive; ")
+    assert "inside the 30-minute drive" in cover_map["basis"] and "walk" not in cover_map["caption"]
+    assert len(cover_map["pins"]) <= len(dossier["competition"]["places"])

@@ -14,7 +14,7 @@ from app.survey.concepts import rule_concept
 from app.survey.design import design_concept
 from app.survey.evidence import annotate, gap_for
 from app.survey.models import RunState, Site
-from tests.fakes import GENRES, FakeImages, place
+from tests.fakes import GENRES, place
 
 SITE = (30.26, -97.72)
 # The walk as the catchment stores it, (lon, lat), closed.
@@ -124,7 +124,7 @@ def world(notes: str = "no alcohol", size_m2: float | None = 60, verdict: bool =
 
 
 def sheet(run: RunState, index: int = 0) -> dict:
-    return asyncio.run(design_concept(LLM("", None, "test-model"), FakeImages(enabled=False), run, index))
+    return asyncio.run(design_concept(run, index))
 
 
 def build(run: RunState, design: dict, llm=None, answers=None) -> dict:
@@ -167,26 +167,29 @@ class ScriptedLLM:
 
 
 GOOD = {
-    "spotify": {"script": "Golden Hour is a new bakery in Holly. It is the only upscale bakery within a ten-minute walk, "
-                          "with kouign amann no bakery that close is known for. Book ahead, or be served fast at the "
-                          "counter. Golden Hour, Holly. Walk in.",
-                "companion": "Golden Hour, Holly", "claims": ["only", "new", "promise"]},
-    "nextdoor": {"headline": "The only $$$ bakery within a 10-minute walk",
+    "spotify": {"script": "Golden Hour is a new bakery in Holly, with kouign amann no bakery that close is known for. "
+                          "Book ahead, or be served fast at the counter. Golden Hour, Holly. Walk in.",
+                "companion": "Golden Hour, Holly", "claims": ["new", "promise"]},
+    "nextdoor": {"headline": "Bakery without crossing town",
                  "body": "Hi neighbors! Golden Hour bakes kouign amann, which no bakery within a 10-minute walk is known "
                          "for. Book ahead, or be served fast at the counter.",
-                 "claims": ["only", "new", "promise"]},
+                 "claims": ["closer", "new", "promise"]},
     "google_search": {
         "headlines": ["Golden Hour", "Kouign amann in Holly", "Bakery without crossing town", "Book ahead or walk in",
                       "New bakery in Holly", "Morning pastries in Holly", "Open Mon–Thu 11 am–10 pm",
                       "A short walk from home", "Rye loaf, baked daily"],
-        "descriptions": ["The only upscale bakery within a 10-minute walk.", "Kouign amann no bakery nearby is known for.",
+        "descriptions": ["Golden Hour bakes kouign amann in Holly.", "Kouign amann no bakery nearby is known for.",
                          "Bakery without crossing town: a short walk from home.", "Book ahead, or be served fast."],
-        "claims": ["only", "new", "closer", "promise"]},
-    "meta": {"primary_text": "Golden Hour is the only $$$ bakery within a 10-minute walk. Come for the kouign amann.",
-             "headline": "Golden Hour, new in Holly", "description": "A short walk from home", "claims": ["only", "new"]},
-    "poster": {"headline": "Bakery without crossing town", "subline": "The only $$$ bakery within a 10-minute walk.",
-               "claims": ["closer", "only"]},
+        "claims": ["new", "closer", "promise"]},
+    "meta": {"primary_text": "Golden Hour is a new bakery in Holly. Come for the kouign amann.",
+             "headline": "Golden Hour, new in Holly", "description": "A short walk from home", "claims": ["new"]},
+    "poster": {"headline": "Bakery without crossing town",
+               "subline": "Kouign amann, which no bakery within a 10-minute walk is known for.",
+               "claims": ["closer", "new"]},
 }
+# The claim a walk with no bakery inside it makes (launch.claims), for the checks of what "only" may say.
+ONLY = {"id": "only", "kind": "only", "line": "The only bakery within a 10-minute walk",
+        "proof": "Qloo lists no bakery inside the walk, and OpenStreetMap shows none either."}
 # Every line breaks a rule: a superlative, a competitor, a fan base, a web address, a stray number, a length, a show.
 BAD = {
     "spotify": {"script": "The best bakery in Austin, for every Mobley fan.", "companion": "Better than Corner Loaf"},
@@ -220,10 +223,13 @@ def test_each_kind_of_violation_is_caught():
     assert "states 2019" in why("Baking since 2019")
     assert why("Ten minutes from your door") == ""  # the walk's own minutes, in words
     assert why("Open Fri–Sat until 11:30 pm") == ""  # the hours
-    assert why("The only $$$ bakery within a 10-minute walk") == ""  # the claim itself
+    assert "states a price" in why("The only $$$ bakery within a 10-minute walk")  # a price level is a price too
     for line in ("The best kouign amann in Austin", "Austin's #1 bakery", "Award-winning pastries", "Famous rye",
                  "The most loved bakery on the block", "Top-rated bread"):
         assert "is a superlative nothing proves" in why(line), line
+    for line, word in (("A cozy corner for your morning", "cozy"), ("Good vibes and better bread", "vibes"),
+                       ("A curated pastry case", "curated")):
+        assert f'"{word}" is filler nothing measured backs' in why(line), line
     assert "a web address" in why("Order at goldenhour.com")
     assert "a symbol a voice cannot read" in why("The only $$$ bakery", spoken=True)
     assert "the owner's notes rule out" in why("Mimosas on Sundays")  # the notes say no alcohol
@@ -303,7 +309,8 @@ def test_prices_quantities_and_offers_are_not_the_ads_to_make():
     run = world()
     design = sheet(run)
     facts = facts_of(run, design)
-    for line in ("Kouign amann from $2", "Rye loaf, $3 a slice", "A rye loaf for 3 dollars", "Coffee for two bucks"):
+    for line in ("Kouign amann from $2", "Rye loaf, $3 a slice", "A rye loaf for 3 dollars", "Coffee for two bucks",
+                 "Golden Hour, a $$ bakery in Holly"):
         assert "states a price" in reasons(facts, line), line
     for line, word in (("Loved by thousands of neighbors", "thousands"), ("Hundreds of neighbors already walk here", "Hundreds"),
                        ("Dozens of pastries every morning", "Dozens"), ("A million mornings start here", "million")):
@@ -311,7 +318,6 @@ def test_prices_quantities_and_offers_are_not_the_ads_to_make():
     for line in ("Free coffee for every neighbor on opening day", "Half price on Mondays", "Two for one on Fridays",
                  "Two croissants, one price: half off"):
         assert "promises a discount" in reasons(facts, line), line
-    assert facts.check("The only $$$ bakery within a 10-minute walk") == []  # a price level is no price
     result = build(run, design, ScriptedLLM(answer_with("poster", "subline", "Kouign amann from $2, every morning."), GOOD))
     assert result["copy"]["poster"]["subline"] == GOOD["poster"]["subline"]
 
@@ -319,13 +325,13 @@ def test_prices_quantities_and_offers_are_not_the_ads_to_make():
 def test_only_keeps_to_what_the_only_claim_proves():
     run = world()
     design = sheet(run)
-    facts = facts_of(run, design)  # the claim: "The only $$$ bakery within a 10-minute walk"
-    for line in ("The only bakery in Austin open past midnight", "Golden Hour: the only upscale bakery in Holly",
-                 "The only $$$ bakery within a 10-minute walk, and the only one open late", "Only here: kouign amann",
+    facts = facts_of(run, design, claims=[ONLY])
+    for line in ("The only bakery in Austin open past midnight", "Golden Hour: the only bakery in Holly",
+                 "The only bakery within a 10-minute walk, and the only one open late", "Only here: kouign amann",
                  "No other bakery on your block bakes like this"):
         assert 'beyond what the "only" claim proves' in reasons(facts, line), line
-    for line in ("The only $$$ bakery within a 10-minute walk", "It is the only upscale bakery within a ten-minute walk.",
-                 "Golden Hour is the only upscale bakery within a 10 minute walk. Come say hello."):
+    for line in ("The only bakery within a 10-minute walk", "It is the only bakery within a ten-minute walk.",
+                 "Golden Hour is the only bakery within a 10 minute walk. Come say hello."):
         assert facts.check(line) == [], line
     no_claim = facts_of(run, design, claims=[])
     for line, said in (("No other bakery on your block bakes like this", "no other"), ("Nowhere else on the block", "nowhere else"),
@@ -369,17 +375,17 @@ def test_rules_write_every_channel_within_its_limits():
     assert list(ads) == ["spotify", "nextdoor", "google_search", "meta", "poster"]
     assert_valid(ads, facts_of(run, design))
     ids = {c["id"] for c in result["claims"]}
-    assert ids == {"only", "new", "closer", "promise"}
+    assert ids == {"new", "closer", "promise"}  # two bakeries inside the walk: no 'only'
     assert all(set(p["claims"]) <= ids and p["source"] == "rules" for p in ads.values())
     spotify = ads["spotify"]
     assert spotify["words"] <= 75 and spotify["seconds"] == round(spotify["words"] / 2.5)
     assert "Gary Clark" not in spotify["script"] and "$" not in spotify["script"]
     assert "without crossing town" not in spotify["script"]  # the city hears it, not just the walk
-    assert ads["nextdoor"]["headline"] == "The only $$$ bakery within a 10-minute walk"
+    assert ads["nextdoor"]["headline"] == "Golden Hour: a new bakery close by"
     assert "Holly" in ads["nextdoor"]["body"] and "Corner Loaf" not in ads["nextdoor"]["body"]
     assert len(ads["google_search"]["headlines"]) >= 8 and len(ads["google_search"]["descriptions"]) == 4
     assert not any("$" in line for line in ads["google_search"]["headlines"] + ads["google_search"]["descriptions"])
-    assert ads["poster"]["claims"] == ["only", "closer"]
+    assert ads["poster"]["claims"] == ["new", "closer"]
 
 
 def test_rules_copy_stays_valid_with_no_claims_hours_or_neighborhoods():
@@ -417,7 +423,7 @@ def test_a_rule_breaking_answer_gets_one_retry_with_the_reasons():
     ads = result["copy"]
     assert ads["nextdoor"]["headline"] == GOOD["nextdoor"]["headline"]
     assert ads["google_search"]["headlines"] == GOOD["google_search"]["headlines"]
-    assert ads["spotify"]["claims"] == ["only", "new", "promise"] and ads["spotify"]["source"] == "agent"
+    assert ads["spotify"]["claims"] == ["new", "promise"] and ads["spotify"]["source"] == "agent"
     assert_valid(ads, facts_of(run, design))
     assert {r["attempt"] for r in result["rejected"]} == {1}
     assert len(result["rejected"]) == 12  # every line of the first answer
@@ -480,13 +486,14 @@ def test_answers_are_replayed_while_the_evidence_is_unchanged():
     assert silent.prompts == [] and again["copy"] == first["copy"] and again["mode"] == "agent"
 
 
-def test_an_only_claim_at_another_level_than_the_sheet_is_left_out():
-    run = world()
-    design = {**sheet(run), "price_level": 2}
-    result = build(run, design)
-    assert "only" not in {c["kind"] for c in result["claims"]}
-    assert result["notes"] and "$$" in result["notes"][0]
-    assert not any(re.search(r"\bonly\b", line, re.IGNORECASE) for line in kit_lines(result["copy"]))
+def test_a_walk_with_none_of_the_kind_makes_the_only_claim_and_the_poster_leads_with_it():
+    run = world(nearby_count=0, _nearby_entities=[], competitors=[])
+    result = build(run, sheet(run))
+    only = next(c for c in result["claims"] if c["kind"] == "only")
+    assert only["line"] == "The only bakery within a 10-minute walk"
+    assert only["proof"].startswith("Qloo lists no bakery inside the walk")
+    assert result["poster"]["claim"]["kind"] == "only"
+    assert_valid(result["copy"], facts_of(run, sheet(run)))
 
 
 def test_the_poster_is_drawn_from_the_walk():
@@ -498,7 +505,8 @@ def test_the_poster_is_drawn_from_the_walk():
     assert poster["site"] == [30.26, -97.72] and poster["minutes"] == 10
     assert poster["neighborhoods"] == ["Holly", "East Cesar Chavez"]
     assert poster["name"] == "Golden Hour" and poster["hours"] == design["hours"]
-    assert poster["claim"]["kind"] == "only" and poster["claim"]["proof"].startswith("None of the 2 bakeries inside the walk")
+    assert poster["claim"]["kind"] == "new" and poster["claim"]["proof"] == (
+        "2 of the bakeries locals love are known for it; none inside the walk is.")
     assert poster["headline"] == "Bakery without crossing town"
     assert poster["tagline"] is None  # the sheet's tagline states the evidence's numbers, which a poster does not
 
@@ -545,7 +553,7 @@ def test_a_real_survey_gets_a_valid_kit():
     async def survey():
         llm = LLM("", None, "test-model")
         run = await pipeline.analyze_site(q, FakeWalker(), llm, RunStore(), Site(*FAKE_SITE, "Test Corner, Testville"), ignore)
-        return run, await design_concept(llm, FakeImages(enabled=False), run, 0, q)
+        return run, await design_concept(run, 0, q)
 
     run, design = asyncio.run(survey())
     result = build(run, design)
@@ -565,3 +573,36 @@ def test_the_kit_carries_the_dossier_with_its_copy():
     assert result["dossier"]["launch"]["copy"] == result["copy"]
     assert result["concept"] == {"index": 0, "name": "Golden Hour", "genre": "Bakery"}
     assert result["built_at"].endswith("+00:00")
+
+
+# ---------- The maps ----------
+
+def test_the_poster_map_shows_the_trips_without_naming_them_and_only_with_the_closer_claim():
+    run = world()
+    result = build(run, sheet(run))
+    assert "closer" in [claim["kind"] for claim in result["claims"]]
+    assert result["poster"]["map"] == {
+        "streets": None,
+        "trips": [{"km": 2.2, "bearing": 0}, {"km": 2.8, "bearing": 0}, {"km": 3.3, "bearing": 0}],
+        "caption": "2.8 km: where people here go for bakeries now",
+    }
+    poster = json.dumps(result["poster"], ensure_ascii=False)
+    assert not any(name in poster for name in ("Crumb", "Rise", "Corner Loaf", "Dawn Rolls"))
+    # Without a claim that people here cross town for it, the poster says nothing of trips.
+    calm = world(leakage=0.1)
+    plain = build(calm, sheet(calm))
+    assert "closer" not in [claim["kind"] for claim in plain["claims"]]
+    assert plain["poster"]["map"]["trips"] == [] and plain["poster"]["map"]["caption"] is None
+
+
+def test_one_street_map_serves_the_poster_and_the_cover_and_may_arrive_while_the_copy_is_written():
+    streets = {"box": [[30.25, -97.73], [30.27, -97.71]], "streets": {}, "water": [], "parks": [], "credit": "©"}
+
+    async def fetched() -> dict:
+        return streets
+
+    run = world()
+    for given in (streets, fetched()):
+        result = asyncio.run(kit.build_kit(LLM("", None, "test-model"), run, 0, sheet(run), None, given))
+        assert result["poster"]["map"]["streets"] == streets
+        assert result["dossier"]["cover"]["map"]["streets"] == streets

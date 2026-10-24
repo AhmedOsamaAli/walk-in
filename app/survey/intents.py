@@ -5,15 +5,20 @@ verdict compares like with like, and an existing place is compared with the plac
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from collections import Counter
 from statistics import median
 
 from .. import engine, scoring
-from ..qloo import QlooClient
+from ..qloo import QlooClient, QlooError
 from . import experience
-from .evidence import annotate, fits, gap_evidence, gap_for, public_gap, storefront_favorites
+from .evidence import annotate, area_noun, fits, gap_evidence, gap_for, public_gap, storefront_favorites
+from .launch import taste_area
 from .models import RunState
+
+log = logging.getLogger("walkin")
 
 # Tag families an owner can act on, and how many of them to suggest.
 OFFER_FAMILIES = {"menu": 2, "offerings": 2, "amenities": 1, "activities": 1}
@@ -37,7 +42,7 @@ async def measured_row(q: QlooClient, run: RunState, genre: dict, source: str) -
         return row
     known = next((g for g in run.genres if g["id"] == genre["id"]), None)
     genre = {"rank": scoring.UNRANKED, "ref_rank": None, **(known or {}), **genre}
-    row = annotate(run, await engine.probe_genre(q, run.catchment, genre, run.gaps))
+    row = annotate(run, await engine.probe_genre(q, run.catchment, genre, run.gaps, run.site.ages))
     row["source"] = source
     run.explored.append(row)
     return row
@@ -57,11 +62,21 @@ def weakness(row: dict) -> str:
 
 
 async def verdict(q: QlooClient, run: RunState) -> dict:
-    """How the business the owner wants to open ranks among this site's gaps, and whether the unit can host it."""
+    """How the business the owner wants to open ranks among this site's gaps, and whether the unit can host it.
+
+    A chain Qloo knows ('Starbucks') is judged as the category of its own stores, and the verdict says how many of
+    them the area already has.
+    """
     query = run.site.business.strip()
     genre, why_not = await engine.find_genre(q, run.genres, query)
+    chain = None
+    if not (genre and engine.same_category(query, genre["name"])):
+        chain = await chain_check(q, run, query)
+        if chain and chain.get("_genre"):
+            genre, why_not = chain["_genre"], None
+    shown = {key: value for key, value in chain.items() if not key.startswith("_")} if chain else None
     if not genre:
-        return {"query": query, "found": False, "level": "unknown", "headline": why_not, "evidence": []}
+        return {"query": query, "found": False, "level": "unknown", "headline": why_not, "evidence": [], "chain": shown}
     row = await measured_row(q, run, genre, "owner")
     ranked = sorted([r for r in run.gaps if r["genre_id"] != row["genre_id"]] + [row], key=lambda r: -r["gap_score"])
     position, total = ranked.index(row) + 1, len(ranked)
@@ -83,7 +98,53 @@ async def verdict(q: QlooClient, run: RunState) -> dict:
     return {
         "query": query, "found": True, "genre": row["genre"], "genre_id": row["genre_id"], "level": level,
         "headline": headline, "position": position, "of": total, "gap_score": row["gap_score"],
-        "evidence": gap_evidence(row, run.site.minutes), "row": public_gap(row),
+        "evidence": gap_evidence(row, run.site.area, run.site.ages), "row": public_gap(row), "chain": shown,
+    }
+
+
+CHAIN_LIMIT = 50  # stores counted inside the area; past this the verdict says "50+"
+
+
+async def chain_check(q: QlooClient, run: RunState, query: str) -> dict | None:
+    """When the business named is a chain Qloo knows, how many of its stores the area and the area around already
+    have, and the category Qloo gives its stores (`_genre`, for the verdict). None for anything else."""
+    catchment = run.catchment
+    if catchment is None or not query:
+        return None
+    try:
+        brand = await engine.find_brand(q, query)
+        if not brand:
+            return None
+        brand_id = brand["entity_id"]
+        inside, around = await asyncio.gather(
+            engine.brand_stores(q, engine.walk_filter(catchment), brand_id, CHAIN_LIMIT),
+            engine.brand_stores(q, engine.around_filter(catchment), brand_id, engine.AROUND_LIMIT),
+        )
+        sample = inside or around or await engine.brand_stores(
+            q, engine.circle_filter(catchment.lat, catchment.lon, engine.favorites_m(catchment)), brand_id, 5,
+        )
+    except QlooError:
+        log.warning("Chain lookup failed; judging the business by its words only", exc_info=True)
+        return None
+    name = brand.get("name") or query
+    category = next((tag for tag in map(scoring.primary_genre_tag, sample) if tag), None)
+    capped = len(inside) >= CHAIN_LIMIT
+    count = f"{CHAIN_LIMIT}+" if capped else str(len(inside))
+    near = f"{engine.AROUND_LIMIT}+" if len(around) >= engine.AROUND_LIMIT else str(len(around))
+    wider = catchment.around_label
+    within = f"within the {wider}" if wider.startswith("area ") else f"within a {wider}"
+    if inside:
+        line = (f"{count} {name} {'location is' if len(inside) == 1 else 'locations are'} already inside the "
+                f"{catchment.label}, and {near} {within}.")
+    elif around:
+        line = f"No {name} inside the {catchment.label} yet; {near} {within}."
+    else:
+        line = f"No {name} inside the {catchment.label}, nor {within}."
+    basis = f"Qloo's places that carry the {name} brand, counted inside the {catchment.label} and {within}"
+    basis += f"; Qloo files its stores as {category[1]}, so that is the category judged." if category else "."
+    return {
+        "brand": name, "inside": len(inside), "around": len(around), "capped": capped, "line": line, "basis": basis,
+        "_genre": {"id": category[0], "name": category[1]} if category else None,
     }
 
 
@@ -107,9 +168,12 @@ async def improve(q: QlooClient, run: RunState) -> dict | None:
     row = await measured_row(q, run, {"id": tag[0], "name": tag[1]}, "owner")
     comparison = compare(place, row)
     plan = experience.plan(run, row["genre"])
-    changes = moves(place.get("name") or "Your place", row, comparison, plan)
+    changes = moves(
+        place.get("name") or "Your place", row, comparison, plan, here=area_noun(run.site.area), near=taste_area(run),
+    )
     hours = comparison["hours"]
     hours.pop("_place"), hours.pop("_peers")
+    comparison.pop("_price")
     return {
         "place": scoring.place_card(place, (run.site.lat, run.site.lon)),
         "genre": row["genre"],
@@ -183,13 +247,14 @@ def compare(place: dict, row: dict) -> dict:
         # Suggestions only transfer between places at a similar price; otherwise only the position is reported.
         "comparable": "similar price" in peers_label or not props.get("price_level"),
         "peer_names": [p.get("name") for p in peers[:6] if p.get("name")],
-        # Their own menus and websites, where the owner can check real prices and offers.
+        # Their own menus and websites, where the owner can check their offer.
         "peer_links": [
-            {"name": p.get("name"), "price_level": (p.get("properties") or {}).get("price_level"), "url": url, "link": link}
+            {"name": p.get("name"), "url": url, "link": link}
             for p in peers[:6] if p.get("name") for url, link in [scoring.place_link(p)]
         ],
         "rating": {"place": round(float(rating), 1) if rating else None, "peers": round(median(peer_ratings), 1) if peer_ratings else None},
-        "price": {"place": props.get("price_level"), "peers": round(median(peer_prices)) if peer_prices else None},
+        # Qloo's price levels only pick like-for-like peers and the position in moves; they are never shown.
+        "_price": {"place": props.get("price_level"), "peers": round(median(peer_prices)) if peer_prices else None},
         "hours": {
             "place": {label: scoring.span_text(span) for label, span in place_hours[0].items()} if place_hours else None,
             "peers": {label: scoring.span_text(span) for label, span in peer_hours[0].items()} if peer_hours else None,
@@ -204,7 +269,9 @@ def compare(place: dict, row: dict) -> dict:
     }
 
 
-def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dict]:
+def moves(
+    name: str, row: dict, comparison: dict, plan: dict | None, here: str = "walk", near: str = "within 1.5 km",
+) -> list[dict]:
     """Concrete changes, most urgent first, each with the evidence behind it.
 
     Offer, hours and rating suggestions only come from places at a similar price: an upscale place learns nothing from
@@ -213,7 +280,7 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
     genre = scoring.genre_title(row["genre"])
     peers = f"{genre} {comparison['peers_label']}"
     count = comparison["peers"]
-    rating, price = comparison["rating"], comparison["price"]
+    rating, price = comparison["rating"], comparison["_price"]
     out: list[dict] = []
     if comparison["complaints"]:
         out.append({"title": "Fix what reviews flag", "why": f"Reviews of {name} flag {flagged(comparison['complaints'])}."})
@@ -228,11 +295,11 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
         if rating["place"] and rating["peers"] and rating["place"] < rating["peers"] - 0.2:
             out.append({"title": "Close the rating gap", "why": f"{name} is rated {rating['place']} against a median {rating['peers']} at the {peers}."})
     elif price["place"] and price["peers"] and price["place"] != price["peers"]:
-        position = "above" if price["place"] > price["peers"] else "below"
-        out.append({"title": f"Own the {'high' if position == 'above' else 'low'} end", "why": (
-            f"Few of the {genre} places people here love are priced like {name} ({'$' * price['place']}); most are "
-            f"{'$' * price['peers']}. {name} is the {'upscale' if position == 'above' else 'budget'} option, so their offer "
-            "and hours are no guide."
+        above = price["place"] > price["peers"]
+        out.append({"title": f"Own the {'high' if above else 'low'} end", "why": (
+            f"Few of the {genre} places people here love are priced like {name}: most are "
+            f"{'cheaper' if above else 'pricier'}. {name} is the {'upscale' if above else 'budget'} option among them, so "
+            "their offer and hours are no guide."
         )})
     if row.get("favorites_kind") == "local" and row["favorites_far"] >= 3 and (row.get("leakage") or 0) >= 0.6:
         known = comparison["peers_known_for"][:3]
@@ -242,11 +309,11 @@ def moves(name: str, row: dict, comparison: dict, plan: dict | None) -> list[dic
         away = f", a median {km} km away" if km else ""
         out.append({"title": "Win back the trips", "why": (
             f"{row['favorites_far']} of the {row['favorites_total']} {genre} places people here love more than the rest "
-            f"of the city does are outside the walk{away}{known_text}."
+            f"of the city does are outside the {here}{away}{known_text}."
         )})
     if plan and plan.get("soundtrack"):
         names = ", ".join(item["name"] for item in plan["soundtrack"][:3])
-        out.append({"title": "Program for the neighborhood", "why": f"People within 1.5 km over-index on {names}; see the plan below."})
+        out.append({"title": "Program for the neighborhood", "why": f"People {near} over-index on {names}; see the plan below."})
     return out[:8]
 
 

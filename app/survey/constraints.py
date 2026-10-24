@@ -34,6 +34,14 @@ NEGATED = re.compile(r"\b(not|no|never|nothing|isn'?t|aren'?t|won'?t|don'?t)\s+(
                      re.IGNORECASE)
 MID = re.compile(r"\b(mid[- ]?range|mid[- ]?price[ds]?|moderate(ly priced)?|mid[- ]market)\b", re.IGNORECASE)
 UPSCALE = re.compile(r"\b(upscale|high[- ]end|premium|luxury|fine[- ]dining)\b", re.IGNORECASE)
+# What a concept must not call itself when the owner set a price band: a budget place is never upscale, an upscale
+# place never cheap, and a mid-range place neither.
+CHEAP_SAID = re.compile(r"\b(cheap(er|est)?|budget|bargains?|inexpensive|low[- ]priced|discount(ed)?)\b", re.IGNORECASE)
+PRICE_BANDS = {
+    "budget": "never describe it, its name or its offer as upscale, premium, luxury, high-end or fine dining",
+    "mid-range": "never describe it as upscale, premium or luxury, nor as cheap, budget or a bargain",
+    "upscale": "never describe it, its name or its offer as cheap, budget, a bargain or discounted",
+}
 SIZE = re.compile(
     r"(\d{1,3}(?:,\d{3})+|\d{2,5}(?:\.\d+)?)\s*(m²|m2|sqm|sq\.? ?m\b|square met(?:er|re)s?|ft²|ft2|sq\.? ?ft|square f(?:ee|oo)t)",
     re.IGNORECASE,
@@ -164,13 +172,25 @@ class Constraints:
     family: bool = False
     halal: bool = False
     vegetarian: bool = False
-    price: tuple[int, int] | None = None  # allowed price levels, inclusive
+    price: str | None = None  # the price band the notes ask for: "budget", "mid-range" or "upscale"
     size_m2: float | None = None
     kitchen: str | None = None
     outdoor: bool | None = None
     understood: list[str] = field(default_factory=list)
-    budget: bool = False  # the notes ask for budget prices: the lowest level, below what the block charges
     no_hood: bool = False  # the notes say the unit has no extraction hood, whatever its kitchen
+
+    @property
+    def budget(self) -> bool:
+        return self.price == "budget"
+
+    def price_words(self, text: str) -> tuple[str, str] | None:
+        """The words that break the owner's price band, and why ('premium', 'calls a budget place upscale'): a budget
+        place is never upscale, an upscale place never cheap, and a mid-range place neither."""
+        if self.price in ("budget", "mid-range") and (found := UPSCALE.search(text)):
+            return found.group(0), f"calls a {self.price} place upscale"
+        if self.price in ("upscale", "mid-range") and (found := CHEAP_SAID.search(text)):
+            return found.group(0), f"calls {'an upscale' if self.price == 'upscale' else 'a mid-range'} place cheap"
+        return None
 
     @property
     def hood_free(self) -> bool:
@@ -209,10 +229,12 @@ class Constraints:
     def item_clash(self, item: str) -> tuple[str, str] | None:
         """The words of a dish, drink or text that break the owner's rules, and why ('fried', 'needs a deep fryer …').
         What an item says it is made without ('brisket-free', 'no-bake') is not held against it, except alcohol: an
-        'alcohol-free' wine is still wine."""
+        'alcohol-free' wine is still wine. A price band counts too: 'premium' on a budget."""
         item = plain_text(item)
         if self.no_alcohol and (found := ALCOHOL_ITEM.search(item)):
             return found.group(0), "is alcohol"
+        if priced := self.price_words(item):
+            return priced
         said = WITHOUT_ITEM.sub(" ", item)
         meatless = NOT_MEAT.sub(" ", said)
         if self.halal and (found := PORK_ITEM.search(meatless)):
@@ -229,12 +251,6 @@ class Constraints:
         """Whether a dish, drink or activity can be part of the offer."""
         return self.item_problem(item) is None
 
-    def price_level(self, level: int | None) -> int | None:
-        if level is None or not self.price:
-            return level
-        low, high = self.price
-        return max(low, min(high, level))
-
     def as_evidence(self) -> dict | None:
         """What the agent must respect, spelled out."""
         if not self.understood and not self.hood_free:
@@ -249,9 +265,7 @@ class Constraints:
         if self.vegetarian:
             rules["vegetarian"] = "no meat or fish in any item, and never a category whose business is meat or fish"
         if self.price:
-            rules["price_levels_allowed"] = list(range(self.price[0], self.price[1] + 1))
-        if self.budget:
-            rules["budget"] = "price_level 1 ($) only, below what the block charges; $$ is never budget"
+            rules["price"] = f"{self.price}: {PRICE_BANDS[self.price]}; state no price level or amount"
         if self.no_cooking:
             rules["no_kitchen"] = "nothing is cooked on site: drinks, cold food and food bought in ready to serve"
         elif self.hood_free:
@@ -280,15 +294,13 @@ def parse(notes: str) -> Constraints:
         found.vegetarian = True
         found.understood.append("vegetarian offer")
     if asks(CHEAP, text):
-        found.price = (1, 1)
-        found.budget = True
-        found.understood.append("budget prices ($)")
+        found.price = "budget"
     elif asks(MID, text):
-        found.price = (2, 2)
-        found.understood.append("mid-range prices ($$)")
+        found.price = "mid-range"
     elif asks(UPSCALE, text):
-        found.price = (3, 4)
-        found.understood.append("upscale prices ($$$–$$$$)")
+        found.price = "upscale"
+    if found.price:
+        found.understood.append(f"{found.price} prices")
     size = SIZE.search(text)
     if size:
         value = float(size.group(1).replace(",", ""))

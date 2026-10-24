@@ -42,9 +42,11 @@ def test_an_upscale_place_is_not_told_to_copy_fast_casual_favorites():
     assert [i["name"] for i in comparison["offer"]["offerings"]["missing"]] == ["Vegan meals"]
     titles = {m["title"]: m["why"] for m in intents.moves("Fine Mex", row, comparison, None)}
     assert titles == {"Own the high end": (
-        "Few of the Mexican places people here love are priced like Fine Mex ($$$$); most are $. Fine Mex is the upscale "
-        "option, so their offer and hours are no guide."
+        "Few of the Mexican places people here love are priced like Fine Mex: most are cheaper. Fine Mex is the upscale "
+        "option among them, so their offer and hours are no guide."
     )}
+    # Qloo's levels pick the peers; none reaches the owner.
+    assert "_price" in comparison and "price" not in comparison and "$" not in str(titles)
 
 
 def test_a_comparable_place_gets_offer_and_rating_suggestions():

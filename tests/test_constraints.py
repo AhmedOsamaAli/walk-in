@@ -8,11 +8,11 @@ from app.survey import constraints
 
 @pytest.mark.parametrize("notes, understood", [
     ("no alcohol licence", ["no alcohol"]),
-    ("We have no liquor license and want mid-range prices", ["no alcohol", "mid-range prices ($$)"]),
+    ("We have no liquor license and want mid-range prices", ["no alcohol", "mid-range prices"]),
     ("halal, family friendly", ["halal: no pork or alcohol", "family friendly"]),
     ("vegan menu, 1,200 sq ft, no kitchen", ["vegetarian offer", "unit of about 111 m²", "no kitchen"]),
-    ("60m2 unit with a patio, upscale", ["upscale prices ($$$–$$$$)", "unit of about 60 m²", "outdoor space"]),
-    ("no hood, budget", ["budget prices ($)", "light prep only, no extraction"]),
+    ("60m2 unit with a patio, upscale", ["upscale prices", "unit of about 60 m²", "outdoor space"]),
+    ("no hood, budget", ["budget prices", "light prep only, no extraction"]),
     ("Open late, near the university", []),
 ])
 def test_notes_are_understood(notes, understood):
@@ -50,9 +50,9 @@ def test_items_follow_the_notes():
     assert veg.allows_item("Mushroom risotto") and veg.allows_item("Union Square greens")
 
 
-def test_price_range_clamps_levels():
-    assert constraints.parse("budget").price_level(4) == 1  # budget is the lowest level, never $$
-    assert constraints.parse("upscale").price_level(1) == 3
-    assert constraints.parse("").price_level(3) == 3
+def test_the_price_band_is_a_rule_in_words():
+    assert constraints.parse("budget").as_evidence()["price"].startswith("budget: never describe it")
+    assert constraints.parse("upscale").as_evidence()["price"].startswith("upscale: never describe it")
+    assert "$" not in str(constraints.parse("mid-range prices").as_evidence())
     assert constraints.parse("").as_evidence() is None
     assert constraints.parse("no alcohol").as_evidence()["no_alcohol"].startswith("never propose")

@@ -146,6 +146,23 @@ def owner_place() -> dict:
 
 OWNER_PLACE = owner_place()
 
+# An invented coffee chain: two of its stores inside the walk, five in the area around it.
+CHAIN_BRAND = {"entity_id": "brand-bean-chain", "name": "Bean Chain", "popularity": 0.9, "tags": [], "properties": {}}
+FUZZY_BRAND = {"entity_id": "brand-famous-bakery", "name": "Famous Bakery Brand", "popularity": 0.9, "tags": [], "properties": {}}
+CHAIN_INSIDE, CHAIN_AROUND = 2, 5
+# Who every place draws (Qloo's audience leans): 30–44-year-olds, clearly leaning toward women.
+AUDIENCE_AGES = {"24_and_younger": -0.3, "25_to_29": 0.05, "30_to_34": 0.2, "35_to_44": 0.25, "45_to_54": -0.1,
+                 "55_and_older": -0.4}
+
+
+def chain_stores(count: int) -> list[dict]:
+    stores = []
+    for i in range(count):
+        store = place(f"Bean Chain {i + 1}", "Coffee shop", *offset(150 + 120 * i, 70 * i), i)
+        store["properties"]["primary_genre"] = {"id": GENRES["Coffee shop"], "name": "Coffee shop"}
+        stores.append(store)
+    return stores
+
 
 class FakeQloo:
     configured = True
@@ -163,6 +180,10 @@ class FakeQloo:
         self.calls += 1
         self.requests.append({"path": "/search", **params})
         query = params.get("query", "").lower()
+        if params.get("types") == "urn:entity:brand":
+            # An invented chain, and the kind of fuzzy hit Qloo's brand search gives for a category word.
+            hits = [CHAIN_BRAND] if "bean chain" in query else [FUZZY_BRAND] if "bakery" in query else []
+            return {"results": hits}
         hits = [OWNER_PLACE, OWNER_PLACE] if query and query in OWNER_PLACE["name"].lower() else []  # Qloo repeats places
         return {"results": hits}
 
@@ -227,6 +248,11 @@ class FakeQloo:
                 cells.append({"location": {"latitude": lat, "longitude": lon, "geohash": "dr5ru7k"},
                               "query": {"affinity": 0.95 - i * 0.02, "affinity_rank": 0.95 - i * 0.02, "popularity": 0.5}})
             return {"results": {"heatmap": cells}}
+        if kind == "urn:demographics":
+            ids = [i for i in str(params.get("signal.interests.entities", "")).split(",") if i]
+            return {"results": {"demographics": [
+                {"entity_id": i, "query": {"age": dict(AUDIENCE_AGES), "gender": {"male": -0.4, "female": 0.4}}} for i in ids
+            ]}}
         return {"results": {}}
 
     def _genre_ranking(self, params: dict) -> dict:
@@ -239,6 +265,9 @@ class FakeQloo:
         return {"results": {"tags": tags}}
 
     def _places(self, params: dict) -> dict:
+        if params.get("filter.references_brand") == CHAIN_BRAND["entity_id"]:
+            inside = params.get("filter.location", "").startswith("POLYGON")
+            return {"results": {"entities": [] if params.get("offset") else chain_stores(CHAIN_INSIDE if inside else CHAIN_AROUND)}}
         genre = GENRE_BY_ID.get(params.get("filter.tags", ""))
         location = params.get("filter.location", "")
         if not genre:
@@ -282,6 +311,12 @@ class FakeQloo:
 class FakeWalker:
     async def walk(self, lat: float, lon: float, minutes: int = 10):
         return circle_catchment(lat, lon, minutes)
+
+    async def area(self, lat: float, lon: float, reach):
+        # Walks go through walk(), so a test that overrides it (GatedWalker) still holds them.
+        if reach.travel == "walk":
+            return await self.walk(lat, lon, reach.minutes)
+        return circle_catchment(lat, lon, reach.minutes, reach)
 
     async def aclose(self) -> None:
         pass
@@ -334,37 +369,6 @@ class FakeOsm:
 class StubGeocoder:
     async def search(self, query: str) -> list[dict]:
         return [{"label": f"{query}, Testville", "lat": SITE[0], "lon": SITE[1]}]
-
-    async def aclose(self) -> None:
-        pass
-
-
-class FakeImages:
-    """Stands in for an image model; records every prompt it is asked to render."""
-
-    provider = "fake"
-    TINY_PNG = "data:image/png;base64,iVBORw0KGgo="
-
-    def __init__(self, enabled: bool = True, fail: bool = False) -> None:
-        self.enabled = enabled
-        self.fail = fail
-        self.error: Exception | None = None
-        self.calls: list[tuple[str, str]] = []
-
-    @property
-    def model(self) -> str | None:
-        return "fake-image-model" if self.enabled else None
-
-    async def generate(self, prompt: str, aspect: str = "16:9") -> str | None:
-        self.calls.append((prompt, aspect))
-        if self.error:
-            raise self.error
-        if self.fail:
-            raise RuntimeError("the image model is down")
-        return self.TINY_PNG
-
-    async def render(self, prompt: str, aspect: str = "16:9") -> tuple[str | None, str | None]:
-        return await self.generate(prompt, aspect), self.model
 
     async def aclose(self) -> None:
         pass

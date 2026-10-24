@@ -201,15 +201,13 @@ def test_venues_lead_with_what_people_go_there_to_do():
     ]
 
 
-def test_partner_brands_fit_the_business():
+def test_brand_cards_carry_their_kind():
     def card(name, brand_type):
         return scoring.entity_card({"entity_id": name, "name": name, "tags": [{"type": "urn:tag:brand_type:qloo", "name": brand_type}]})
 
     brands = [card("Daily News", "Media Brand"), card("City FC", "Entertainment Brand"), card("Big Motors", "Corporate Brand"),
               card("Cider Co", "Product Brand"), card("Corner Books", "Retail Brand")]
     assert [b["kind"] for b in brands] == ["media", "entertainment", "corporate", "product", "retail"]
-    assert [b["name"] for b in scoring.partner_brands(brands, "Seafood")] == ["Cider Co", "Corner Books"]
-    assert [b["name"] for b in scoring.partner_brands(brands, "Sports Bar")] == ["City FC", "Cider Co", "Corner Books"]
     assert "kind" not in scoring.entity_card({"entity_id": "a", "name": "An Artist"})
 
 
@@ -442,7 +440,7 @@ def test_summarize_block_counts_genres_keywords_and_classics():
     assert [c["name"] for c in summary["classics"]] == ["Chez Three", "Cafe One"]
     assert summary["classics"][0]["michelin"] == "1 star"
     assert summary["classics"][1] == {
-        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "price_level": 2, "reviews": 900,
+        "id": "cafe-one", "name": "Cafe One", "genre": "Coffee Shop", "reviews": 900,
         "known_for": ["great espresso"],
     }
 
@@ -521,7 +519,7 @@ def test_design_dna_aggregates_tag_families_and_keywords():
     assert dna["menu"] == ["Small plates"]
     # Grouped menu and experience topics, most mentioned first; complaints and neutral topics never appear.
     assert dna["keywords"] == ["Atmosphere", "small plates"]
-    assert dna["typical_price_level"] in (2, 3)
+    assert "typical_price_level" not in dna
 
 
 def test_focus_matching():
