@@ -239,25 +239,16 @@ def test_an_age_focus_is_said_wherever_people_are():
     assert wildcard["theme"]["basis"].startswith("What people aged 25–34 within 1.5 km over-index on")
 
 
-def test_the_models_wildcard_name_is_kept_for_its_own_kind_of_place_and_its_line_only_when_it_names_the_theme():
+def test_the_themed_wildcard_names_itself_from_the_theme_whatever_the_model_proposed():
     run = themed_world()
     ranked = [c for c in concepts.rule_concepts(run) if not c.get("wildcard")]
-    # The model named the wildcard of a cocktail bar and a coffee shop; the theme is hosted in the cocktail bar.
-    proposal = {"name": "Night Shift", "one_liner": "Espresso until five, then espresso martinis until late"}
-    wildcard = concepts.themed_wildcard(run, ranked, proposal)
-    assert wildcard["name"] == "Night Shift"
-    assert wildcard["one_liner"].startswith("A cocktail bar with reality-TV watch parties")
-    said = {**proposal, "one_liner": "Reality TV nights at the bar, with espresso martinis"}
-    assert concepts.themed_wildcard(run, ranked, said)["one_liner"] == said["one_liner"]
-    filler = {**proposal, "one_liner": "A cozy spot for reality TV fans"}
-    assert concepts.themed_wildcard(run, ranked, filler)["one_liner"].startswith("A cocktail bar with")
-    # Food TV is hosted in the burger place, which the model never named: the name is the theme's own.
-    food_tv = taste(tv=[card("Chef Wars", "Culinary competition"), card("Grill Masters", "Cooking")],
-                    podcasts=[card("Kitchen Table", "Food")])
-    run = themed_world(taste_=food_tv)
-    wildcard = concepts.themed_wildcard(run, ranked, proposal)
-    assert wildcard["genre"] == "Hamburger restaurant" and wildcard["name"] != "Night Shift"
-    assert wildcard["name"].split(" Counter")[0] in themes.THEMES[13].name_words
+    # The model named a wildcard of a cocktail bar and a coffee shop: never the theme, which it was not shown.
+    proposal = {"name": "Night Shift", "one_liner": "Reality TV nights at the bar, with espresso martinis"}
+    with_proposal = concepts.with_wildcard(run, ranked, proposal)[-1]
+    assert with_proposal == concepts.themed_wildcard(run, ranked)
+    assert with_proposal["name"] != "Night Shift"
+    assert any(with_proposal["name"].startswith(word) for word in themes.THEMES[0].name_words)
+    assert with_proposal["one_liner"].startswith("A cocktail bar with reality-TV watch parties")
 
 
 # ---------- Who it draws ----------
@@ -342,8 +333,8 @@ def test_the_agent_path_gets_the_themed_wildcard_with_no_other_model_call():
         payload = first(sse_events(client.get("/api/run", params=RUN_PARAMS).text), "concepts")
         assert payload["mode"] == "agent" and len([body for body in requests if body.get("tools")]) == 1
         wildcard = payload["concepts"][-1]
-        # The model named the wildcard of a seafood place and a wine bar; the theme is hosted in the wine bar.
-        assert wildcard["name"] == "Shuck & Pour" and wildcard["theme"]["key"] == "reality_tv"
+        # The model named a wildcard of a seafood place and a wine bar; the theme names its own, in the wine bar.
+        assert wildcard["name"] == "Confessional Wine Room" and wildcard["theme"]["key"] == "reality_tv"
         assert wildcard["one_liner"].startswith("A wine bar with reality-TV watch parties")
         assert wildcard["signature"][0] == "Reality-TV watch parties" and "Oysters" not in wildcard["signature"]
         assert sum(1 for c in payload["concepts"] if c.get("wildcard")) == 1

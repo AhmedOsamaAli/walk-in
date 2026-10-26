@@ -962,17 +962,14 @@ def themed_line(row: dict, theme: themes.Theme, area: str | int, ages: str | Non
             f"{theme.label}, and nothing inside the {area_text(area)} is known for it.")
 
 
-def themed_wildcard(
-    run: RunState, ranked: list[dict], proposed: object = None, notes: list[str] | None = None,
-) -> dict | None:
+def themed_wildcard(run: RunState, ranked: list[dict], notes: list[str] | None = None) -> dict | None:
     """The wildcard built on a theme (themes.found): a kind of place people here love, hosting what they watch, hear
     and follow, which no place inside the area is known for. The strongest theme wins unless a place inside the area is
     already known for it, the owner's rules rule it out (nightlife for a family place, a cook-along without a kitchen)
     or no loved category the unit and the rules allow suits it; then the next. It keeps the owner's rules like any
-    concept and is never ranked; who it draws (`theme.draws`) is read once the concepts are made (pipeline).
-    `proposed` is the model's wildcard for the two loves it was shown (wildcard_brief): its name is kept where it passes
-    the same checks and was given to this kind of place, its one-liner only where it also names the theme or a title;
-    the signature is always the theme's own activity, then what the places people here love of this kind are known for."""
+    concept and is never ranked; who it draws (`theme.draws`) is read once the concepts are made (pipeline). Its name,
+    line and signature are the theme's own: the model is shown two loves (wildcard_brief), never the theme, so what it
+    proposed is for another business."""
     notes = notes if notes is not None else []
     if not ranked:
         return None
@@ -981,7 +978,7 @@ def themed_wildcard(
         if theme.nightlife and rules.family or rules.item_problem(theme.activity) or themes.known_inside(run, theme):
             continue
         base = themed_base(theme, loved, ranked)
-        concept = themed_concept(run, ranked, theme, evidence, base, proposed, notes) if base else None
+        concept = themed_concept(run, ranked, theme, evidence, base, notes) if base else None
         if concept:
             return concept
     return None
@@ -989,23 +986,17 @@ def themed_wildcard(
 
 def themed_concept(
     run: RunState, ranked: list[dict], theme: themes.Theme, evidence: list[tuple[str, dict]], base: tuple[dict, str],
-    proposed: object, notes: list[str],
+    notes: list[str],
 ) -> dict | None:
     """The themed wildcard for one theme, hosted in one loved category; None, with a note, when it breaks a rule."""
     row, why = base
     area, ages = run.site.area, run.site.ages
-    proposal = proposed if isinstance(proposed, dict) else {}
     taken = {c["name"] for c in ranked}
     lines, named = themes.program(theme, evidence)
     cards = themes.built_on(evidence, named)
     titles = [card["name"] for card in cards]
-    pair = wildcard_pair(run) if proposal.get("name") else None
-    named_for = (pair[0]["genre_id"], pair[2]["genre_id"]) if pair else ()
-    kept = proposed_name(run, proposal, row["genre"], taken) if row["genre_id"] in named_for else None
-    name = kept or invent_name(run, row["genre"], taken, words=theme.name_words)
-    said = proposed_line(run, proposal, name)
-    names_theme = bool(said) and any(text.lower() in said.lower() for text in (theme.label, *titles))
-    line = said if names_theme else themed_line(row, theme, area, ages)
+    name = invent_name(run, row["genre"], taken, words=theme.name_words)
+    line = themed_line(row, theme, area, ages)
     over = f"{people_here(ages)} over-index on {scoring.natural_list(titles[:3])} compared with same-size areas around"
     seen: set[str] = set()
     items = [capitalized(theme.activity), *(i["item"] for i in offer_items(row, run.constraints, limit=4))]
@@ -1053,7 +1044,7 @@ def with_wildcard(run: RunState, ranked: list[dict], proposed: object = None, no
     """The ranked concepts, then at most one wildcard when the evidence supports one: built on a theme people here
     over-index on when one qualifies (themed_wildcard), else two loves combined (wildcard_concept)."""
     try:
-        themed = themed_wildcard(run, ranked, proposed, notes)
+        themed = themed_wildcard(run, ranked, notes)
     except Exception:  # the theme reads Qloo's genre tags: a surprise in them must never cost the owner the concepts
         log.error("The themed wildcard failed; the two-loves one stands in", exc_info=True)
         themed = None
