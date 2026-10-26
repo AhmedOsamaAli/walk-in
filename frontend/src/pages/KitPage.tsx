@@ -225,9 +225,10 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const cover = kit.dossier.cover;
   const sections = kit.dossier.sections.length;
   const pieces = Object.keys(kit.copy).length;
-  const items: TabItem[] = KIT_PARTS.map(({ id, label }) => ({
+  const items: TabItem[] = KIT_PARTS.map(({ id, label, teaser }) => ({
     id,
     label,
+    teaser,
     badge: id === "copy" ? String(pieces) : id === "links" && landing.kind === "own" ? String(kit.links.length) : null,
   }));
 

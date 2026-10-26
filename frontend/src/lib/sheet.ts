@@ -1,7 +1,37 @@
-/* The design sheet's readings (DesignContent.tsx, and the report's room): the unit in words, and the offer with what
-   the concept's own evidence says about each item. Pure, so they are tested without a browser. */
-import type { Concept, Design, UnitText } from "../api/types";
+/* The design sheet's readings (DesignContent.tsx, and the report's room): its tabs, the unit in words, and the offer with
+   what the concept's own evidence says about each item. Pure, so they are tested without a browser. */
+import type { Audience, Concept, Design, UnitText } from "../api/types";
 import { list } from "./format";
+import type { TabItem } from "./tabs";
+
+export type SheetTab = "concept" | "people" | "kit";
+
+type SheetItem = TabItem & { id: SheetTab };
+
+/** The tab of the people to reach: who the places draw (`audience`), and where and when to reach them (`plan`). */
+function peopleTab(audience: Audience | null | undefined, plan: boolean): SheetItem | null {
+  if (!audience) {
+    return plan
+      ? { id: "people", label: "Who to reach", teaser: "Who to reach, where and when, and only what the evidence lets an ad say." }
+      : null;
+  }
+  const who = audience.general ? "Who this kind of place draws, by age" : "Who the places people here love draw, by age";
+  return {
+    id: "people",
+    label: audience.general ? "Who it draws" : "Who you'd win",
+    teaser: plan ? `${who}, and where and when to reach them.` : `${who}, compared with everyone.`,
+  };
+}
+
+/** The sheet's tabs, each with the line its way in from the tab before says: the concept, the people, the launch kit. */
+export function sheetTabs(audience: Audience | null | undefined, plan: boolean): SheetItem[] {
+  const people = peopleTab(audience, plan);
+  return [
+    { id: "concept", label: "Concept", teaser: "What it sells and how it runs, drawn from the evidence and your rules." },
+    ...(people ? [people] : []),
+    { id: "kit", label: "Launch kit", teaser: "Ad copy, a window poster, tracked links and a report for a landlord or a lender." },
+  ];
+}
 
 /** "60 m² (646 ft²), a light-prep kitchen, no outdoor space": only what the owner said. */
 export function unitText(unit: UnitText | null | undefined): string | null {

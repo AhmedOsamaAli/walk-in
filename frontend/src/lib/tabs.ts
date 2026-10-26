@@ -8,6 +8,8 @@ export interface TabItem {
   pending?: boolean;
   /** A short count or mark after the label, such as "3". */
   badge?: string | null;
+  /** One short line of what the tab shows, said on the way in from the tab before (TabPager). */
+  teaser?: string;
 }
 
 /**

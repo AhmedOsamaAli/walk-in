@@ -1,10 +1,12 @@
 import { Fragment, useRef } from "react";
-import type { Concept } from "../api/types";
+import type { Concept, LoveItem } from "../api/types";
 import { loves, riskText, ruleLines } from "../lib/concepts";
 import { cssVars, cx } from "../lib/css";
 import { letter, list } from "../lib/format";
 import { posterButtonId } from "../lib/sections";
+import { POSTER_TITLES, themeOf } from "../lib/wildTheme";
 import { CountUp } from "./CountUp";
+import { WildTheme } from "./WildTheme";
 
 interface PosterProps {
   concept: Concept;
@@ -19,23 +21,58 @@ interface PosterProps {
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
+/** What a wild card combines, "coffee shops × jazz clubs", and the evidence that people here love each, or only some. */
+function Pair({ items, evidence }: { items: string[]; evidence: LoveItem[] }) {
+  return (
+    <div className="poster-pair">
+      <p className="poster-combines">
+        <span className="mono">Combines</span>{" "}
+        {items.map((item, k) => (
+          <Fragment key={item}>
+            {k ? (
+              <>
+                <span aria-hidden="true"> × </span>
+                <span className="sr-only"> and </span>
+              </>
+            ) : null}
+            <b>{item}</b>
+          </Fragment>
+        ))}
+      </p>
+      <ul className="poster-loves">
+        {evidence.map((love) => (
+          <li key={love.item}>
+            <b>{capitalized(love.item)}:</b> {love.source}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * A concept as a poster; the whole card opens its design sheet, and its button makes that keyboard-operable. The wild
- * card has no score or rank: it is stamped untested, says what it combines and why that is a risk.
+ * card has no score or rank: it is stamped untested, says what it combines and why that is a risk. A themed one
+ * combines a kind of place with a theme, and shows the titles people here over-index on that the theme is built on,
+ * with their pictures, what happens there and who those titles draw.
  */
 export function Poster({ concept, index, rank, position, onOpen }: PosterProps) {
   const button = useRef<HTMLButtonElement>(null);
   const wild = rank === null;
+  const theme = wild ? themeOf(concept) : null;
+  const top = theme ? "Themed wild card · not ranked" : wild ? "Wild card · not ranked" : `Concept ${letter(index)} · ${concept.genre}`;
   const why = wild ? [] : list(concept.why_here).slice(0, 3);
   const signature = list(concept.signature).slice(0, 4);
   const inspired = list(concept.inspired_by).slice(0, 3).join(" · ");
   const pair = wild ? loves(concept) : [];
+  // On a themed card the titles are the theme's evidence: of the two loves, only the kind of place keeps its line.
+  const [place] = pair;
   const rules = ruleLines(concept);
   const risk = riskText(concept);
   const caution = wild ? concept.caution?.trim() : null;
   return (
     <article
-      className={cx("poster", wild ? "wild" : `p${rank}`)}
+      className={cx("poster", wild ? "wild" : `p${rank}`, theme && "themed")}
       style={cssVars({ "--i": position })}
       aria-labelledby={`poster-${index}-name`}
       onClick={() => {
@@ -43,7 +80,7 @@ export function Poster({ concept, index, rank, position, onOpen }: PosterProps) 
       }}
     >
       <div className="poster-top mono">
-        <span>{wild ? "Wild card · not ranked" : `Concept ${letter(index)} · ${concept.genre}`}</span>
+        <span>{top}</span>
       </div>
       <div className="poster-head">
         {wild ? (
@@ -58,30 +95,13 @@ export function Poster({ concept, index, rank, position, onOpen }: PosterProps) 
           {concept.name}
         </h3>
       </div>
-      {pair.length === 2 ? (
-        <div className="poster-pair">
-          <p className="poster-combines">
-            <span className="mono">Combines</span>{" "}
-            {pair.map((love, k) => (
-              <Fragment key={love.item}>
-                {k ? (
-                  <>
-                    <span aria-hidden="true"> × </span>
-                    <span className="sr-only"> and </span>
-                  </>
-                ) : null}
-                <b>{love.item}</b>
-              </Fragment>
-            ))}
-          </p>
-          <ul className="poster-loves">
-            {pair.map((love) => (
-              <li key={love.item}>
-                <b>{capitalized(love.item)}:</b> {love.source}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {theme ? (
+        <>
+          {place ? <Pair items={[place.item, theme.label]} evidence={[place]} /> : null}
+          <WildTheme theme={theme} titles={POSTER_TITLES} />
+        </>
+      ) : pair.length === 2 ? (
+        <Pair items={pair.map((love) => love.item)} evidence={pair} />
       ) : null}
       {concept.one_liner ? <p className="poster-line">{concept.one_liner}</p> : null}
       {caution ? (

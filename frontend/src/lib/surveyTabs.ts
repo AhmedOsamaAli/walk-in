@@ -25,6 +25,17 @@ const LABELS: Record<SurveyTab, string> = {
   log: "Log",
 };
 
+/** What each tab shows, in one line, said on the way in from the tab before. */
+const TEASERS: Record<SurveyTab, string> = {
+  verdict: "Whether your idea fits here, measured like every other kind of business on the block.",
+  concepts: "Business concepts ranked by the evidence, each with a design sheet to open.",
+  improve: "Your place side by side with the places people here love, and what to change.",
+  gaps: "Place types people here love, ranked by how under-supplied they are, with competitors on the map.",
+  area: "What is already inside the area: its places, their ratings and what reviews say about them.",
+  taste: "The artists, podcasts, films, shows and brands that stand out here, and where Walk-in uses them.",
+  log: "Each step of the survey as it ran, with its time and the Qloo queries it made.",
+};
+
 /** The section each tab shows. */
 export const TAB_SECTIONS: Record<SurveyTab, SectionId> = {
   verdict: "s-verdict",
@@ -74,7 +85,14 @@ export interface SurveyTabItem extends TabItem {
 export function surveyTabs(survey: Content & Partial<Pick<SurveyState, "status">>): SurveyTabItem[] {
   return ORDER[survey.intent].map((id) => {
     const disabled = !arrived(id, survey);
-    return { id, label: LABELS[id], disabled, pending: disabled && survey.status === "running", badge: badge(id, survey) };
+    return {
+      id,
+      label: LABELS[id],
+      disabled,
+      pending: disabled && survey.status === "running",
+      badge: badge(id, survey),
+      teaser: TEASERS[id],
+    };
   });
 }
 

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { messageOf } from "../api/client";
-import type { Concept, Design, ExperiencePlan } from "../api/types";
+import type { Concept, ConceptTheme, Design, ExperiencePlan } from "../api/types";
 import { audienceTitle } from "../lib/audience";
 import { letter, list, naturalList } from "../lib/format";
 import { focusHeading, revealPanel } from "../lib/journey";
 import { areaText, hasLaunchPlan } from "../lib/launch";
-import { offerItems, unitText, type OfferItem, type OfferMark } from "../lib/sheet";
-import type { TabItem } from "../lib/tabs";
+import { offerItems, sheetTabs, unitText, type OfferItem, type OfferMark, type SheetTab } from "../lib/sheet";
+import { themeOf } from "../lib/wildTheme";
 import { loadDesign } from "../state/designs";
 import { WhoYoudWin } from "./AudienceView";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -16,6 +16,7 @@ import { HoursText } from "./Hours";
 import { KitOffer } from "./KitOffer";
 import { LaunchPlanView } from "./LaunchPlan";
 import { panelId, TabPager, TabPanel, Tabs } from "./Tabs";
+import { WildTheme } from "./WildTheme";
 
 interface SheetProps {
   runId: string;
@@ -54,8 +55,6 @@ function SheetTitle({ children }: { children: ReactNode }) {
 /** The sheet's tabs and their panels share this prefix in their ids. */
 const SHEET_TABS = "design";
 
-type SheetTab = "concept" | "people" | "kit";
-
 function Drafting({ concept, index }: Omit<SheetProps, "runId">) {
   return (
     <div className="d-main">
@@ -89,6 +88,19 @@ function Experience({ plan }: { plan: ExperiencePlan }) {
       <ExperiencePlanView plan={{ soundtrack, licensing }} />
       <ExperiencePlanView plan={{ screen, talks, basis }} />
     </div>
+  );
+}
+
+/** A themed wild card's theme, first on the sheet: what happens there is the point of the place. */
+function Theme({ theme }: { theme: ConceptTheme }) {
+  return (
+    <>
+      <h3 className="d-h">The theme: {theme.label}</h3>
+      <div className="d-theme">
+        <WildTheme theme={theme} />
+        {theme.basis ? <p className="xp-basis mono">{theme.basis}</p> : null}
+      </div>
+    </>
   );
 }
 
@@ -193,12 +205,9 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
   const madeBy = design.mode === "agent" ? (design.model ?? "agent") : "evidence rules";
   const { audience } = design;
   const plan = hasLaunchPlan(design.launch) ? design.launch : null;
-  const people = audience ? (audience.general ? "Who it draws" : "Who you'd win") : plan ? "Who to reach" : null;
-  const tabs: (TabItem & { id: SheetTab })[] = [
-    { id: "concept", label: "Concept" },
-    ...(people ? [{ id: "people" as const, label: people }] : []),
-    { id: "kit", label: "Launch kit" },
-  ];
+  const tabs = sheetTabs(audience, plan !== null);
+  const people = tabs.some((item) => item.id === "people");
+  const theme = themeOf(concept);
 
   /**
    * Another tab: the sheet scrolls back to its top when it had scrolled past it, under the pinned tabs; from a panel's
@@ -244,6 +253,7 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
         className="design-tabs"
       />
       <TabPanel idPrefix={SHEET_TABS} id="concept" selected={tab === "concept"}>
+        {theme ? <Theme theme={theme} /> : null}
         {offer.length ? <Offer items={offer} concept={concept} area={area} /> : null}
         <Room design={design} />
         {rules.length ? (
@@ -294,8 +304,8 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
   );
 }
 
-/** A concept's design sheet: what it sells, when it opens, what the unit holds, the owner's rules, the experience,
- * the launch and its kit. A part with nothing to say is left out. */
+/** A concept's design sheet: a themed wild card's theme, what it sells, when it opens, what the unit holds, the owner's
+ * rules, the experience, the launch and its kit. A part with nothing to say is left out. */
 export function DesignContent({ runId, index, concept }: SheetProps) {
   const [loaded, setLoaded] = useState<{ design: Design } | { error: string } | null>(null);
 

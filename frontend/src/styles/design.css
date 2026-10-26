@@ -55,6 +55,16 @@
 /* Two runs of the experience plan: the soundtrack with its licensing note, then the screenings and talks. */
 .d-xp { display: grid; gap: 26px; }
 
+/* A themed wild card's theme (WildTheme.tsx), first on the sheet: every title it is built on, then what happens there
+   and who those titles draw, and where the taste comes from. */
+.d-theme { display: grid; gap: 22px; }
+.d-theme .theme-titles { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); max-width: none; }
+.d-theme .theme-program li, .d-theme .theme-draws { font-size: 16px; }
+@media (max-width: 560px) {
+  .d-theme .theme-titles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+  .d-theme .theme-name { font-size: 12.5px; }
+}
+
 /* On a phone a spec's label sits above its value, so the value has the width. */
 @media (max-width: 560px) {
   .spec div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
