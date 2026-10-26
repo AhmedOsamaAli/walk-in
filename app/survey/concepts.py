@@ -7,8 +7,9 @@ fits it, and every concept says how it meets each rule (owner_rules). No concept
 dollar signs with no amounts behind them. The agent is told the rules, and its answer is checked after it answers: what
 breaks a rule is repaired once (items taken out and replaced from the evidence, the evidence's own line, a real name
 given) and a concept that still breaks one is dropped,
-with the reason in the payload's notes. A wildcard may follow the ranked concepts: two things people here love, combined
-into a business no place inside the area is.
+with the reason in the payload's notes. A wildcard may follow the ranked concepts: a kind of place people here love,
+hosting what they watch, hear and follow (themed_wildcard), or else two things people here love, combined into a
+business no place inside the area is (wildcard_concept).
 """
 from __future__ import annotations
 
@@ -28,10 +29,12 @@ from ..catchment import area_text
 from ..demographics import ages_label
 from ..llm import LLM, LLMUnavailable
 from ..qloo import QlooClient, QlooError
+from . import themes
 from .evidence import (
     aged,
     annotate,
     area_noun,
+    capitalized,
     competition,
     count_of,
     crowd_of,
@@ -55,6 +58,7 @@ from .evidence import (
     storefront_favorites,
     supply,
 )
+from .experience import basis as taste_basis
 from .experience import fans_of
 from .intents import requested_row
 from .models import Emit, RunState, Site
@@ -446,14 +450,15 @@ def name_noun(genre: str, side: bool = False) -> str:
     return scoring.genre_title(genre) if side else KIND_NOUNS.get(scoring.genre_kind(genre), "Kitchen")
 
 
-def invent_name(run: RunState, genre: str, taken: set[str], second: str | None = None) -> str:
+def invent_name(run: RunState, genre: str, taken: set[str], second: str | None = None, words: tuple[str, ...] = ()) -> str:
     """A real business name for a concept the model did not name well ('Linden Coffee', 'Daybreak Table'), chosen the
-    same way for the same site and category, never one an existing place or another concept here has."""
+    same way for the same site and category, never one an existing place or another concept here has. `words` are tried
+    first ('Cliffhanger Wine Room' for a reality-TV wild card), then the rules' own."""
     noun = name_noun(genre) if not second else f"{name_noun(genre, side=True)} & {name_noun(second, side=True)}"
     places = place_names(run)
     used = {word for name in taken for word in _name_words(name)}
     seed = zlib.crc32(f"{run.site.label}|{genre}|{second or ''}".encode())
-    names = [f"{NAME_WORDS[(seed + i) % len(NAME_WORDS)]} {noun}" for i in range(len(NAME_WORDS))]
+    names = [f"{pool[(seed + i) % len(pool)]} {noun}" for pool in (words, NAME_WORDS) if pool for i in range(len(pool))]
     for name in names:
         first = _name_words(name.removesuffix(noun))
         if set(first) & used or taken_name(name, places) or run.constraints.item_problem(name):
@@ -779,10 +784,9 @@ def combined_inside(run: RunState, first: dict, second: dict) -> bool:
     return any(carries(place, first) and carries(place, second) for place in places)
 
 
-def wildcard_pair(run: RunState) -> tuple[dict, str, dict, str] | None:
-    """The two categories people here demonstrably love (love_evidence) that combine into the business no place inside
-    the area already is, both allowed by the unit and the owner's notes: (first, its evidence, second, its evidence),
-    the stronger love first. None when no pair qualifies."""
+def loved_rows(run: RunState) -> list[tuple[dict, tuple[float, str]]]:
+    """The categories people here demonstrably love (love_evidence) that are a business someone can open and that the
+    unit and the owner's notes allow, with how clearly they love them and the evidence in words."""
     loved = []
     for row in run.gaps:
         if not fits(row) or scoring.genre_key(row["genre"]) in TOO_BROAD or not scoring.strict_kind(row["genre"]):
@@ -790,8 +794,15 @@ def wildcard_pair(run: RunState) -> tuple[dict, str, dict, str] | None:
         love = love_evidence(row, run.site.ages)
         if love and not loses_signature(run, row):
             loved.append((row, love))
+    return loved
+
+
+def wildcard_pair(run: RunState) -> tuple[dict, str, dict, str] | None:
+    """The two categories people here demonstrably love (love_evidence) that combine into the business no place inside
+    the area already is, both allowed by the unit and the owner's notes: (first, its evidence, second, its evidence),
+    the stronger love first. None when no pair qualifies."""
     best = None
-    for (a, (score_a, why_a)), (b, (score_b, why_b)) in combinations(loved, 2):
+    for (a, (score_a, why_a)), (b, (score_b, why_b)) in combinations(loved_rows(run), 2):
         if same_business(a["genre"], b["genre"]) or not combinable(a["genre"], b["genre"]) or combined_inside(run, a, b):
             continue
         mixed = 0.5 if scoring.genre_kind(a["genre"]) != scoring.genre_kind(b["genre"]) else 0.0
@@ -830,6 +841,28 @@ def wildcard_items(run: RunState, first: dict, second: dict) -> list[str]:
     return [item for item in items if not (scoring.item_key(item) in seen or seen.add(scoring.item_key(item)))][:4]
 
 
+def proposed_name(run: RunState, proposal: dict, genre: str, taken: set[str]) -> str | None:
+    """The model's name for a wildcard of this category, when it is a real name that no place here and no other concept
+    has, and that names nothing the owner's rules forbid; None otherwise."""
+    name = " ".join(str(proposal.get("name") or "").split())[:60]
+    if not name or taken_name(name, place_names(run)) or placeholder_name(name, genre, run.site.label) \
+            or name.lower() in {t.lower() for t in taken} or run.constraints.item_problem(name):
+        return None
+    return name
+
+
+def proposed_line(run: RunState, proposal: dict, name: str) -> str | None:
+    """The model's one-liner for a wildcard, when it claims nothing about the unit, nothing the owner's rules forbid, no
+    filler and no figure but the area's own; None otherwise."""
+    line = " ".join(str(proposal.get("one_liner") or "").split())
+    plain = without_names(line, (name, run.site.label))
+    figures = set(DIGITS.findall(area_figures(run.site)))  # the area's minutes or kilometres, and the age focus
+    if not line or UNIT_CLAIM.search(line) or run.constraints.item_problem(line) or FILLER.search(plain) \
+            or any(token not in figures for token in DIGITS.findall(plain)):
+        return None
+    return line
+
+
 def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None, notes: list[str] | None = None) -> dict | None:
     """At most one concept after the ranked ones, when the evidence supports it: two things people here love, combined
     into a business no place inside the area is. It keeps the owner's rules like any concept, carries `wildcard`,
@@ -843,17 +876,9 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
     area, ages = run.site.area, run.site.ages
     proposal = proposed if isinstance(proposed, dict) else {}
     taken = {c["name"] for c in ranked}
-    places = place_names(run)
-    name = " ".join(str(proposal.get("name") or "").split())[:60]
-    if not name or taken_name(name, places) or placeholder_name(name, first["genre"], run.site.label) \
-            or name.lower() in {t.lower() for t in taken} or run.constraints.item_problem(name):
-        name = invent_name(run, first["genre"], taken, second=second["genre"])
-    line = " ".join(str(proposal.get("one_liner") or "").split())
-    plain = without_names(line, (name, run.site.label))
-    figures = set(DIGITS.findall(area_figures(run.site)))  # the area's minutes or kilometres, and the age focus
-    if not line or UNIT_CLAIM.search(line) or run.constraints.item_problem(line) or FILLER.search(plain) \
-            or any(token not in figures for token in DIGITS.findall(plain)):
-        line = wildcard_line(first, second, area, ages)
+    name = proposed_name(run, proposal, first["genre"], taken) \
+        or invent_name(run, first["genre"], taken, second=second["genre"])
+    line = proposed_line(run, proposal, name) or wildcard_line(first, second, area, ages)
     signature, removed = ruled_items(proposal.get("signature"), wildcard_items(run, first, second), run, fallback=4)
     if removed:
         notes.append(f"{name}: took out {removed_text(removed)}.")
@@ -897,9 +922,142 @@ def wildcard_concept(run: RunState, ranked: list[dict], proposed: object = None,
     return concept
 
 
+# ---------- The themed wild card ----------
+
+THEMED_CAUTION = (
+    "Untested: nothing like this exists nearby, so there is no direct proof people would come; it rests on a kind of "
+    "place people here love and on what they watch, hear and follow."
+)
+
+
+def place_kind(genre: str) -> str:
+    """The kind of place a category is, in the words themes use (themes.Theme.kinds): 'cafe' for the light formats
+    (coffee, tea, juice, bakery, dessert), else scoring.genre_kind's (food, bar, venue, retail or wellness)."""
+    return "cafe" if LIGHT_FORMAT.search(genre) else scoring.genre_kind(genre)
+
+
+def themed_base(
+    theme: themes.Theme, loved: list[tuple[dict, tuple[float, str]]], ranked: list[dict],
+) -> tuple[dict, str] | None:
+    """The loved category that hosts a theme, with the evidence of that love: a kind of place the theme suits, one that
+    no ranked concept already is before one that is, then the theme's best kind, then the clearest love. None when no
+    loved category suits the theme."""
+    suited = [(row, love) for row, love in loved if place_kind(row["genre"]) in theme.kinds]
+    if not suited:
+        return None
+
+    def order(item: tuple[dict, tuple[float, str]]) -> tuple[bool, int, float, int]:
+        row, (score, _) = item
+        ranked_already = any(same_business(c["genre"], row["genre"]) for c in ranked)
+        return ranked_already, theme.kinds.index(place_kind(row["genre"])), -score, -row["gap_score"]
+
+    row, (_, why) = min(suited, key=order)
+    return row, why
+
+
+def themed_line(row: dict, theme: themes.Theme, area: str | int, ages: str | None = None) -> str:
+    """The themed wild card's positioning when the model gave none that names the theme: the place, what it hosts, and
+    that nothing inside the area is known for it."""
+    return (f"{article(singular(row['genre'])).capitalize()} with {theme.activity}: {people_here(ages)} over-index on "
+            f"{theme.label}, and nothing inside the {area_text(area)} is known for it.")
+
+
+def themed_wildcard(
+    run: RunState, ranked: list[dict], proposed: object = None, notes: list[str] | None = None,
+) -> dict | None:
+    """The wildcard built on a theme (themes.found): a kind of place people here love, hosting what they watch, hear
+    and follow, which no place inside the area is known for. The strongest theme wins unless a place inside the area is
+    already known for it, the owner's rules rule it out (nightlife for a family place, a cook-along without a kitchen)
+    or no loved category the unit and the rules allow suits it; then the next. It keeps the owner's rules like any
+    concept and is never ranked; who it draws (`theme.draws`) is read once the concepts are made (pipeline).
+    `proposed` is the model's wildcard for the two loves it was shown (wildcard_brief): its name is kept where it passes
+    the same checks and was given to this kind of place, its one-liner only where it also names the theme or a title;
+    the signature is always the theme's own activity, then what the places people here love of this kind are known for."""
+    notes = notes if notes is not None else []
+    if not ranked:
+        return None
+    loved, rules = loved_rows(run), run.constraints
+    for theme, evidence in themes.found(run.taste, rules):
+        if theme.nightlife and rules.family or rules.item_problem(theme.activity) or themes.known_inside(run, theme):
+            continue
+        base = themed_base(theme, loved, ranked)
+        concept = themed_concept(run, ranked, theme, evidence, base, proposed, notes) if base else None
+        if concept:
+            return concept
+    return None
+
+
+def themed_concept(
+    run: RunState, ranked: list[dict], theme: themes.Theme, evidence: list[tuple[str, dict]], base: tuple[dict, str],
+    proposed: object, notes: list[str],
+) -> dict | None:
+    """The themed wildcard for one theme, hosted in one loved category; None, with a note, when it breaks a rule."""
+    row, why = base
+    area, ages = run.site.area, run.site.ages
+    proposal = proposed if isinstance(proposed, dict) else {}
+    taken = {c["name"] for c in ranked}
+    lines, named = themes.program(theme, evidence)
+    cards = themes.built_on(evidence, named)
+    titles = [card["name"] for card in cards]
+    pair = wildcard_pair(run) if proposal.get("name") else None
+    named_for = (pair[0]["genre_id"], pair[2]["genre_id"]) if pair else ()
+    kept = proposed_name(run, proposal, row["genre"], taken) if row["genre_id"] in named_for else None
+    name = kept or invent_name(run, row["genre"], taken, words=theme.name_words)
+    said = proposed_line(run, proposal, name)
+    names_theme = bool(said) and any(text.lower() in said.lower() for text in (theme.label, *titles))
+    line = said if names_theme else themed_line(row, theme, area, ages)
+    over = f"{people_here(ages)} over-index on {scoring.natural_list(titles[:3])} compared with same-size areas around"
+    seen: set[str] = set()
+    items = [capitalized(theme.activity), *(i["item"] for i in offer_items(row, run.constraints, limit=4))]
+    signature = [item for item in items if not (scoring.item_key(item) in seen or seen.add(scoring.item_key(item)))][:4]
+    nearby, noun = supply(row), area_noun(area)
+    beat = (f"No place inside the {noun} is known for {theme.label}; the nearest competition is the "
+            f"{count_of(row['genre'], nearby, row.get('nearby_capped'))} inside the {noun}." if nearby
+            else f"No place inside the {noun} is known for {theme.label}, and no {singular(row['genre'])} competes there.")
+    concept = {
+        "name": name,
+        "genre": row["genre"],
+        "genre_id": row["genre_id"],
+        "gap_score": None,
+        "wildcard": True,
+        "combines": [
+            {"item": plural(row["genre"]), "genre": row["genre"], "source": f"{capitalized(why)} (Qloo)."},
+            {"item": theme.label, "genre": "", "source": f"{capitalized(over)} (Qloo)."},
+        ],
+        "theme": {"key": theme.key, "label": theme.label, "program": lines, "built_on": cards, "draws": None,
+                  "basis": taste_basis(run)},
+        "caution": THEMED_CAUTION,
+        "one_liner": NEXT_DOOR.sub("nearby", line),
+        "for_whom": f"{'Neighbors' if is_walk(area) else 'People'}{aged(ages)} within a {area_text(area)} who love "
+                    f"{theme.label}",
+        "why_here": [
+            f"{capitalized(why)}.",
+            f"{capitalized(over)}.",
+            f"No place inside the {area_text(area)} is known for {theme.label}.",
+        ],
+        "beat_competitors": beat,
+        "signature": signature,
+        "inspired_by": [card["name"] for card in storefront_favorites(row)[1][:3] if card.get("name")],
+        "risk": THEMED_CAUTION,
+    }
+    concept["evidence"] = concept["why_here"]
+    concept["owner_rules"] = owner_rule_lines(run, row, concept)
+    problems = rule_problems(run, row, concept)
+    if problems:
+        notes.append(f"Dropped the themed wildcard {name}: {'; '.join(problems)}.")
+        return None
+    return concept
+
+
 def with_wildcard(run: RunState, ranked: list[dict], proposed: object = None, notes: list[str] | None = None) -> list[dict]:
-    """The ranked concepts, then the wildcard when the evidence supports one."""
-    wildcard = wildcard_concept(run, ranked, proposed, notes)
+    """The ranked concepts, then at most one wildcard when the evidence supports one: built on a theme people here
+    over-index on when one qualifies (themed_wildcard), else two loves combined (wildcard_concept)."""
+    try:
+        themed = themed_wildcard(run, ranked, proposed, notes)
+    except Exception:  # the theme reads Qloo's genre tags: a surprise in them must never cost the owner the concepts
+        log.error("The themed wildcard failed; the two-loves one stands in", exc_info=True)
+        themed = None
+    wildcard = themed or wildcard_concept(run, ranked, proposed, notes)
     return [*ranked, wildcard] if wildcard else ranked
 
 

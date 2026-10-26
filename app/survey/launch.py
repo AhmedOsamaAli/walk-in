@@ -80,8 +80,10 @@ def plan(
     people: dict | None = None,
 ) -> dict:
     """The launch plan for one concept; `shared` holds the signature names this category's fans also love, and
-    `people` who the places people here love of this kind draw (audience.audience)."""
-    audience = reach(run, row, shared)
+    `people` who the places people here love of this kind draw (audience.audience). A themed concept's titles lead its
+    audiences: its program is built on them."""
+    lead = {card.get("name") for card in (concept.get("theme") or {}).get("built_on") or []}
+    audience = reach(run, row, shared, lead)
     audience["people"] = people
     places = where(run, row)
     said = claims(run, concept, row)
@@ -98,16 +100,18 @@ def plan(
     }
 
 
-def reach(run: RunState, row: dict | None, shared: set[str]) -> dict:
+def reach(run: RunState, row: dict | None, shared: set[str], lead: set[str] = frozenset()) -> dict:
+    """Who to reach: the signature names, `lead` (a themed concept's titles) first, then those the category's fans
+    share with the area."""
     taste = run.taste
     signature = {c.get("name") for key in SIGNATURE_KEYS for c in taste.get(key, []) if c.get("name")}
     both = shared & signature
 
     def names(key: str, limit: int) -> list[str]:
-        cards = sorted(taste.get(key, []), key=lambda c: c.get("name") not in both)
+        cards = sorted(taste.get(key, []), key=lambda c: (c.get("name") not in lead, c.get("name") not in both))
         return [c["name"] for c in cards if c.get("name")][:limit]
 
-    screen = [c["name"] for c in taste.get("distinctive_tv", [])[:3] + taste.get("distinctive_movies", [])[:2] if c.get("name")]
+    screen = sorted(names("distinctive_tv", 3) + names("distinctive_movies", 2), key=lambda name: name not in lead)
     return {
         "crowd": tag_share(example_places(row), CROWD_TAG, CROWD_SKIP)[:3] if row else [],
         "artists": names("distinctive_artists", 6),

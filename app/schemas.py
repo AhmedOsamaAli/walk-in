@@ -145,9 +145,43 @@ class GapRow(BaseModel):
 class LoveItem(BaseModel):
     """One of the two things a wildcard concept combines, and where the evidence that people here love it comes from."""
 
-    item: str = Field(description="What people here love: a kind of place, in plain words ('coffee shops')")
-    genre: str = Field(description="Its category in the gap table")
-    source: str = Field(description="The Qloo evidence in words: the trips people here make, or how they rank it")
+    item: str = Field(description="What people here love: a kind of place, in plain words ('coffee shops'), or the theme "
+                                  "of a themed wild card ('reality TV')")
+    genre: str = Field("", description="Its category in the gap table; empty for a themed wild card's theme")
+    source: str = Field(description="The Qloo evidence in words: the trips people here make, how they rank it, or the "
+                                    "titles they over-index on")
+
+
+class ThemeTitle(BaseModel):
+    """A title or brand people here over-index on that a themed wild card is built on (Qloo)."""
+
+    domain: str = Field(description="'tv', 'movies', 'podcasts', 'artists' or 'brands'")
+    id: str = Field(description="Its Qloo entity id")
+    name: str
+    image: str | None = Field(None, description="Qloo's image of it, when there is one")
+
+
+class ThemeDraws(BaseModel):
+    """Who the fans of a theme's titles lean toward, from Qloo's audience data: leans, not head counts."""
+
+    ages: list[str] = Field(description="The age bands they lean toward, youngest first ('25–29', '30–34'); empty when "
+                                        "no age group leans clearly")
+    gender: str | None = Field(None, description="'female' or 'male' when they lean clearly one way")
+    basis: str
+
+
+class Theme(BaseModel):
+    """What a themed wild card is built on: a theme people here over-index on across shows, films, podcasts, artists and
+    brands, what happens there, and the titles behind it."""
+
+    key: str = Field(description="The theme's id: 'reality_tv', 'sports', 'comedy', 'hip_hop'…")
+    label: str = Field(description="The theme in plain words: 'reality TV'")
+    program: list[str] = Field(description="What happens there, each line naming titles from the evidence")
+    built_on: list[ThemeTitle] = Field(description="Three to six titles and brands it stands on, those the program names "
+                                                   "first")
+    draws: ThemeDraws | None = Field(None, description="Who the titles' fans lean toward; null when nothing leans clearly "
+                                                       "or Qloo did not answer")
+    basis: str = Field(description="Where the taste comes from: who over-indexes against which areas (Qloo)")
 
 
 class Concept(BaseModel):
@@ -158,7 +192,7 @@ class Concept(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     name: str = Field(description="An original business name, never the category plus the neighborhood")
-    genre: str = Field(description="The gap-table category it is built on; for a wildcard, the first of the two it combines")
+    genre: str = Field(description="The gap-table category it is built on; for a wildcard, the kind of place it is")
     genre_id: str | None = None
     gap_score: int | None = Field(None, description="The category's gap score; null for the wildcard, which is never ranked")
     one_liner: str | None = None
@@ -174,8 +208,11 @@ class Concept(BaseModel):
                     "about 20–24 seats at most.'), the kitchen ('No hood needed: …'), the price band ('Budget prices: "
                     "nothing in it is called upscale or premium.'), the diet and families",
     )
-    wildcard: bool = Field(False, description="True for the extra concept after the ranked ones: two loves combined, untested")
-    combines: list[LoveItem] | None = Field(None, description="For the wildcard: the two things people here love it combines")
+    wildcard: bool = Field(False, description="True for the extra concept after the ranked ones: untested, never ranked")
+    combines: list[LoveItem] | None = Field(None, description="For the wildcard: a kind of place people here love and "
+                                                              "either another one or, when themed, its theme")
+    theme: Theme | None = Field(None, description="For a themed wild card: the theme people here over-index on, its "
+                                                  "program and the titles it is built on")
     caution: str | None = Field(None, description="For the wildcard: why it is untested")
 
 

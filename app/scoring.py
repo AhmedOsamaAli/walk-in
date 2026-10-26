@@ -1169,6 +1169,21 @@ def entity_card(entity: dict) -> dict:
     return card
 
 
+def tag_names(entity: dict, types: Iterable[str], limit: int = 8) -> list[str]:
+    """The names of an entity's tags of these types, in the order of `types`, each once however Qloo spells it ('R & B'
+    and 'R&B', 'Hip Hop' and 'Hip - Hop'), at most `limit`."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for kind in types:
+        for tag in entity.get("tags") or []:
+            name = tag.get("name")
+            key = re.sub(r"[\W_]+", "", name.casefold()) if isinstance(name, str) else ""
+            if tag.get("type") == kind and key and key not in seen:
+                seen.add(key)
+                names.append(name.strip())
+    return names[:limit]
+
+
 def era(year: int | None, this_year: int, new_within: int = 10) -> str | None:
     """'classic' when it started or came out 20+ years ago, 'new' within `new_within` years; in between is neither."""
     if not year:

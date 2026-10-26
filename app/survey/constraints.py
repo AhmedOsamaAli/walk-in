@@ -136,8 +136,8 @@ HOOD_EQUIPMENT = (
 # With no kitchen at all, anything cooked on site: baked, roasted, toasted, steamed, boiled or simmered.
 COOKED_ITEM = re.compile(
     r"\b(bak(e|ed|es|ing)|roast(ed|s|ing)?|toast(ed|ie|ies|s)?|panini|paninis|steam(ed)?|braise[ds]?|stew(s|ed)?|"
-    r"simmer(ed)?|poach(ed)?|boil(ed)?|cooked|soups?|chowders?|broths?|ramen|pho|noodles?|pasta|spaghetti|lasagn[ae]|"
-    r"risotto|curr(y|ies)|tagines?|koshar[iy]|ful|foul|fava|eggs?|frittatas?|shakshuka|quiches?|waffles?|crepes?|"
+    r"simmer(ed)?|poach(ed)?|boil(ed)?|cooked|cook-?alongs?|soups?|chowders?|broths?|ramen|pho|noodles?|pasta|spaghetti|"
+    r"lasagn[ae]|risotto|curr(y|ies)|tagines?|koshar[iy]|ful|foul|fava|eggs?|frittatas?|shakshuka|quiches?|waffles?|crepes?|"
     r"dumplings?|bao|dim sum|tacos?|burritos?|enchiladas?|tamales?|empanadas?|gratin|mac(aroni)? (and|&|n) cheese|"
     r"hot dogs?|hot ?pot)\b",
     re.IGNORECASE,

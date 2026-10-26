@@ -61,7 +61,7 @@ async def design_concept(run: RunState, index: int, q: QlooClient | None = None)
         "unit": space.unit_text(site.size_m2, site.kitchen, site.outdoor),
         "capacity": capacity,
         "capacity_basis": CAPACITY_BASIS if capacity else None,
-        "experience": experience.plan(run, concept["genre"]),
+        "experience": experience.plan(run, concept["genre"], theme=concept.get("theme")),
         "audience": people,
         "launch": launch.plan(run, concept, row, shared, hours, people),
         "owner_rules": owner_rule_lines(run, row, {"genre": concept["genre"], "signature": offer}),

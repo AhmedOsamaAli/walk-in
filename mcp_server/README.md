@@ -151,6 +151,15 @@ tested Starbucks:
 **Chain:** 6 Starbucks locations are already inside the 10-minute walk, and 14 within a 20-minute walk.
 ```
 
+A themed wild card is listed with its theme and what happens there, each line naming titles people here over-index on.
+This one is from an East Austin survey (a 15-minute drive) run on the evidence rules:
+
+```text
+4. **Cliffhanger Bar** (themed wild card: reality TV, untested): A cocktail bar with reality-TV watch parties: people here over-index on reality TV, and nothing inside the 15-minute drive is known for it.
+   - Watch parties for Jersey Shore: Family Vacation and Property Brothers
+   - Recap nights on Scrubbing In with Becca Tilley & Tanya Rad and Off The Vine with Kaitlyn Bristowe
+```
+
 ## Limits
 
 - **Rate and cost.** Walk-in allows a few surveys per hour from one address; past that, the tool says so in a plain

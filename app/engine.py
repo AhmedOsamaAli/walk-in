@@ -30,6 +30,18 @@ TASTE_DOMAINS = {
     "tv": "urn:entity:tv_show",
     "podcasts": "urn:entity:podcast",
 }
+# The tags that say what a distinctive title or brand is, per taste domain, kept on its card for the themed wild card
+# (survey/themes.py): media genres and the specific subgenres for films and shows, Qloo's and the music catalog's genres
+# for artists, and a brand's industry before its genre, which is broad (Patagonia's genres are Casual, Fashion and
+# Athletic; its industry is Outdoor Equipment).
+TASTE_GENRES = {
+    "brands": ("urn:tag:industry:qloo", "urn:tag:genre:brand"),
+    "artists": ("urn:tag:genre:qloo", "urn:tag:genre:music"),
+    "movies": ("urn:tag:genre:media", "urn:tag:genre:qloo", "urn:tag:subgenre:qloo"),
+    "tv": ("urn:tag:genre:media", "urn:tag:genre:qloo", "urn:tag:subgenre:qloo"),
+    "podcasts": ("urn:tag:genre:media",),
+}
+CARD_GENRES = 8  # a title's genres and its specific subgenres, while the taste event stays small
 
 
 def around_radius(catchment: Catchment) -> int:
@@ -487,7 +499,8 @@ async def local_taste(q: QlooClient, lat: float, lon: float, ages: str = "all", 
 
     Brands and artists keep their popular lists too (they show when Qloo ranks the categories' fans like everyone
     else); for films, shows and podcasts only the distinctive ones are kept: popular ones are popular everywhere. With
-    an age focus, here and around alike lean toward that age group.
+    an age focus, here and around alike lean toward that age group. Each distinctive card keeps its `genres`
+    (TASTE_GENRES), which the themed wild card reads.
     """
     refs = await land_centres(q, lat, lon, radius, reference_distance(radius), TASTE_REF_BEARINGS)
     kinds = list(TASTE_DOMAINS.values())
@@ -502,7 +515,10 @@ async def local_taste(q: QlooClient, lat: float, lon: float, ages: str = "all", 
             local = [e for e in local if scoring.is_commercial_brand(e)]
         if domain in ("brands", "artists"):
             taste[domain] = [scoring.entity_card(e) for e in local if scoring.is_safe_name(e.get("name"))][:12]
-        taste[f"distinctive_{domain}"] = [scoring.entity_card(e) for e in scoring.distinctive_by_rank(local, references)]
+        taste[f"distinctive_{domain}"] = [
+            {**scoring.entity_card(e), "genres": scoring.tag_names(e, TASTE_GENRES[domain], CARD_GENRES)}
+            for e in scoring.distinctive_by_rank(local, references)
+        ]
     return taste
 
 

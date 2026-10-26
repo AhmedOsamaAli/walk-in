@@ -45,14 +45,14 @@ async def audience(q: QlooClient, row: dict | None, here: str = "walk") -> dict 
                 "filter.type": "urn:demographics",
                 "signal.interests.entities": ",".join(scoring.item_id(p) for p in places),
             })
-            found = read(_rows(data), answered_names(_rows(data), places), row["genre"])
+            found = read(demographic_rows(data), answered_names(demographic_rows(data), places), row["genre"])
             if found:
                 return {**found, **await against_inside(q, row, found, here)}
         data = await q.insights({"filter.type": "urn:demographics", "signal.interests.tags": row["genre_id"]})
     except QlooError:
         log.warning("Audience lookup failed; the sheet goes without it", exc_info=True)
         return None
-    return read(_rows(data)[:1], [], row["genre"], general=True)
+    return read(demographic_rows(data)[:1], [], row["genre"], general=True)
 
 
 async def against_inside(q: QlooClient, row: dict, loved: dict, here: str = "walk") -> dict:
@@ -70,7 +70,7 @@ async def against_inside(q: QlooClient, row: dict, loved: dict, here: str = "wal
     except QlooError:
         log.warning("Audience lookup for the places already here failed; the sheet goes without the tip", exc_info=True)
         return {"inside": None, "tip": None}
-    there = read(_rows(data), answered_names(_rows(data), places), row["genre"])
+    there = read(demographic_rows(data), answered_names(demographic_rows(data), places), row["genre"])
     if not there:
         return {"inside": None, "tip": None}
     inside = {key: there[key] for key in ("ages", "gender", "gender_lean", "bands", "places")}
@@ -114,7 +114,7 @@ def tip(loved: dict, inside: dict, genre: str, here: str = "walk", n: int | None
             f"draw {', '.join(target)}: aim the concept at them.")
 
 
-def _rows(data: dict | None) -> list[dict]:
+def demographic_rows(data: dict | None) -> list[dict]:
     return ((data or {}).get("results") or {}).get("demographics") or []
 
 
