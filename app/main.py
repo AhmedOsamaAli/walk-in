@@ -27,6 +27,7 @@ from .db import AccountStore, Database, KitStore, SurveyStore
 from .db.surveys import survey_status
 from .db.tables import utcnow
 from .geocode import Abandoned, Geocoder
+from .keepawake import keep_awake
 from .kits import KitBuilder
 from .llm import LLM
 from .osm import OsmClient
@@ -466,9 +467,13 @@ def create_app(
         app.state.kit_limiter = RateLimiter(KITS_PER_HOUR, 3600)
         app.state.kit_budget = DailyBudget(settings.kit_daily_limit)
         await app.state.builder.resume()  # kits a restart cut off are built again
+        keeper = asyncio.create_task(keep_awake(settings.keep_awake_url)) if settings.keep_awake_url else None
         try:
             yield
         finally:
+            if keeper is not None:
+                keeper.cancel()
+                await asyncio.wait([keeper])
             await app.state.live.stop(SHUTDOWN_GRACE_S)
             await app.state.builder.stop()  # unfinished kits stay "building", and the next start builds them
             await services.aclose()
