@@ -50,12 +50,6 @@ def _env_flag(name: str) -> bool:
     return _env(name).lower() in ("1", "true", "yes", "on")
 
 
-def _keep_awake_url() -> str:
-    """The health check, through the public address Render gives a web service (RENDER_EXTERNAL_URL); empty elsewhere."""
-    base = _env("RENDER_EXTERNAL_URL").rstrip("/")
-    return f"{base}/api/health" if base and _env("KEEP_AWAKE", "1") != "0" else ""
-
-
 def origin_of(url: str) -> str | None:
     """'https://Example.com/path' -> 'https://example.com'; None when the URL has no scheme and host."""
     parts = urlsplit(url.strip())
@@ -118,9 +112,11 @@ class Settings:
     allowed_origins: tuple[str, ...] = field(default_factory=lambda: _env_list("ALLOWED_ORIGINS"))
     # Shared with the Cloudflare front door (frontend/functions): with it, X-Client-IP is the visitor's own address.
     proxy_secret: str = field(default_factory=lambda: _env("PROXY_SECRET"))
-    # On Render, the app visits its own health check every 5 minutes so the free instance never sleeps (waking takes
-    # about 40 seconds). KEEP_AWAKE=0 turns that off: a workspace's 750 free hours a month keep one instance awake, not two.
-    keep_awake_url: str = field(default_factory=_keep_awake_url)
+    # A free Render instance sleeps after 15 minutes without a visit and takes about 40 seconds to wake, so the app visits
+    # this address every 5 minutes: the front door's health check (https://<the Pages address>/api/health), so each
+    # visit comes back in through Cloudflare like a visitor's. Empty: off. A workspace's 750 free hours a month keep one
+    # instance awake, not two.
+    keep_awake_url: str = field(default_factory=lambda: _env("KEEP_AWAKE_URL"))
 
     @property
     def hosted(self) -> bool:

@@ -23,6 +23,10 @@ services:
       # Shared with the Cloudflare Pages front door (frontend/functions), which sends the visitor's address with it.
       - key: PROXY_SECRET
         sync: false
+      # The front door's health check (https://<the Pages address>/api/health): the app visits it every 5 minutes so
+      # the free instance never sleeps.
+      - key: KEEP_AWAKE_URL
+        sync: false
       - key: LLM_API_KEY
         sync: false
       - key: LLM_BASE_URL

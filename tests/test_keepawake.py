@@ -50,14 +50,11 @@ def test_a_failed_visit_does_not_stop_the_next():
     assert len(visits(httpx.ConnectError("unreachable"), 503, 200)) == 3
 
 
-def test_it_is_on_where_render_gives_the_service_a_public_address(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("KEEP_AWAKE", raising=False)
-    monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+def test_it_is_on_only_with_an_address(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("KEEP_AWAKE_URL", raising=False)
     assert config.Settings().keep_awake_url == ""  # development and tests
-    monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://walk-in-aoa2.onrender.com/")
-    assert config.Settings().keep_awake_url == "https://walk-in-aoa2.onrender.com/api/health"
-    monkeypatch.setenv("KEEP_AWAKE", "0")
-    assert config.Settings().keep_awake_url == ""
+    monkeypatch.setenv("KEEP_AWAKE_URL", " https://walkin-app.pages.dev/api/health ")
+    assert config.Settings().keep_awake_url == "https://walkin-app.pages.dev/api/health"
 
 
 @pytest.mark.parametrize("url", [URL, ""])
