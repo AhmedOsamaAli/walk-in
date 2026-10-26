@@ -1,6 +1,5 @@
 /* Test data: one explore survey as its stream sent it, and copies of its record as the server would return them; the
-   area and age focus of features/CONTRACT.md as the server sends them; and the finished examples of
-   features/EXAMPLES.md as GET /api/examples lists them. */
+   area and age focus as the server sends them; and the finished examples as GET /api/examples lists them. */
 import type {
   Example,
   GapRow,

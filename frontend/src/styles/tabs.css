@@ -1,40 +1,81 @@
-/* ---------- Tabs: one section at a time, the bar pinned in view while the panel scrolls ---------- */
+/* ---------- Tabs (Tabs.tsx): one part at a time. A label, then a segmented control whose chosen tab is filled in ink,
+   pinned in view while the panel scrolls; each panel ends with the way on to the next tab. ---------- */
+:root { --tabs-h: 58px; }
 .tabs {
-  display: flex; gap: 2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
-  margin: 0 calc(-1 * var(--pad)); padding: 0 var(--pad);
+  display: flex; align-items: center; gap: 14px;
+  min-height: var(--tabs-h); margin: 0 calc(-1 * var(--pad)); padding: 6px var(--pad);
   background: color-mix(in srgb, var(--card) 94%, transparent);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border-bottom: var(--rule);
 }
-.tabs::-webkit-scrollbar { display: none; }
 /* Under the top bar, the engine's waking band and the survey's status bar, whichever show. */
 .tabs-page { position: sticky; top: calc(var(--bar-h) + var(--wake-h) + var(--live-h)); z-index: 55; }
 /* At the top of a sheet that scrolls on its own. */
 .tabs-sheet { position: sticky; top: 0; z-index: 5; }
+/* What the bar is, said before it, so it reads as the way around the page. */
+.tabs-label { flex: none; color: var(--text-4); }
+
+/* The control: the tabs on a track. Wider than the screen, it scrolls sideways and fades at the side with more. */
+.tabs-track {
+  display: flex; gap: 2px; min-width: 0; padding: 3px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  background: var(--bone); box-shadow: inset 0 0 0 1px var(--edge); border-radius: 999px;
+}
+.tabs-track::-webkit-scrollbar { display: none; }
+.tabs-track[data-more-end] { mask-image: linear-gradient(to right, #000 calc(100% - 44px), transparent); }
+.tabs-track[data-more-start] { mask-image: linear-gradient(to left, #000 calc(100% - 44px), transparent); }
+.tabs-track[data-more-start][data-more-end] {
+  mask-image: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+}
 .tab {
-  position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px;
-  min-height: 46px; padding: 0 14px;
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; padding: 0 16px; border-radius: 999px;
   font: 500 15px/1.2 var(--f-sans); color: var(--text-3); white-space: nowrap;
-  transition: color .3s;
+  transition: background-color .25s var(--ease), color .25s, box-shadow .25s, opacity .6s;
 }
-.tab::after {
-  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0;
-  background: var(--blue-fill); transform: scaleX(0); transition: transform .35s var(--ease);
+.tab:hover:not([aria-disabled="true"], [aria-selected="true"]) { background: var(--card); color: var(--ink); box-shadow: var(--shadow-s); }
+.tab[aria-selected="true"] { background: var(--ink); color: var(--on-ink); box-shadow: var(--shadow-s); }
+.tab[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.tab-badge {
+  min-width: 22px; padding: 2px 7px 1px; border-radius: 999px; text-align: center;
+  background: var(--card); color: var(--text-2); font-size: 11px; letter-spacing: .02em;
 }
-.tab:hover:not([aria-disabled="true"]) { color: var(--ink); }
-.tab[aria-selected="true"] { color: var(--ink); }
-.tab[aria-selected="true"]::after { transform: scaleX(1); }
-.tab[aria-disabled="true"] { opacity: .45; cursor: default; }
-.tab:focus-visible { outline: 2px solid var(--blue); outline-offset: -4px; border-radius: 6px; }
-.tab-badge { padding: 1px 7px; border-radius: 999px; background: var(--smoke); color: var(--text-2); font-size: 11px; }
-.tab[aria-selected="true"] .tab-badge { background: var(--blue-fill); color: var(--on-blue); }
-@media (prefers-reduced-motion: reduce) { .tab::after { transition: none; } }
+.tab[aria-selected="true"] .tab-badge { background: color-mix(in srgb, var(--on-ink) 22%, transparent); color: var(--on-ink); }
+/* A tab whose content is on its way while the survey runs: a dot that breathes. */
+.tab-wait { width: 6px; height: 6px; border-radius: 50%; background: var(--blue-fill); animation: tabWait 1.4s var(--ease-io) infinite; }
+@keyframes tabWait { 50% { opacity: .2; } }
+
+/* ---------- A panel's foot: back to the tab before, on to the next ---------- */
+.tab-pager {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px;
+  margin-top: 36px; padding-top: 18px; border-top: 1px dashed var(--edge);
+}
+.tab-pager-back, .tab-pager-next {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 20px;
+  border-radius: 999px; font: 500 15px/1.1 var(--f-sans); white-space: nowrap;
+  transition: background-color .3s var(--ease), border-color .3s, color .3s;
+}
+.tab-pager-back { border: 1px solid var(--edge); color: var(--text-2); }
+.tab-pager-back:hover { border-color: var(--ink); color: var(--ink); }
+.tab-pager-next { margin-left: auto; background: var(--ink); color: var(--on-ink); border: 1px solid var(--ink); }
+.tab-pager-next:hover { background: var(--blue-fill); border-color: var(--blue-fill); color: var(--on-blue); }
+
+@media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
+/* A phone: the bar keeps to the control, which the fades and the chosen tab in view make read as tabs. */
 @media (max-width: 480px) {
-  .tab { min-height: 42px; padding: 0 11px; font-size: 14px; }
+  .tabs-label { display: none; }
+  .tab { padding: 0 12px; font-size: 14px; }
+  .tab-pager-back, .tab-pager-next { padding: 0 16px; font-size: 14.5px; }
 }
-/* On paper every panel prints, one after another, and the bar is left out. */
+/* The page's own scroll stops (a field the keyboard reaches, a link to a part) clear the pinned tabs too. */
+:root:has(.tabs) { scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + var(--tabs-h) + 12px); }
+/* The kit's page sets its bar's sides (kit.css); the bar keeps its own height here. */
+.kit-page .tabs.kit-tabs { padding-top: 6px; padding-bottom: 6px; }
+
+/* On paper every panel prints, one after another, and the bar and the panels' feet are left out. */
 @media print {
-  .tabs { display: none !important; }
+  .tabs, .tab-pager { display: none !important; }
   .tab-panel[hidden] { display: block !important; }
 }

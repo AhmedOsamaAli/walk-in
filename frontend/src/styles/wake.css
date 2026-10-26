@@ -14,7 +14,7 @@
   .sheet { padding-top: var(--wake-h); }
 }
 /* The survey's own status sticks under the band while there is one, rather than sliding beneath it. */
-.live { top: calc(var(--bar-h) + var(--wake-h)); }
+.live-status { top: calc(var(--bar-h) + var(--wake-h)); }
 
 .wake {
   container-type: inline-size;

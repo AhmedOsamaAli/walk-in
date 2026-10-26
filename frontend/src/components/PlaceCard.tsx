@@ -1,27 +1,9 @@
-import { useEffect, useId, useRef, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent } from "react";
 import { cx } from "../lib/css";
 import { naturalList, safeLink, standingText } from "../lib/format";
 import { OSM_COPYRIGHT, OSM_CREDIT, osmLink } from "../lib/gap";
 import { AREA, roleText, type Pin, type PinRole } from "../map/pins";
 import "../styles/pins.css";
-
-const stop = (event: MouseEvent) => {
-  event.stopPropagation();
-};
-
-/** A place's name, linked to its own menu or website when Qloo has one; a click on it never toggles what it sits in. */
-export function PlaceLink({ name, url, kind, children }: { name: string; url?: string | null; kind?: string | null; children?: ReactNode }) {
-  const href = safeLink(url);
-  if (!href) return <>{children ?? name}</>;
-  const what = kind === "menu" ? "menu" : "website";
-  return (
-    <a className="place-link" href={href} target="_blank" rel="noopener noreferrer" title={`${name}: open its ${what}`} onClick={stop}>
-      {children ?? name}
-      <span aria-hidden="true">↗</span>
-      <span className="sr-only"> (opens its {what})</span>
-    </a>
-  );
-}
 
 /** A place's number or letter, drawn like its pin: a square inside the walk, a circle for the places people love. */
 export function PinMark({ mark, role, className }: { mark: string; role: PinRole; className?: string }) {

@@ -1,12 +1,9 @@
 /* The survey's journey (LiveStatus.tsx, the result tabs and the design sheet): where a finished survey sends the owner
-   first, how a "next" control takes them there, and what the tab's title says to an owner waiting in another tab. */
-import { createContext } from "react";
-import type { Intent } from "../api/types";
+   first, how a tab switch shows the next part, and what the tab's title says to an owner waiting in another tab. */
 import type { SurveyState, SurveyStatus } from "../state/survey";
 import { placeConcepts } from "./concepts";
 import { scrollBehavior } from "./motion";
 import type { SectionId } from "./sections";
-import type { SurveyTab } from "./surveyTabs";
 
 export interface ResultLink {
   /** The section it goes to. */
@@ -48,15 +45,6 @@ export function tabTitle(status: SurveyStatus, unseen: boolean): string {
   if (unseen && status === "failed") return `Survey stopped · ${APP_TITLE}`;
   return APP_TITLE;
 }
-
-/** The survey on screen, for the "next" links inside its tabs: what the owner asked, and how to show another tab. */
-export interface Journey {
-  intent: Intent;
-  /** Shows the tab, brings its top into view and moves focus to its heading. */
-  show: (tab: SurveyTab) => void;
-}
-
-export const JourneyContext = createContext<Journey | null>(null);
 
 /**
  * After a tab switch, the new panel's top in view under the pinned bars: when the page (or the sheet, `box`) had

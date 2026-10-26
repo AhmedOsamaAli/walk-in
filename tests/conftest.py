@@ -5,6 +5,8 @@
 - the database_url fixture points the app, Alembic and any new Settings at a SQLite file in the test's own folder;
 - a test that opens an engine on anything but SQLite, or an asyncpg connection, fails. Tests of how Postgres URLs are
   handled use offline_postgres, which records connection attempts and refuses them.
+
+The app serves a stand-in for the React build (the web_build fixture), so tests never depend on npm run build.
 """
 from __future__ import annotations
 
@@ -59,6 +61,25 @@ def database_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
                 if isinstance(value, config.Settings):
                     monkeypatch.setattr(module, attribute, settings)
     return url
+
+
+@pytest.fixture(scope="session")
+def frontend_dist(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A stand-in for the React build (npm run build in frontend/): an index.html and one asset. It sits outside every
+    test's own folder, which some tests use as a cache and expect empty."""
+    dist = tmp_path_factory.mktemp("dist")
+    (dist / "index.html").write_text("<!doctype html><title>Walk-in</title><div id=root></div>", encoding="utf-8")
+    (dist / "app.js").write_text('document.title = "Walk-in";\n', encoding="utf-8")
+    return dist
+
+
+@pytest.fixture(autouse=True)
+def web_build(frontend_dist: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The build the app serves (app.main.WEB_ROOT), the same whether or not frontend/dist exists."""
+    from app import main
+
+    monkeypatch.setattr(main, "WEB_ROOT", frontend_dist)
+    return frontend_dist
 
 
 @pytest.fixture

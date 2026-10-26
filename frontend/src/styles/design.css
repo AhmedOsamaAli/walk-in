@@ -134,7 +134,7 @@
 .aud-facts dt { font-size: 10.5px; color: var(--text-4); }
 .aud-facts dd { font-size: 15.5px; line-height: 1.4; }
 .aud-basis { max-width: 64ch; font-size: 13px; line-height: 1.45; color: var(--text-4); }
-/* The positioning tip (Contract 10-23b), right under the line: a quiet accent in the highlighter's yellow. */
+/* The positioning tip, right under the line: a quiet accent in the highlighter's yellow. */
 .aud-tip { max-width: 60ch; padding: 1px 0 1px 12px; border-left: 3px solid var(--yellow); font-size: 15px; line-height: 1.45; color: var(--text-2); text-wrap: pretty; }
 /* With the places of this kind already inside the area: two rows of tracks on one scale, the band names once under
    both. The loved places' bars stay filled; the inside row's are outlined, so the two read apart at a glance. */

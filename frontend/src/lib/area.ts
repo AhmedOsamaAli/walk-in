@@ -1,6 +1,6 @@
-/* How far customers come from (features/CONTRACT.md, "Area size"): a walk or a drive of so many minutes, or a road
-   distance in km. The brief picks it, the preview and the survey trace it, and the map draws a circle of the same reach
-   when it cannot be traced (map/geometry.ts). */
+/* How far customers come from: a walk or a drive of so many minutes, or a road distance in km. The brief picks it, the
+   preview and the survey trace it, and the map draws a circle of the same reach when it cannot be traced
+   (map/geometry.ts). */
 import type { Travel, Walk } from "../api/types";
 
 export type Area = { travel: "walk" | "drive"; minutes: number } | { travel: "distance"; km: number };

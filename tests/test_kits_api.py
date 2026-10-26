@@ -1,4 +1,4 @@
-"""The launch kit (free for now), over the HTTP app with the fake Qloo world: one kit per survey concept, built in the
+"""The launch kit (free), over the HTTP app with the fake Qloo world: one kit per survey concept, built in the
 background (the concept designed first when needed), its page, retries, rate limits, kits a restart cut off, My places,
 and kits deleted with their survey."""
 from __future__ import annotations

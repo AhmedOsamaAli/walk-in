@@ -1,4 +1,4 @@
-"""Launch kits, free for now: one per survey concept, for anyone with the survey, built in the background (app.kits).
+"""Launch kits (free): one per survey concept, for anyone with the survey, built in the background (app.kits).
 Anyone with a kit's link can open it."""
 from __future__ import annotations
 
@@ -51,8 +51,6 @@ async def make_kit(request: Request, body: KitRequest) -> dict:
     found = await state.kits.for_concept(body.run_id, body.index)
     if found:
         return made(found)
-    # The single point where payment will be added once the kit is sold: a kit comes into being only here, after it is
-    # clear that none exists for this concept. Take the payment at this line, before the kit is created and built.
     limit_builds(request)
     name = business_name(run, run.concepts[body.index], run.designs.get(body.index) or {})
     try:

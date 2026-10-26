@@ -23,7 +23,7 @@ export type PageRoute = { page: "places" } | { page: "privacy" } | { page: "exam
 export const BRIEF_URL = "/";
 export const PLACES_URL = "/me";
 export const PRIVACY_URL = "/privacy";
-/** Finished surveys anyone can open before running one (features/EXAMPLES.md). */
+/** Finished surveys anyone can open before running one. */
 export const EXAMPLES_URL = "/examples";
 
 const SURVEY_PATH = /^\/s\/([A-Za-z0-9_-]{1,64})\/?$/;

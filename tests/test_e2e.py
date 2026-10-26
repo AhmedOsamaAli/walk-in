@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
@@ -16,7 +17,7 @@ from fastapi.testclient import TestClient
 from app.answers import AnswerCache
 from app.db import Database, SurveyStore
 from app.llm import LLM
-from app.main import Services, create_app, web_root
+from app.main import Services, create_app
 from app.ratelimit import RateLimiter
 from app.survey import constraints
 from app.survey.concepts import PRICE_LINES
@@ -739,9 +740,10 @@ def test_a_survey_stopped_by_a_shutdown_is_saved_as_failed(database_url):
     assert [event for event, *_ in saved["events"]] == ["run", "status", "done"]
 
 
-def test_shared_links_open_the_web_app_and_leave_the_api_alone():
+def test_shared_links_open_the_web_app_and_leave_the_api_alone(web_build):
     with make_client() as client:
         home = client.get("/")
+        assert "<title>Walk-in</title>" in home.text
         for path in ("/s/abc123", "/me", "/privacy"):
             page = client.get(path)
             assert page.status_code == 200 and page.text == home.text
@@ -751,5 +753,15 @@ def test_shared_links_open_the_web_app_and_leave_the_api_alone():
         assert missing.status_code == 404 and missing.json() == {"detail": "Survey not found."}
         assert client.get("/api/s/abc123").status_code == 404
         assert client.get("/s/abc123/more").status_code == 404
-        asset = next(path for path in sorted(web_root().iterdir()) if path.is_file() and path.suffix != ".html")
-        assert client.get(f"/{asset.name}").content == asset.read_bytes()
+        assert client.get("/app.js").content == (web_build / "app.js").read_bytes()
+
+
+def test_without_the_react_build_the_server_serves_the_api_only(tmp_path, caplog):
+    services = make_services()
+    with caplog.at_level(logging.WARNING, logger="walkin"):
+        app = create_app(lambda: services, web_root=tmp_path / "no-build")
+    assert "frontend/dist is missing (npm run build in frontend/): serving the API only" in caplog.messages
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+        for path in ("/", "/s/abc123", "/privacy"):
+            assert client.get(path).status_code == 404, path

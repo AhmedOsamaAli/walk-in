@@ -3,7 +3,6 @@ import type { BlockPayload, Classic, TopicGroup } from "../api/types";
 import { standingText, topicForms } from "../lib/format";
 import { CountUp } from "./CountUp";
 import { SectionHead } from "./SectionHead";
-import { NextAction } from "./TabLink";
 
 function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -121,7 +120,6 @@ export function BlockSection({ no, block, area }: { no: string; block: BlockPayl
         empty="No recurring complaints."
         limit={6}
       />
-      <NextAction />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 /* ---------- Live status, pinned under the top bar ---------- */
-:root:has(.live) { --live-h: 64px; }
-.live {
+:root:has(.live-status) { --live-h: 64px; }
+.live-status {
   position: sticky; top: var(--bar-h); z-index: 60;
   display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; column-gap: 12px;
   padding: 11px var(--pad) 12px;
@@ -17,11 +17,11 @@
   animation: livePulse 1.3s var(--ease-io) infinite;
 }
 @keyframes livePulse { 50% { transform: scale(.5); opacity: .45; } }
-.live[data-state="complete"] .live-mark,
-.live[data-state="failed"] .live-mark { background: none; animation: none; font: 600 14px/1 var(--f-mono); }
-.live[data-state="failed"] .live-mark { color: var(--red); }
+.live-status[data-state="complete"] .live-mark,
+.live-status[data-state="failed"] .live-mark { background: none; animation: none; font: 600 14px/1 var(--f-mono); }
+.live-status[data-state="failed"] .live-mark { color: var(--red); }
 .live-step { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; font-weight: 500; line-height: 1.35; }
-.live[data-state="failed"] .live-step { color: var(--red); }
+.live-status[data-state="failed"] .live-step { color: var(--red); }
 @container sheet (max-width: 480px) {
   .live-extra { display: none; }
 }
@@ -35,8 +35,8 @@
 .live-close:hover { background: var(--ink); color: var(--on-ink); }
 .live-more { grid-column: 2 / -1; display: grid; grid-template-rows: 1fr; transition: grid-template-rows .6s var(--ease), opacity .4s; }
 .live-more > div { min-height: 0; overflow: hidden; }
-.live[data-state="complete"] .live-more,
-.live[data-state="failed"] .live-more { grid-template-rows: 0fr; opacity: 0; }
+.live-status[data-state="complete"] .live-more,
+.live-status[data-state="failed"] .live-more { grid-template-rows: 0fr; opacity: 0; }
 .live-note {
   padding-top: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font-size: 13px; line-height: 1.35; color: var(--text-2);
@@ -47,7 +47,7 @@
   position: absolute; inset: 0; background: var(--blue-fill);
   transform: scaleX(var(--p, 0)); transform-origin: left; transition: transform .8s var(--ease);
 }
-.live[data-state="complete"] .live-track { opacity: 0; }
+.live-status[data-state="complete"] .live-track { opacity: 0; }
 
 /* ---------- Site head: the drawing's title block ---------- */
 .site-head { padding-top: 26px; padding-bottom: 28px; background: var(--card); }
@@ -81,7 +81,7 @@
 .opening p::after { content: "\258C"; margin-left: 4px; color: var(--blue); animation: blink 1s steps(1) infinite; }
 
 /* A restored survey, or one brought back by Back or Forward, is on the page as it ended: nothing slides in again. */
-.sheet[data-settled] :is(.live, .sec.reveal, .log li, .gap, .poster, .moves li, .stamp) { animation: none; }
+.sheet[data-settled] :is(.live-status, .sec.reveal, .log li, .gap, .poster, .moves li, .stamp) { animation: none; }
 
 /* ---------- 01 Log, newest line first ---------- */
 .log-meta { margin: -6px 0 16px; color: var(--ash); }
@@ -170,7 +170,7 @@
 .gap-name { display: block; font-size: 21px; font-weight: 500; line-height: 1.15; letter-spacing: -.01em; }
 .gap-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 7px 0 10px; color: var(--ash); }
 .flag { padding: 3px 9px 2px; border: 1px solid var(--on-yellow); border-radius: 999px; background: var(--yellow); color: var(--on-yellow); }
-/* Not ".live": that is the survey's status bar, sticky and full width. */
+/* Tested live by the agent during the survey. */
 .flag.tested { background: var(--blue-fill); border-color: var(--blue-fill); color: var(--on-blue); }
 .reading { padding: 3px 9px 2px; border: 1px solid var(--edge); border-radius: 999px; color: var(--text-3); }
 .reading.strong { background: var(--yellow); border-color: var(--on-yellow); color: var(--on-yellow); }

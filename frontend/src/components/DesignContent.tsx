@@ -4,7 +4,7 @@ import { messageOf } from "../api/client";
 import type { Concept, Design, ExperiencePlan } from "../api/types";
 import { audienceTitle } from "../lib/audience";
 import { letter, list, naturalList } from "../lib/format";
-import { revealPanel } from "../lib/journey";
+import { focusHeading, revealPanel } from "../lib/journey";
 import { areaText, hasLaunchPlan } from "../lib/launch";
 import { offerItems, unitText, type OfferItem, type OfferMark } from "../lib/sheet";
 import type { TabItem } from "../lib/tabs";
@@ -15,7 +15,7 @@ import { ExperiencePlanView } from "./ExperiencePlan";
 import { HoursText } from "./Hours";
 import { KitOffer } from "./KitOffer";
 import { LaunchPlanView } from "./LaunchPlan";
-import { panelId, TabPanel, Tabs } from "./Tabs";
+import { panelId, TabPager, TabPanel, Tabs } from "./Tabs";
 
 interface SheetProps {
   runId: string;
@@ -200,8 +200,11 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
     { id: "kit", label: "Launch kit" },
   ];
 
-  /** Another tab: the sheet scrolls back to its top when it had scrolled past it, under the pinned tabs. */
-  function show(id: string) {
+  /**
+   * Another tab: the sheet scrolls back to its top when it had scrolled past it, under the pinned tabs; from a panel's
+   * foot, focus moves to the new panel's first heading.
+   */
+  function show(id: string, focus = false) {
     flushSync(() => {
       setTab(id as SheetTab);
     });
@@ -209,7 +212,18 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
     const bar = main.current?.querySelector<HTMLElement>(".design-tabs");
     const panel = document.getElementById(panelId(SHEET_TABS, id));
     if (box && bar && panel) revealPanel(panel, bar, box);
+    if (focus && panel) focusHeading(panel);
   }
+
+  const pager = (id: SheetTab) => (
+    <TabPager
+      items={tabs}
+      current={id}
+      onSelect={(next) => {
+        show(next, true);
+      }}
+    />
+  );
 
   return (
     <div className="d-main" ref={main}>
@@ -219,10 +233,12 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
       <SheetTitle>{name}</SheetTitle>
       {tagline ? <p className="d-tagline">{tagline}</p> : null}
       <Tabs
-        label={`Design sheet: ${name}`}
+        label="Design sheet"
         items={tabs}
         selected={tab}
-        onSelect={show}
+        onSelect={(id) => {
+          show(id);
+        }}
         idPrefix={SHEET_TABS}
         pin="sheet"
         className="design-tabs"
@@ -246,6 +262,7 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
             <Experience plan={design.experience} />
           </>
         ) : null}
+        {pager("concept")}
       </TabPanel>
       {people ? (
         <TabPanel idPrefix={SHEET_TABS} id="people" selected={tab === "people"}>
@@ -265,11 +282,13 @@ function Sheet({ runId, index, concept, design }: SheetProps & { design: Design 
               <LaunchPlanView plan={plan} peopleAbove={Boolean(audience)} />
             </>
           ) : null}
+          {pager("people")}
         </TabPanel>
       ) : null}
       <TabPanel idPrefix={SHEET_TABS} id="kit" selected={tab === "kit"}>
         <h3 className="d-h">Launch kit</h3>
         <KitOffer runId={runId} index={index} name={name} plan={design.launch} />
+        {pager("kit")}
       </TabPanel>
     </div>
   );

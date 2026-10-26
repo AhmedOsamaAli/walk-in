@@ -4,6 +4,8 @@ export interface TabItem {
   label: string;
   /** Shown but not selectable: its content has not arrived yet (a survey still running). */
   disabled?: boolean;
+  /** Its content is on its way (a survey still running): the tab says so, beside its dimmed label. */
+  pending?: boolean;
   /** A short count or mark after the label, such as "3". */
   badge?: string | null;
 }
@@ -28,4 +30,26 @@ export function nextTab(items: readonly TabItem[], current: string, key: string)
 export function shownTab(items: readonly TabItem[], wanted: string | null): string | null {
   const open = items.filter((item) => !item.disabled);
   return open.find((item) => item.id === wanted)?.id ?? open[0]?.id ?? null;
+}
+
+export interface Pager {
+  /** The tab before, to go back to; null on the first. */
+  previous: TabItem | null;
+  /** The tab after; after the last, the first, to start over from (`wraps`). Null when there is no other tab. */
+  next: TabItem | null;
+  wraps: boolean;
+}
+
+/**
+ * The ways out of a panel at its foot, so the tabs read in order like pages: back to the tab before, on to the tab
+ * after, and from the last back to the first. Tabs whose content has not arrived are passed over.
+ */
+export function pagerOf(items: readonly TabItem[], current: string): Pager {
+  const open = items.filter((item) => !item.disabled);
+  const at = open.findIndex((item) => item.id === current);
+  if (at === -1 || open.length < 2) return { previous: null, next: null, wraps: false };
+  const previous = at > 0 ? (open[at - 1] ?? null) : null;
+  const after = open[at + 1];
+  if (after) return { previous, next: after, wraps: false };
+  return { previous, next: open[0] ?? null, wraps: true };
 }

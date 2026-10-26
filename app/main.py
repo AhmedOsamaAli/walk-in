@@ -64,13 +64,14 @@ PRESETS = [
 
 # Sign in with Google loads its script, button frame and styles from accounts.google.com/gsi
 # (developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy).
+# The same policy as frontend/public/_headers (Cloudflare Pages) and vite.config.ts (preview).
 GOOGLE_SIGN_IN = "https://accounts.google.com/gsi/"
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
-    f"script-src 'self' https://unpkg.com {GOOGLE_SIGN_IN}client",
-    f"style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com {GOOGLE_SIGN_IN}style",
-    "font-src 'self' https://fonts.gstatic.com",
+    f"script-src 'self' {GOOGLE_SIGN_IN}client",
+    f"style-src 'self' 'unsafe-inline' {GOOGLE_SIGN_IN}style",
     "img-src 'self' data: https:",
+    "font-src 'self'",
     f"connect-src 'self' {GOOGLE_SIGN_IN}",
     f"frame-src {GOOGLE_SIGN_IN}",
     "object-src 'none'",
@@ -431,16 +432,15 @@ class RevalidatingStaticFiles(StaticFiles):
         return response
 
 
-def web_root() -> Path:
-    """The React build (npm run build in frontend/) when it exists, otherwise the original static page."""
-    built = ROOT / "frontend" / "dist"
-    return built if (built / "index.html").exists() else ROOT / "web"
+WEB_ROOT = ROOT / "frontend" / "dist"  # the React build: npm run build in frontend/
 
 
 def create_app(
     services_factory: Callable[[], Services] = default_services, database_url: str | None = None,
+    web_root: Path | None = None,
 ) -> FastAPI:
-    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own."""
+    """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own. `web_root` overrides
+    the React build it serves (WEB_ROOT); without its index.html, the app serves the API only."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -478,10 +478,10 @@ def create_app(
         title="Walk-in",
         version="1.0.0",
         description=(
-            "Reads Qloo taste data for a real walking catchment, ranks what the block is missing and designs the "
-            "business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} returns its events "
-            "again; the other endpoints are JSON. POST /api/kits builds a concept's launch kit (free for now). Signing "
-            "in with Google keeps surveys and kits in My places."
+            "Reads Qloo taste data for the area people can reach from the door, on foot or by car, ranks what the block is "
+            "missing and designs the business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} "
+            "returns its events again; the other endpoints are JSON. POST /api/kits builds a concept's launch kit (free). "
+            "Signing in with Google keeps surveys and kits in My places."
         ),
         lifespan=lifespan,
     )
@@ -508,7 +508,10 @@ def create_app(
     app.include_router(account.router)
     app.include_router(kits.router)
     app.include_router(examples.router)
-    root = web_root()
+    root = web_root or WEB_ROOT
+    if not (root / "index.html").exists():
+        log.warning("frontend/dist is missing (npm run build in frontend/): serving the API only")
+        return app
 
     # Shared links to a survey (/s), a launch kit (/k) and its printable dossier, My places (/me), the examples
     # (/examples) and the privacy note (/privacy) are pages of the web app.

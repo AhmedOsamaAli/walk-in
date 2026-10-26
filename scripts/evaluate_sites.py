@@ -1,4 +1,5 @@
-"""Run the full survey pipeline for the preset sites and print a compact report for review.
+"""Run the full survey pipeline on a walk around each preset site, OpenStreetMap cross-check included, and print a
+compact report for review.
 
 Usage: python scripts/evaluate_sites.py [site_id ...] [--minutes 10] [--focus any]
 Responses are cached in .cache/ (gitignored); nothing from Qloo is written to the repository.
@@ -16,6 +17,7 @@ from app.answers import AnswerCache  # noqa: E402
 from app.catchment import CatchmentService  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.main import PRESETS  # noqa: E402
+from app.osm import OsmClient  # noqa: E402
 from app.providers import build_llm  # noqa: E402
 from app.qloo import QlooClient  # noqa: E402
 from app.survey import pipeline  # noqa: E402
@@ -87,6 +89,7 @@ async def main() -> None:
     walker = CatchmentService(settings.walk_cache_dir)
     llm = build_llm(settings)
     answers = AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache and not args.fresh)
+    osm_client = OsmClient(settings.cache_dir.parent / "osm")
     store = RunStore()
     try:
         first = True
@@ -102,11 +105,12 @@ async def main() -> None:
                 events.append((event, data))
 
             site = Site(preset["lat"], preset["lon"], preset["label"], args.focus, "", args.minutes)
-            run = await pipeline.analyze_site(qloo, walker, llm, store, site, emit, answers)
+            run = await pipeline.analyze_site(qloo, walker, llm, store, site, emit, answers, osm_client=osm_client)
             print_report(run, events)
     finally:
         await qloo.aclose()
         await walker.aclose()
+        await osm_client.aclose()
 
 
 if __name__ == "__main__":

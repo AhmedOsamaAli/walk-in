@@ -18,7 +18,8 @@ import {
 import { lightPin, pinFocus, showPin, usePinFocus } from "../map/pinFocus";
 import { AREA, awayText, gapPins, LISTED, medianFarKm, type ListMark } from "../map/pins";
 import { CountUp } from "./CountUp";
-import { PinMark, PlaceLink } from "./PlaceCard";
+import { PinMark } from "./PlaceCard";
+import { PlaceLink } from "./PlaceLink";
 
 const MAX_PIPS = 24;
 

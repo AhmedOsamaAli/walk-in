@@ -16,7 +16,7 @@ import { NextStep } from "./components/NextStep";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { SiteHeader, type TitleField } from "./components/SiteHeader";
 import { SurveyLog } from "./components/SurveyLog";
-import { panelId, tabId, TabPanel, Tabs } from "./components/Tabs";
+import { panelId, TabPager, TabPanel, Tabs } from "./components/Tabs";
 import { TasteSection } from "./components/TasteSection";
 import { TopBar } from "./components/TopBar";
 import { VerdictSection } from "./components/VerdictSection";
@@ -24,7 +24,7 @@ import { areaLabel, areaOf, walkLabel, type Area } from "./lib/area";
 import { markState } from "./lib/brand";
 import { DROPPED_PIN, siteName, unnamed } from "./lib/fullmap";
 import { fmtLat, fmtLon, VERDICT_STAMPS } from "./lib/format";
-import { firstResult, focusHeading, JourneyContext, revealPanel, type Journey } from "./lib/journey";
+import { firstResult, focusHeading, revealPanel } from "./lib/journey";
 import { scrollBehavior, Settled, withViewTransition } from "./lib/motion";
 import { homeMove, NavigateContext, type Navigate, type Showing } from "./lib/navigation";
 import {
@@ -501,18 +501,6 @@ export function App() {
     address.current = currentAddress();
   }, [surveying, survey.recorded, survey.runId]);
 
-  // The chosen tab in view along its bar, which scrolls sideways when the tabs are wider than a phone.
-  useEffect(() => {
-    if (!surveying) return;
-    const bar = document.querySelector<HTMLElement>(".survey-tabs");
-    const chosen = document.getElementById(tabId(TABS_ID, selected));
-    if (!bar || !chosen) return;
-    const edge = chosen.getBoundingClientRect();
-    const view = bar.getBoundingClientRect();
-    if (edge.left < view.left) bar.scrollLeft += edge.left - view.left - 12;
-    else if (edge.right > view.right) bar.scrollLeft += edge.right - view.right + 12;
-  }, [surveying, selected]);
-
   // A link's design sheet that the run never produced leaves the address once the run has ended.
   const dropSheet = useEffectEvent((runId: string) => {
     replaceSheet(runId, null);
@@ -560,13 +548,6 @@ export function App() {
     if (bar) revealPanel(panel, bar);
     if (focus) focusHeading(panel);
   }
-
-  const journey: Journey = {
-    intent: survey.intent,
-    show: (id) => {
-      showTab(id, true);
-    },
-  };
 
   /** What a tab of the survey holds, once it has arrived. */
   function panelContent(id: SurveyTab): ReactNode {
@@ -698,7 +679,7 @@ export function App() {
                     titleRef={titleRef}
                   />
                   <Tabs
-                    label="Survey results"
+                    label="Results"
                     items={tabs}
                     selected={selected}
                     onSelect={(id) => {
@@ -708,19 +689,24 @@ export function App() {
                     pin="page"
                     className="survey-tabs"
                   />
-                  <JourneyContext value={journey}>
-                    {tabs.map(({ id }) => (
-                      <TabPanel
-                        key={id}
-                        idPrefix={TABS_ID}
-                        id={id}
-                        selected={id === selected}
-                        className={left.run === survey.run && left.tabs.includes(id) ? "tab-left" : undefined}
-                      >
-                        {panelContent(id)}
-                      </TabPanel>
-                    ))}
-                  </JourneyContext>
+                  {tabs.map(({ id }) => (
+                    <TabPanel
+                      key={id}
+                      idPrefix={TABS_ID}
+                      id={id}
+                      selected={id === selected}
+                      className={left.run === survey.run && left.tabs.includes(id) ? "tab-left" : undefined}
+                    >
+                      {panelContent(id)}
+                      <TabPager
+                        items={tabs}
+                        current={id}
+                        onSelect={(next) => {
+                          showTab(next as SurveyTab, true);
+                        }}
+                      />
+                    </TabPanel>
+                  ))}
                 </Settled>
               ) : null}
               {surveying && started !== null && survey.status === "complete" ? <KeepSurveys /> : null}

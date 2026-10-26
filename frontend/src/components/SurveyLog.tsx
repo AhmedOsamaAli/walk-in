@@ -4,7 +4,6 @@ import { dataAsOfText, queriesText, secondsText } from "../lib/format";
 import { FOLDED_LINES, logView } from "../lib/log";
 import type { LogLine } from "../state/survey";
 import { SectionHead } from "./SectionHead";
-import { NextAction } from "./TabLink";
 
 interface SurveyLogProps {
   /** Its tab's place in the bar: the log is the last tab. */
@@ -58,7 +57,6 @@ export function SurveyLog({ no, log, summary }: SurveyLogProps) {
           {open ? "Show only the latest" : `Show all ${log.length} lines`}
         </button>
       ) : null}
-      <NextAction />
     </section>
   );
 }

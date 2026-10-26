@@ -51,7 +51,7 @@ Settings, from the environment:
 
 | Variable | Default | What it sets |
 |---|---|---|
-| `WALKIN_URL` | `https://walkin-app.pages.dev` | The Walk-in site. Its front door forwards `/api` to the survey engine. A local server works too: `http://127.0.0.1:8000`. |
+| `WALKIN_URL` | `https://walkin-app.pages.dev` | The Walk-in site. Its front door forwards `/api` to the survey engine. A local server works too: `http://127.0.0.1:8770` under uvicorn, `http://127.0.0.1:8000` in Docker. |
 | `WALKIN_WAIT_SECONDS` | `240` | How long `survey_storefront` waits for a survey, 10 to 600. See [Limits](#limits). |
 
 ## Client config
@@ -73,7 +73,7 @@ Then restart Claude Desktop.
   "mcpServers": {
     "walkin": {
       "command": "python",
-      "args": ["C:\\path\\to\\Qloo_Hack\\mcp_server\\walkin_mcp.py"],
+      "args": ["C:\\path\\to\\walk-in\\mcp_server\\walkin_mcp.py"],
       "env": {
         "WALKIN_URL": "https://walkin-app.pages.dev",
         "WALKIN_WAIT_SECONDS": "50"
@@ -111,33 +111,33 @@ Any client that launches a stdio server works: command `python`, with the path t
 - "I want to open a bakery in Zamalek, Cairo, for people aged 25 to 34. Is it a good idea?" (`business` and `ages`)
 - "Would a Starbucks work on the Upper East Side?" (a verdict, plus how many Starbucks stores are already nearby)
 - "Survey a 15 km drive around 30.2622, -97.7247 for people 55 and over." (`lat`/`lon`, `travel: distance`, `km`)
-- "Read survey b21ec69b0e92 again." or "What did that survey find in the end?" (`get_survey`)
+- "Read survey 76cc5edebd18 again." or "What did that survey find in the end?" (`get_survey`)
 
 ## Example output
 
-`get_survey("b21ec69b0e92")`, read from a local server (trimmed):
+`get_survey("76cc5edebd18")`, read from the live site (trimmed):
 
 ```text
-## Walk-in survey: Zamalek, Cairo
-- Area: 10 km drive (131.46 km², traced over the street network)
+## Walk-in survey: Williamsburg, Brooklyn
+- Area: 10-minute walk (1.64 km², traced over the street network)
 - Age focus: everyone
 
 **Top gaps** (5 of 8 categories ranked, most missing first)
-1. **Personal care**: Clear gap
-   - People here rank personal care #3 among the place types they engage with; six same-size areas around rank it #8, so demand is stronger here.
-   - Only 32 personal care places inside the 10 km drive, where a block this dense usually has about 63.4.
-   - Not cross-checked: OpenStreetMap did not answer in time, so this count is Qloo's alone.
-2. **Hamburger restaurant**: Under-supplied
+1. **Seafood**: People here travel for it
+   - People here rank seafood #7 among the place types they engage with, about as high as the areas around (#7).
+   - 6 seafood places inside the 10-minute walk (5 on Qloo, 1 more on OpenStreetMap), about what a block this dense holds (about 7.4).
+   - OpenStreetMap shows 1 more seafood place inside the walk that Qloo doesn't list: Rosarito Fish Shack.
+   - All 7 seafood places people here love more than the rest of the city does are outside the walk, a median 3.4 km away: Cervo's, Astoria Seafood and The Mermaid Inn.
+2. **New American**: Top demand
    ...
 
 **Concepts**
-1. **Smash & Shroom**: A dedicated burger joint serving gourmet mushroom and nacho burgers to stand apart from neighborhood chain outlets.
-2. **Aura Brew & Press**: An artisan coffee shop combining specialty espresso beverages with warm savory sandwiches and rich baked desserts.
-3. **Willow Table**: Breakfast for an area with 45 where its density predicts about 75.8.
+1. **The Anchor & Fin**: A seafood bar specializing in fresh catches and small plates, offering a destination for the flavors people here travel for.
+2. **The Morning Glory**: Brunch for the neighborhood's #1 interest, better than the 27 already inside the walk.
+3. **Meadow Kitchen**: New American for the neighborhood's #2 interest, better than the 9 already inside the walk.
+4. **Reef & Roast** (wildcard: two loves combined, untested): A seafood place and a coffee shop in one: two things people here love, and nothing inside the 10-minute walk is both.
 
-Note: This area is larger than 30 km², too large for OpenStreetMap's free servers, so the gaps rest on Qloo's places alone and say they were not cross-checked.
-
-Survey, design sheets and the free launch kit: http://127.0.0.1:8772/s/b21ec69b0e92
+Survey, design sheets and the free launch kit: https://walkin-app.pages.dev/s/76cc5edebd18
 Data: Qloo taste data · OpenStreetMap (© OpenStreetMap contributors) · Valhalla routing.
 ```
 

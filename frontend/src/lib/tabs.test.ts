@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextTab, shownTab, type TabItem } from "./tabs";
+import { nextTab, pagerOf, shownTab, type TabItem } from "./tabs";
 
 const items: TabItem[] = [
   { id: "concepts", label: "Concepts" },
@@ -35,5 +35,24 @@ describe("shownTab", () => {
     expect(shownTab(items, "area")).toBe("concepts");
     expect(shownTab(items, null)).toBe("concepts");
     expect(shownTab([{ id: "x", label: "X", disabled: true }], "x")).toBeNull();
+  });
+});
+
+describe("pagerOf", () => {
+  const ids = (pager: ReturnType<typeof pagerOf>) => [pager.previous?.id ?? null, pager.next?.id ?? null, pager.wraps];
+
+  it("leads on to the next tab and back to the one before, passing over tabs not ready", () => {
+    expect(ids(pagerOf(items, "concepts"))).toEqual([null, "gaps", false]);
+    expect(ids(pagerOf(items, "gaps"))).toEqual(["concepts", "taste", false]);
+    expect(ids(pagerOf(items, "taste"))).toEqual(["gaps", "log", false]);
+  });
+
+  it("leads from the last tab back to the first", () => {
+    expect(ids(pagerOf(items, "log"))).toEqual(["taste", "concepts", true]);
+  });
+
+  it("offers nothing with a single tab, or for a tab that cannot be shown", () => {
+    expect(ids(pagerOf([{ id: "log", label: "Log" }], "log"))).toEqual([null, null, false]);
+    expect(ids(pagerOf(items, "area"))).toEqual([null, null, false]);
   });
 });

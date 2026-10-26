@@ -1,6 +1,6 @@
-/* Who the places people here love draw (Contract 10-23), and a chain's own stores in the area: the ad setting the
-   audience implies, each age band's lean in words, and the chain's count as the verdict shows it. Pure, so they are
-   tested without a browser. */
+/* Who the places people here love draw, and a chain's own stores in the area: the ad setting the audience implies, each
+   age band's lean in words, and the chain's count as the verdict shows it. Pure, so they are tested without a
+   browser. */
 import type { Audience, ChainCheck } from "../api/types";
 
 /** A lean at least this far from 0 reads as more, or fewer, than everyone; nearer, as about like everyone. The server's
@@ -84,7 +84,7 @@ export function namesOnce(names: string[]): string[] {
   return [...counts].map(([name, count]) => (count > 1 ? `${name} (${count} places)` : name));
 }
 
-/** The age bands of the places of this kind already inside the area, when the server read them (Contract 10-23b). */
+/** The age bands of the places of this kind already inside the area, when the server read them. */
 export type InsideAudience = NonNullable<Audience["inside"]>;
 
 /** The two rows of the comparison, in the loved places' band order: who you'd win, over who the area's places draw now.

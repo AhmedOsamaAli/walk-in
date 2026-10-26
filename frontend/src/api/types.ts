@@ -1,13 +1,13 @@
-/* Payloads of the Walk-in API (app/main.py), limited to the fields this app reads. */
+/* Payloads of the Walk-in API (app/schemas.py and app/routes/), limited to the fields this app reads. */
 
 export type Focus = "any" | "food_drink" | "retail" | "leisure";
 export type LatLon = [number, number];
 /** What the owner wants: the block's best businesses, a verdict on their own idea, or how to improve their place. */
 export type Intent = "explore" | "open" | "improve";
 export type Kitchen = "full" | "light" | "none";
-/** Contract 10-23. How the survey area is measured: a walk or a drive of `minutes`, or a road distance of `km`. */
+/** How the survey area is measured: a walk or a drive of `minutes`, or a road distance of `km`. */
 export type Travel = "walk" | "drive" | "distance";
-/** Contract 10-23. Who the owner wants to serve; "all" leaves Qloo's ranking unbiased. */
+/** Who the owner wants to serve; "all" leaves Qloo's ranking unbiased. */
 export type Ages = "all" | "under_25" | "25_34" | "35_54" | "55_plus";
 
 export interface Preset {
@@ -18,7 +18,7 @@ export interface Preset {
   blurb: string;
 }
 
-/** Contract 10-24. A finished example survey's launch kit (GET /api/examples). */
+/** A finished example survey's launch kit (GET /api/examples). */
 export interface ExampleKit {
   token: string;
   /** The concept the kit was made for. */
@@ -31,7 +31,7 @@ export interface ExampleKit {
 }
 
 /**
- * Contract 10-24. A finished survey anyone can open before running their own (GET /api/examples). It replays what was
+ * A finished survey anyone can open before running their own (GET /api/examples). It replays what was
  * saved, so opening it spends no Qloo or AI quota.
  */
 export interface Example {
@@ -67,7 +67,7 @@ export interface GeocodeResult {
   lon: number;
 }
 
-/** The address of a pin dropped on the map (GET /api/reverse; 404 when the point has none). Contract 10-24b. */
+/** The address of a pin dropped on the map (GET /api/reverse; 404 when the point has none). */
 export interface ReverseResult {
   /** The street address and the two smallest parts of town: "131 South 2nd Street, Williamsburg, Brooklyn". */
   label: string;
@@ -93,7 +93,7 @@ export interface Walk {
   ring: LatLon[];
   area_km2: number;
   radius_m: number;
-  /** Contract 10-23. Missing on surveys made before drives and distances: a walk. */
+  /** Missing on surveys made before drives and distances: a walk. */
   travel?: Travel;
   /** Road distance in km, for travel "distance". */
   km?: number | null;
@@ -301,11 +301,11 @@ export interface Verdict {
   gap_score?: number;
   evidence: string[];
   row?: GapRow;
-  /** Contract 10-23. The brand's own stores in the area, when the business named is a chain Qloo knows. */
+  /** The brand's own stores in the area, when the business named is a chain Qloo knows. */
   chain?: ChainCheck | null;
 }
 
-/** Contract 10-23. How many stores of a chain are already in the area ("Test my idea" with a brand name). */
+/** How many stores of a chain are already in the area ("Test my idea" with a brand name). */
 export interface ChainCheck {
   brand: string;
   inside: number;
@@ -319,7 +319,7 @@ export interface ChainCheck {
 }
 
 /**
- * Contract 10-23. Who the places people here love draw, from Qloo's audience data: relative leans against everyone,
+ * Who the places people here love draw, from Qloo's audience data: relative leans against everyone,
  * not head counts.
  */
 export interface Audience {
@@ -342,7 +342,7 @@ export interface Audience {
   /** True when too few loved places had audience data, so this is the category everywhere (the line says so). */
   general?: boolean;
   /**
-   * Contract 10-23b. Who the places of this kind already inside the area draw, read the same way (median leans);
+   * Who the places of this kind already inside the area draw, read the same way (median leans);
    * null when fewer than 3 of them have audience data, or the audience is `general`.
    */
   inside?: {
@@ -353,7 +353,7 @@ export interface Audience {
     places: string[];
   } | null;
   /**
-   * Contract 10-23b. Ready to show, only when the places already here lean away from a group the loved places draw:
+   * Ready to show, only when the places already here lean away from a group the loved places draw:
    * "The 6 hamburger places already inside the walk … The ones people here love draw women: aim the concept at them."
    */
   tip?: string | null;
@@ -480,7 +480,7 @@ export interface RunSite {
   intent?: string;
   business?: string;
   place_id?: string;
-  /** Contract 10-23. Missing on older surveys: a walk, for everyone. */
+  /** Missing on older surveys: a walk, for everyone. */
   travel?: string;
   km?: number | null;
   ages?: string;
@@ -492,9 +492,9 @@ export interface RunPayload {
   /** What the server read from the owner's notes as rules ("no alcohol", "budget prices"). */
   understood?: string[];
   site?: RunSite;
-  /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive". */
+  /** "10-minute walk", "30-minute drive", "25 km drive". */
   area_label?: string;
-  /** Contract 10-23. "Under 25", "25–34", "35–54", "55+"; null when the survey is for everyone. */
+  /** "Under 25", "25–34", "35–54", "55+"; null when the survey is for everyone. */
   ages_label?: string | null;
 }
 
@@ -578,7 +578,7 @@ export interface RunRequest {
   sizeM2?: number;
   kitchen?: Kitchen;
   outdoor?: boolean;
-  /** Contract 10-23. Walk and drive take `minutes` (5–60); distance takes `km` (1–100). */
+  /** Walk and drive take `minutes` (5–60); distance takes `km` (1–100). */
   travel?: Travel;
   km?: number;
   ages?: Ages;
@@ -616,11 +616,11 @@ export interface LaunchPlan {
     brands: string[];
     /** Names this category's fans love too. */
     shared: string[];
-    /** Contract 10-23. Who the loved places of this kind draw. */
+    /** Who the loved places of this kind draw. */
     people?: Audience | null;
   };
   where: {
-    /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive". */
+    /** "10-minute walk", "30-minute drive", "25 km drive". */
     label?: string;
     minutes: number;
     reach_m: number | null;
@@ -664,7 +664,7 @@ export interface Design {
   capacity_basis?: string | null;
   experience?: ExperiencePlan | null;
   launch?: LaunchPlan | null;
-  /** Contract 10-23. Who the loved places of this kind draw: the people to win. */
+  /** Who the loved places of this kind draw: the people to win. */
   audience?: Audience | null;
   /** How the concept keeps each rule the owner gave, one plain line each. */
   owner_rules?: unknown;

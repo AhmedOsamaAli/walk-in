@@ -2,7 +2,6 @@ import type { Comparison, ImprovePayload, OfferDiff } from "../api/types";
 import { ExperiencePlanView } from "./ExperiencePlan";
 import { PlaceLink } from "./PlaceLink";
 import { SectionHead } from "./SectionHead";
-import { TabLink } from "./TabLink";
 
 const FAMILIES: readonly { key: string; label: string }[] = [
   { key: "menu", label: "Menu" },
@@ -45,12 +44,6 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
       <section id="s-improve" className="sec reveal">
         <SectionHead no={no} title="What to change" />
         <p className="concepts-empty serif">{data.note}</p>
-        <p className="sec-next" data-next-to="s-gaps">
-          <b className="sec-next-label mono">Next</b>
-          <TabLink to="gaps">
-            See what's missing <span aria-hidden="true">→</span>
-          </TabLink>
-        </p>
       </section>
     );
   }
@@ -59,8 +52,7 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
   const names = c.peer_names.join(", ");
   const groups = dayGroups(c.hours);
   return (
-    // data-moves: the wider taste's way back here shows only when there are moves to make (styles/journey.css).
-    <section id="s-improve" className="sec reveal improve" data-moves={moves.length ? "" : undefined}>
+    <section id="s-improve" className="sec reveal improve">
       <SectionHead
         no={no}
         title="What to change"
@@ -159,16 +151,6 @@ export function ImproveSection({ no, data }: { no: string; data: ImprovePayload 
           <ExperiencePlanView plan={experience} />
         </>
       ) : null}
-      {/* Shown once the wider taste is on the page (styles/journey.css). */}
-      <p className="sec-next" data-next-to="s-taste">
-        <b className="sec-next-label mono">Next</b>
-        <span>
-          {moves.length ? "Start with move 1, then see what else people here love." : "See what else people here love."}
-        </span>
-        <TabLink to="taste">
-          The wider taste <span aria-hidden="true">→</span>
-        </TabLink>
-      </p>
     </section>
   );
 }

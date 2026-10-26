@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import timedelta
 
 import httpx
@@ -14,7 +15,9 @@ from sqlalchemy import select
 
 from app import auth
 from app.auth import DEVICE_COOKIE, SESSION_COOKIE, GoogleKeys, KeysUnavailable, TokenError, verify_google_token
+from app.config import ROOT
 from app.db.tables import designs, sessions, surveys, users
+from app.main import CONTENT_SECURITY_POLICY, GOOGLE_SIGN_IN
 from tests.account_fakes import (
     CLIENT_ID,
     Clock,
@@ -360,3 +363,17 @@ def test_pages_get_the_security_headers_google_sign_in_needs():
             assert policy["frame-ancestors"] == "'none'" and "'unsafe-inline'" not in policy["script-src"]
         assert client.get("/me").headers["content-type"].startswith("text/html")
         assert client.get("/privacy").headers["content-type"].startswith("text/html")
+
+
+def test_the_app_gets_one_policy_wherever_it_is_served():
+    """The server, Cloudflare Pages (public/_headers) and vite preview send the same policy: no remote scripts or fonts
+    beyond Google's sign-in."""
+    frontend = ROOT / "frontend"
+    headers = (frontend / "public" / "_headers").read_text(encoding="utf-8").splitlines()
+    pages = next(line.split(":", 1)[1].strip() for line in headers if line.strip().startswith("Content-Security-Policy:"))
+    vite = (frontend / "vite.config.ts").read_text(encoding="utf-8")
+    listed = re.search(r"const CONTENT_SECURITY_POLICY = \[(.*?)\]\.join", vite, re.DOTALL)
+    preview = "; ".join(item.replace("${GOOGLE_SIGN_IN}", GOOGLE_SIGN_IN) for item in re.findall(r'["`](.+?)["`],', listed[1]))
+    assert pages == preview == CONTENT_SECURITY_POLICY
+    policy = dict(part.strip().split(" ", 1) for part in CONTENT_SECURITY_POLICY.split(";"))
+    assert policy["script-src"] == f"'self' {GOOGLE_SIGN_IN}client" and policy["font-src"] == "'self'"

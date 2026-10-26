@@ -1,4 +1,4 @@
-"""The launch kit for one concept (free for now): ad copy for each channel of the launch plan, a poster drawn from the
+"""The launch kit for one concept (free): ad copy for each channel of the launch plan, a poster drawn from the
 walk, tracked links and the decision dossier.
 
 The model writes the copy; deterministic checks read every line against the plan's claims, so an ad never states a

@@ -1,6 +1,6 @@
-/* The finished example surveys anyone can open before running one (features/EXAMPLES.md): read once per page load,
-   for the examples page, the first screen's strip, the header's link, the line shown while a survey runs and the
-   banner on an example's pages. Nothing waits on them: until they arrive, and when there are none, those show nothing. */
+/* The finished example surveys anyone can open before running one: read once per page load, for the examples page, the
+   first screen's strip, the header's link, the line shown while a survey runs and the banner on an example's pages.
+   Nothing waits on them: until they arrive, and when there are none, those show nothing. */
 import { useEffect, useSyncExternalStore } from "react";
 import { api } from "../api/client";
 import type { Example } from "../api/types";

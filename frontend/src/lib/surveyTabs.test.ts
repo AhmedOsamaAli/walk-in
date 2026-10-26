@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConceptsPayload, GapRow, Verdict } from "../api/types";
 import { initialSurvey, type SurveyState } from "../state/survey";
-import { answerTab, hashTab, nextAction, openingTab, surveyTabs, tabNo } from "./surveyTabs";
+import { answerTab, hashTab, openingTab, surveyTabs, tabNo } from "./surveyTabs";
 
 const CONCEPTS: ConceptsPayload = {
   concepts: [
@@ -40,10 +40,11 @@ describe("surveyTabs", () => {
   it("dims every tab but the log until its content arrives, and counts the cards and the gaps", () => {
     const running = surveyTabs(survey({ status: "running" }));
     expect(running.filter((tab) => !tab.disabled).map((tab) => tab.id)).toEqual(["log"]);
-    const done = surveyTabs(survey({ concepts: CONCEPTS, gaps: GAPS }));
+    expect(running.find((tab) => tab.id === "concepts")).toMatchObject({ disabled: true, pending: true });
+    const done = surveyTabs(survey({ status: "complete", concepts: CONCEPTS, gaps: GAPS }));
     expect(done.find((tab) => tab.id === "concepts")).toMatchObject({ disabled: false, badge: "3" });
     expect(done.find((tab) => tab.id === "gaps")).toMatchObject({ disabled: false, badge: "2" });
-    expect(done.find((tab) => tab.id === "taste")).toMatchObject({ disabled: true, badge: null });
+    expect(done.find((tab) => tab.id === "taste")).toMatchObject({ disabled: true, pending: false, badge: null });
   });
 });
 
@@ -81,13 +82,5 @@ describe("openingTab", () => {
     const done = survey({ status: "complete", concepts: CONCEPTS, gaps: GAPS });
     expect(openingTab(done, "#gaps")).toBe("gaps");
     expect(openingTab(done, "#taste")).toBe("concepts");
-  });
-});
-
-describe("nextAction", () => {
-  it("sends the evidence back to what the owner can act on", () => {
-    expect(nextAction("explore")).toMatchObject({ tab: "concepts", label: "See the concepts", gate: "designs" });
-    expect(nextAction("open").tab).toBe("concepts");
-    expect(nextAction("improve")).toMatchObject({ tab: "improve", label: "See what to change", gate: "moves" });
   });
 });

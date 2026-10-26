@@ -84,7 +84,7 @@ export function LiveStatus({ survey, result, onResult, onRetry }: LiveStatusProp
   const found = survey.block !== null || survey.gaps !== null;
 
   return (
-    <section ref={measureBar} className="live" data-state={survey.status} aria-label="Survey status">
+    <section ref={measureBar} className="live-status" data-state={survey.status} aria-label="Survey status">
       <span className="live-mark" aria-hidden="true">
         {mark}
       </span>

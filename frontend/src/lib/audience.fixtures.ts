@@ -1,6 +1,5 @@
-/* Builder B's fixtures for the Contract 10-23 fields (features/CONTRACT.md), until the server sends them: an audience
-   with a clear lean, one without, the places already inside set against the loved ones (with and without the tip), and
-   a chain's stores, counted and capped. */
+/* Test data: audiences with and without a clear lean, the places already inside against the loved ones (with and
+   without the tip), and a chain's stores, counted and capped. */
 import type { Audience, ChainCheck } from "../api/types";
 
 export const AUDIENCE_CLEAR: Audience = {
@@ -83,7 +82,7 @@ export const AUDIENCE_GENERAL: Audience = {
   general: true,
 };
 
-/** Contract 10-23b, rare on real data: the loved places draw 30–44 and women, the 6 already inside 45+ and men. */
+/** Rare on real data: the loved places draw 30–44 and women, the 6 already inside 45+ and men. */
 export const AUDIENCE_TIP: Audience = {
   ages: "30–44",
   age_min: 30,

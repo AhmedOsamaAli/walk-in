@@ -9,7 +9,7 @@ Run from the repo root, with PYTHONPATH set to it and PYTHONIOENCODING=utf-8:
           (at most 40 LLM calls in total, counted across reruns; answers are reused)
   data    Walk-in's data pipeline with no LLM; both sides' picks measured the same way     -> _cache/data/<site>.json
   osm     OpenStreetMap's count of each measured kind inside the walk, with retries        -> _cache/osm/<site>.json
-  report  the metrics                                                                     -> results.json, report.md
+  report  the metrics                                                                     -> results.json, README.md
 
 Nothing in the repo changes: Qloo, Valhalla and Overpass answers land in the app's own caches (.cache/). The LLM keys
 are read through app.config.settings and are never printed or written.
@@ -739,7 +739,7 @@ async def run_osm(sites: list[dict], force: bool, only: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# 5-6. Metrics, results.json and report.md
+# 5-6. Metrics, results.json and README.md
 # ---------------------------------------------------------------------------------------------------------------------
 
 def sign_test(wins: int, losses: int) -> float | None:
@@ -1175,10 +1175,12 @@ def write_report(results: dict) -> str:
         "",
         "- `sites.json`: the 15 storefronts with the geocoder's confirmation.",
         "- `results.json`: per site, the chatbot's raw answer and model, the parsed picks, every business each pick "
-        "names with its mapping, both sides' numbers, Walk-in's full gap table and the OpenStreetMap counts; the "
-        "aggregate metrics.",
-        "- `run_h2h.py`: the script (phases sites, chat, data, osm, report). `_cache/` holds the raw chatbot answers and "
-        "per-site measurements it reuses.",
+        "names with its mapping, both sides' numbers, Walk-in's gap table and the OpenStreetMap counts; the aggregate "
+        "metrics. It holds numbers worked out from Qloo's answers and Qloo's place-type names, not Qloo's answers "
+        "themselves; the names of places in it come from OpenStreetMap (© OpenStreetMap contributors, ODbL).",
+        "- `run_h2h.py`: the script (phases sites, chat, data, osm, report), run from the repository root. Its report "
+        "phase writes this file and `results.json`. It keeps the chatbot's answers and the per-site measurements it "
+        "reuses in `_cache/`, which is not published: the hackathon's rules forbid publishing cached Qloo data.",
         "",
     ]
     return "\n".join(lines)
@@ -1230,12 +1232,12 @@ CAVEATS = [
 async def run_report(sites: list[dict], chat: dict) -> None:
     results = build_results(sites, chat)
     save(OUT / "results.json", results)
-    (OUT / "report.md").write_text(write_report(results), encoding="utf-8")
+    (OUT / "README.md").write_text(write_report(results), encoding="utf-8")
     m = results["metrics"]
     print(json.dumps({k: m[k] for k in ("sites", "chatbot_top_mapped", "distinct", "paired_qloo", "paired_osm",
                                         "agreement", "models")}, ensure_ascii=False, indent=1, default=str))
     print(json.dumps(m["top"], ensure_ascii=False, default=str))
-    status(f"report: results.json and report.md written ({m['sites']} sites).")
+    status(f"report: results.json and README.md written ({m['sites']} sites).")
 
 
 # ---------------------------------------------------------------------------------------------------------------------

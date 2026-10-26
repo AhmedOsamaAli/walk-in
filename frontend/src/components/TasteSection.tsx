@@ -3,7 +3,6 @@ import type { TasteEntity, TastePayload } from "../api/types";
 import { safeUrl } from "../lib/format";
 import { initials } from "../lib/initials";
 import { SectionHead } from "./SectionHead";
-import { NextAction } from "./TabLink";
 
 /** Where Walk-in puts a list to work: the launch plan's ad settings (launch.py) or the experience plan (experience.py). */
 interface Use {
@@ -153,7 +152,6 @@ export function TasteSection({ no, taste, cues }: TasteSectionProps) {
           <span className="muted">None detected.</span>
         )}
       </div>
-      <NextAction />
     </section>
   );
 }

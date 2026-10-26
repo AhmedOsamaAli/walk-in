@@ -10,9 +10,10 @@ import { Link } from "../components/Link";
 import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components/Page";
 import { SectionHead } from "../components/SectionHead";
 import type { TitleField } from "../components/SiteHeader";
-import { panelId, tabId, TabPanel, Tabs, type TabItem } from "../components/Tabs";
+import { panelId, tabId, TabPager, TabPanel, Tabs, type TabItem } from "../components/Tabs";
 import { dateText } from "../lib/account";
 import { letter } from "../lib/format";
+import { focusHeading } from "../lib/journey";
 import { kitError, trackedUrl } from "../lib/kit";
 import { KIT_PARTS, kitPart, partInHash, type KitPart } from "../lib/kitParts";
 import { scrollBehavior } from "../lib/motion";
@@ -188,7 +189,7 @@ function usePart(): [KitPart, (part: KitPart) => void] {
 type Then = { to: "top"; y: number; under: number; pinned: boolean } | { to: "field" };
 
 function measured(part: KitPart): Then {
-  const bar = document.getElementById(tabId(TABS, part))?.parentElement;
+  const bar = document.getElementById(tabId(TABS, part))?.closest<HTMLElement>(".tabs");
   const panel = document.getElementById(panelId(TABS, part));
   if (!bar || !panel) return { to: "top", y: window.scrollY, under: 0, pinned: false };
   const box = bar.getBoundingClientRect();
@@ -216,6 +217,8 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const { website, invalid, landing, setWebsite } = useLanding(view.token, view.survey_url);
   const [part, setPart] = usePart();
   const then = useRef<Then | null>(null);
+  /** A part chosen from the foot of the last one: focus moves to the new part's heading once it shows. */
+  const focusNext = useRef(false);
   const posterLink = kit.links.find((link) => link.key === "poster");
   const posterUrl = posterLink ? trackedUrl(landing.url, posterLink.query) : landing.url;
   const contents = dossierContents(kit.dossier);
@@ -233,6 +236,9 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
     const after = then.current;
     then.current = null;
     if (after) bringIntoView(after);
+    const panel = document.getElementById(panelId(TABS, part));
+    if (focusNext.current && panel) focusHeading(panel);
+    focusNext.current = false;
   }, [part]);
 
   function choose(next: KitPart, to: Then["to"] = "top") {
@@ -245,10 +251,23 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
     setPart(next);
   }
 
+  const pager = (id: KitPart) => (
+    <TabPager
+      items={items}
+      current={id}
+      onSelect={(next) => {
+        const chosen = kitPart(next);
+        if (!chosen) return;
+        focusNext.current = true;
+        choose(chosen);
+      }}
+    />
+  );
+
   return (
     <>
       <Tabs
-        label="Parts of the kit"
+        label="Your kit"
         items={items}
         selected={part}
         onSelect={(id) => {
@@ -277,6 +296,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
             choose("links", "field");
           }}
         />
+        {pager("poster")}
       </TabPanel>
 
       <TabPanel idPrefix={TABS} id="copy" selected={part === "copy"} className="pg-sec">
@@ -287,6 +307,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
         />
         <CopyDeck kit={kit} />
         <CopyChecks kit={kit} />
+        {pager("copy")}
       </TabPanel>
 
       <TabPanel idPrefix={TABS} id="links" selected={part === "links"} className="pg-sec">
@@ -296,6 +317,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
           note="One link per channel, tagged so your analytics can tell which channel brought each visit."
         />
         <TrackedLinks links={kit.links} landing={landing} website={website} invalid={invalid} onWebsite={setWebsite} />
+        {pager("links")}
       </TabPanel>
 
       <TabPanel idPrefix={TABS} id="report" selected={part === "report"} className="pg-sec">
@@ -335,6 +357,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
             ))}
           </ol>
         </div>
+        {pager("report")}
       </TabPanel>
     </>
   );

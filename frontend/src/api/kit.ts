@@ -69,7 +69,7 @@ export interface KitPoster {
   claim: { kind: ClaimKind; line: string; proof: string } | null;
   hours: string | null;
   minutes: number;
-  /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive"; missing on older kits. */
+  /** "10-minute walk", "30-minute drive", "25 km drive"; missing on older kits. */
   area_label?: string;
   ring: LatLon[];
   site: LatLon;
@@ -138,7 +138,7 @@ export interface DossierCover extends Based {
   lat: number;
   lon: number;
   walk_minutes: number;
-  /** Contract 10-23. "10-minute walk", "30-minute drive", "25 km drive"; missing on older kits. */
+  /** "10-minute walk", "30-minute drive", "25 km drive"; missing on older kits. */
   area_label?: string;
   walk_source: string | null;
   area_km2: number | null;

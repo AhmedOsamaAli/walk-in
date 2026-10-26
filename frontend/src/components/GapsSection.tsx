@@ -2,7 +2,6 @@ import type { GapRow } from "../api/types";
 import { AREA } from "../map/pins";
 import { GapItem } from "./GapItem";
 import { SectionHead } from "./SectionHead";
-import { NextAction } from "./TabLink";
 
 interface GapsSectionProps {
   /** Its tab's place in the bar: "02". */
@@ -54,7 +53,6 @@ export function GapsSection({ no, gaps, openGap, onToggle, area = AREA }: GapsSe
           </li>
         )}
       </ol>
-      <NextAction />
     </section>
   );
 }

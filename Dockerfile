@@ -18,7 +18,6 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY app ./app
-COPY web ./web
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY --from=frontend /frontend/dist ./frontend/dist

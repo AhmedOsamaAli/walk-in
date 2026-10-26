@@ -28,7 +28,7 @@ class RateLimiter:
 
 
 class DailyBudget:
-    """At most `limit` paid operations per UTC day across all clients."""
+    """At most `limit` costly operations (model calls) per UTC day across all clients."""
 
     def __init__(self, limit: int) -> None:
         self.limit = limit

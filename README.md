@@ -9,7 +9,7 @@
 
 | Judging criterion | Evidence |
 |---|---|
-| **Technological implementation** | • An agent loop: a tool-using model tests its hunches live against Qloo, then hard checks hold each concept to the owner's rules and the evidence, and repair or drop what fails ([app/survey/concepts.py](app/survey/concepts.py)).<br>• Qloo calls: `/v2/insights` on places, place tags, brands, artists, films, TV shows, podcasts, audiences and heatmaps, with location, age and interest signals and the brand filter; `/v2/tags`; `/search`; `/entities` ([every call](#why-qloo-is-essential), [app/engine.py](app/engine.py)).<br>• The walk or drive area is traced over real streets by Valhalla, with OpenStreetMap as a cross-check on what the area already has ([app/catchment.py](app/catchment.py), [app/osm.py](app/osm.py)).<br>• 952 tests, run on every push: 629 on the server (20 of them for the MCP tool) and 323 in the front end ([tests](tests), [frontend/src](frontend/src), [CI](.github/workflows/ci.yml)). |
+| **Technological implementation** | • An agent loop: a tool-using model tests its hunches live against Qloo, then hard checks hold each concept to the owner's rules and the evidence, and repair or drop what fails ([app/survey/concepts.py](app/survey/concepts.py)).<br>• Qloo calls: `/v2/insights` on places, place tags, brands, artists, films, TV shows, podcasts, audiences and heatmaps, with location, age and interest signals and the brand filter; `/v2/tags`; `/search`; `/entities` ([every call](#why-qloo-is-essential), [app/engine.py](app/engine.py)).<br>• The walk or drive area is traced over real streets by Valhalla, with OpenStreetMap as a cross-check on what the area already has ([app/catchment.py](app/catchment.py), [app/osm.py](app/osm.py)).<br>• 956 tests, run on every push: 631 on the server (20 of them for the MCP tool) and 325 in the front end ([tests](tests), [frontend/src](frontend/src), [CI](.github/workflows/ci.yml)). |
 | **Design** | • From one storefront to a ranked answer to a launch kit: a pin, a live log, gaps ranked with their reasons, a design sheet, then the kit ([What it does](#what-it-does)).<br>• Real street maps from OpenStreetMap on the window poster and the report's cover; the cover numbers the competitors and letters the places people here travel to, as the survey map does ([app/basemap.py](app/basemap.py), [SiteMap.tsx](frontend/src/components/kit/SiteMap.tsx)).<br>• Keyboard and screen readers: map pins take focus and carry labels, Enter opens a place's card and Escape gives focus back; arrow keys pan the map and Enter places a site; progress is announced; reduced motion is respected ([pinLayer.ts](frontend/src/map/pinLayer.ts), [SurveyMap.tsx](frontend/src/map/SurveyMap.tsx), [LiveStatus.tsx](frontend/src/components/LiveStatus.tsx)). |
 | **Potential impact** | • Made for vacant storefronts, about 11% of all storefronts in New York City ([NYC Comptroller, June 2026](https://comptroller.nyc.gov/reports/whos-minding-the-storefronts)), and the owners who can't afford the site-selection reports sold to landlords and brokers ([Why it exists](#why-it-exists)).<br>• The launch kit is free: checked ad copy, a window poster, tracked links and a report of up to 12 sections for a landlord or a lender ([app/survey/kit.py](app/survey/kit.py), [app/survey/dossier.py](app/survey/dossier.py)).<br>• Business model: always free for owners; brokers and landlords pay a monthly subscription per broker to survey their vacant listings and hand prospective tenants the kit. It is the plan: nothing is charged today ([Business model](#business-model)). |
 | **Quality of the idea** | • Void analysis, the method commercial real estate uses to find what an area lacks, run on taste and made for the owner ([Why it exists](#why-it-exists), Qloo's [Clarion Partners story](https://www.qloo.com/resources/client-stories/clarion-magnificent-mile)).<br>• Measured head-to-head against a plain chatbot: across 15 storefronts in 15 cities on 6 continents, a plain chatbot's top pick was a coffee shop, café or bakery at 10 of them (coffee shop 5, bakery 3, café 2); Walk-in's 15 top picks were 14 different kinds of place, each a place type people around that storefront rank highly. Both sides' picks faced the same median of 8 competitors, and Walk-in's come from the data the comparison reads ([the comparison](#against-a-plain-chatbot), [method and results](eval/head-to-head/)). |
@@ -243,7 +243,7 @@ flowchart LR
 - `app/llm.py` chains free models across providers (Gemini, then Groq); `app/answers.py` replays an answer while the evidence and the prompt are unchanged.
 - `app/db/` keeps users, sessions, surveys, design sheets and launch kits in SQLite or Postgres through SQLAlchemy; `migrations/` is the Alembic schema, applied on startup. `app/survey/snapshot.py` turns a finished run into compressed JSON and back.
 - `app/auth.py` and `app/routes/account.py` handle Google sign-in, sessions, My places and account deletion; `app/routes/kits.py` serves the launch kits; `app/routes/examples.py` lists the finished example surveys (`GET /api/examples`); `app/ratelimit.py` limits what one visitor can ask.
-- `app/schemas.py` types the JSON API (interactive docs at `/docs`). `GET /api/run` takes the site, the question and the area (`travel=walk|drive|distance` with `minutes` 5–60 or `km` 1–100) and the age focus (`ages`), and streams these events: `run`, `status`, `place`, `catchment`, `block`, `demand`, `taste`, `gaps`, `agent`, `replay`, `finding`, `explored`, `verdict`, `improve`, `concepts`, `baseline`, `notice`, `error`, `done`. The server writes the area's labels ("10-minute walk", "30-minute drive", "25 km drive") for the screens to show.
+- `app/schemas.py` types the JSON API (interactive docs at `/docs` on the API server, local or the Render instance). `GET /api/run` takes the site, the question and the area (`travel=walk|drive|distance` with `minutes` 5–60 or `km` 1–100) and the age focus (`ages`), and streams these events: `run`, `status`, `place`, `catchment`, `block`, `demand`, `taste`, `gaps`, `agent`, `replay`, `finding`, `explored`, `verdict`, `improve`, `concepts`, `baseline`, `notice`, `error`, `done`. The server writes the area's labels ("10-minute walk", "30-minute drive", "25 km drive") for the screens to show.
 - `frontend/` is the React app, which FastAPI serves once built; `frontend/functions/` is the Cloudflare Pages front door.
 - `mcp_server/` is the MCP server ([above](#use-walk-in-from-your-ai-assistant)); `eval/head-to-head/` is the comparison with a plain chatbot.
 
@@ -261,18 +261,29 @@ Free Gemini keys allow about five requests a minute and a few dozen a day per mo
 
 ## Setup
 
-Requires Python 3.12, Node 22 and a Qloo hackathon key.
+Requires Python 3.12, Node 22 and a Qloo hackathon key. On Windows (PowerShell):
 
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
+.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-copy .env.example .env            # macOS/Linux: cp .env.example .env, then add your keys
-cd frontend && npm ci && npm run build && cd ..
+Copy-Item .env.example .env       # then add your keys
+cd frontend; npm ci; npm run build; cd ..
 uvicorn app.main:app --port 8770
 ```
 
-Open http://127.0.0.1:8770. For frontend work, keep the API running and use `npm run dev` in `frontend/` (it proxies `/api` to port 8770).
+On macOS or Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env              # then add your keys
+(cd frontend && npm ci && npm run build)
+uvicorn app.main:app --port 8770
+```
+
+Open http://127.0.0.1:8770. Without the build, the server serves the API only. For frontend work, keep the API running and use `npm run dev` in `frontend/` (it proxies `/api` to port 8770).
 
 ### Configuration
 
@@ -333,7 +344,7 @@ Any Docker host works the same way: `docker build -t walk-in . && docker run -p 
 - Frontend, in `frontend/`: `npm run typecheck`, `npm run lint` and `npm test` (Vitest: the stream parser, survey state, the brief, routes, map pins, the kit and formatting).
 - MCP server: `tests/test_mcp_server.py` runs its three tools through the MCP SDK's client, with Walk-in's API mocked.
 - GitHub Actions runs all of these, the frontend build and the Docker build on every push.
-- With live Qloo data: `python scripts/evaluate_sites.py [site_id ...] [--minutes 10] [--focus any]` runs the full survey for the preset sites and prints a report for review; `python scripts/validate_qloo.py` repeats the day-one checks of Qloo's coverage; `eval/head-to-head/run_h2h.py` reruns the comparison with a plain chatbot.
+- With live Qloo data: `python scripts/evaluate_sites.py [site_id ...] [--minutes 10] [--focus any]` runs the full survey of a walk around each preset site, OpenStreetMap cross-check included, and prints a report for review; `python scripts/validate_qloo.py` repeats the day-one checks of Qloo's coverage; `eval/head-to-head/run_h2h.py` reruns the comparison with a plain chatbot.
 
 ## License
 

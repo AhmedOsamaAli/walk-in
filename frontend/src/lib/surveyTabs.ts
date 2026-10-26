@@ -67,9 +67,15 @@ export interface SurveyTabItem extends TabItem {
   id: SurveyTab;
 }
 
-/** The tabs of a survey of this intent, in order, each dimmed until its content arrives. */
-export function surveyTabs(survey: Content): SurveyTabItem[] {
-  return ORDER[survey.intent].map((id) => ({ id, label: LABELS[id], disabled: !arrived(id, survey), badge: badge(id, survey) }));
+/**
+ * The tabs of a survey of this intent, in order, each dimmed until its content arrives; while the survey runs, those
+ * still to come say they are on their way.
+ */
+export function surveyTabs(survey: Content & Partial<Pick<SurveyState, "status">>): SurveyTabItem[] {
+  return ORDER[survey.intent].map((id) => {
+    const disabled = !arrived(id, survey);
+    return { id, label: LABELS[id], disabled, pending: disabled && survey.status === "running", badge: badge(id, survey) };
+  });
 }
 
 /** A tab's place in the bar as its section's head numbers it: "01" for the first. */
@@ -107,20 +113,4 @@ export function openingTab(survey: Content & Pick<SurveyState, "status">, hash: 
   if (asked && items.some((item) => item.id === asked && !item.disabled)) return asked;
   if (survey.status === "running") return "log";
   return (answerTab(survey) ?? shownTab(items, null) ?? "log") as SurveyTab;
-}
-
-export interface NextAction {
-  tab: SurveyTab;
-  /** What to do there. */
-  line: string;
-  label: string;
-  /** What must be on the page for it to show (styles/journey.css): concept cards, or moves to make. */
-  gate: "designs" | "moves";
-}
-
-/** Where the evidence tabs and the log send the owner: back to what they can act on. */
-export function nextAction(intent: Intent): NextAction {
-  return intent === "improve"
-    ? { tab: "improve", line: "Make the first change on the list.", label: "See what to change", gate: "moves" }
-    : { tab: "concepts", line: "Open a concept's design sheet, then make its launch kit.", label: "See the concepts", gate: "designs" };
 }
