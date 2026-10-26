@@ -111,6 +111,9 @@ what is due. Both are exempt from the Origin check.
 
 `GET /api/me/places` (exists; extend it) adds `campaigns: { id, title, status, supporters, goal, deadline, url }[]`.
 
+`GET /api/kits/{token}` (exists; extend it) adds `campaigns: { id, url, is_owner, status, amount, goal, supporters, deadline }[]`:
+the kit's open campaigns, the viewer's own first, then newest first. The poster uses the viewer's own open campaign.
+
 ## Pages
 
 - `/p/{id}`: the campaign. Supporter view: the business, the place and its area, why this and why here (the evidence),
@@ -142,7 +145,8 @@ in plain words. The person approves in PayPal; the agent never sees a card or an
 - **P (payments backend):** `app/payments/**`, `app/settlement.py`, `app/db/campaigns.py`, `app/db/events.py`, the
   campaign, pledge, payout and event tables in `app/db/tables.py` and a new migration, `app/routes/campaigns.py`,
   `app/routes/hooks.py`, `app/config.py`, `app/schemas.py`, the router seam and CSP in `app/main.py`, `/api/config` and
-  `/api/me/places` in `app/routes/account.py` and `app/db/accounts.py`, `SURVEYS_PAUSED`, `.env.example`,
+  `/api/me/places` in `app/routes/account.py` and `app/db/accounts.py`, the kit's `campaigns` in `app/routes/kits.py`,
+  `SURVEYS_PAUSED`, `.env.example`,
   `render.yaml`, `.github/workflows/settle.yml`, `docs/founders/sandbox_money_flows.py` and
   `docs/founders/setup_paypal_webhook.py`, and their tests.
 - **W (web):** `frontend/**`: the pages, the Founders tab, the poster's campaign QR and line, the top bar link, My
