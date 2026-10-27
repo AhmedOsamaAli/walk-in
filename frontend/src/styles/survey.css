@@ -327,11 +327,7 @@ p.osm-also.mono { font-size: 10.5px; line-height: 1.5; color: var(--text-4); }
   position: relative; display: block; aspect-ratio: 1; margin-bottom: 6px; overflow: hidden;
   border-radius: 14px; background: var(--card); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 30%, transparent);
 }
-.theme-pic img {
-  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
-  filter: var(--img-filter); mix-blend-mode: var(--img-blend); transition: filter .6s var(--ease);
-}
-.poster.themed:hover .theme-pic img, .theme-title:hover .theme-pic img { filter: none; }
+.theme-pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 /* No picture: the title's initials, never an empty square. */
 .theme-pic .ph { display: grid; place-items: center; height: 100%; font-size: 20px; letter-spacing: .04em; color: var(--blue); }
 .theme-name { font-size: 14px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
@@ -411,13 +407,9 @@ details.kept-changes summary:hover { color: var(--ink); }
 .names { counter-reset: nm; }
 .names li { display: grid; grid-template-columns: 24px 36px minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px 0; border-bottom: var(--hair); }
 .names li::before { content: counter(nm, decimal-leading-zero); counter-increment: nm; font: 500 10.5px var(--f-mono); color: var(--ash); }
-.names img, .names .ph {
-  width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--bone);
-  filter: var(--img-filter); mix-blend-mode: var(--img-blend); transition: filter .5s;
-}
+.names img, .names .ph { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--bone); }
 /* No photo: the name's initials, never an empty circle. */
 .names .ph { display: grid; place-items: center; font: 600 11.5px/1 var(--f-mono); letter-spacing: .04em; color: var(--text-3); }
-.names li:hover img { filter: none; }
 .names .nm { font-size: 14.5px; font-weight: 500; line-height: 1.25; }
 .names .muted .nm { grid-column: 2 / -1; font-weight: 400; }
 

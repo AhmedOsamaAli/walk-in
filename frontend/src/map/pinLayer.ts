@@ -7,7 +7,6 @@ import * as L from "leaflet";
 import type { GapRow } from "../api/types";
 import { lightPin, pinFocus, subscribePins } from "./pinFocus";
 import { AREA, declutter, gapPins, pinLabel, type Box, type Pin, type PinRole } from "./pins";
-import { pinTip } from "./tooltip";
 
 /** A badge with its ring, in pixels. */
 const BADGE = 26;
@@ -20,15 +19,12 @@ const SITE_CLEAR: readonly Box[] = [
 const LAYER: Record<PinRole, number> = { inside: 400, osm: 300, loved: 200, famous: 200 };
 const LIT = 3000;
 export const SITE_LAYER = 9000;
-const TIP: L.TooltipOptions = { className: "tip", direction: "top", offset: [0, -16], opacity: 1 };
 
 interface Drawn {
   pin: Pin;
   marker: L.Marker;
   /** The .pin element that holds the badge, its line and its dot. */
   root: HTMLElement;
-  /** Where the badge sits from its place, in pixels. */
-  offset: { x: number; y: number };
 }
 
 function part(className: string, text = ""): HTMLSpanElement {
@@ -155,15 +151,13 @@ export class PinLayer {
     root.style.setProperty("--k", String(order));
     const icon = L.divIcon({ className: "pin-icon", iconSize: [0, 0], html: root });
     const marker = L.marker([pin.lat, pin.lon], { icon, keyboard: true, zIndexOffset: LAYER[pin.role], alt: "" });
-    // A tooltip on hover, where there is a pointer that hovers; a tap opens the card straight away. The card says more,
-    // so the tooltip closes as it opens.
-    if (window.matchMedia("(hover: hover)").matches) marker.bindTooltip(pinTip(pin, area), TIP);
+    // No hover box: on a small map it could spill out of the frame. Hovering lights the pin and its row in the list,
+    // and a click opens the place's card under the map.
     marker.on("click", () => {
-      marker.closeTooltip();
       this.onSelect(pin, false);
     });
     marker.addTo(this.group);
-    const drawn: Drawn = { pin, marker, root, offset: { x: 0, y: 0 } };
+    const drawn: Drawn = { pin, marker, root };
     const element = marker.getElement();
     if (element) {
       element.setAttribute("aria-label", pinLabel(pin, area));
@@ -171,11 +165,9 @@ export class PinLayer {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         event.stopPropagation();
-        marker.closeTooltip();
         this.onSelect(pin, true);
       });
       const on = () => {
-        this.aim(drawn);
         lightPin(pin.key);
       };
       const off = () => {
@@ -187,29 +179,6 @@ export class PinLayer {
       element.addEventListener("blur", off);
     }
     this.drawn.set(pin.key, drawn);
-  }
-
-  /**
-   * Points the tooltip where it has room on this small map: above the badge, or below it near the top edge, and to
-   * one side near the left or right edge. Leaflet mirrors the offset of a tooltip on the left.
-   */
-  private aim({ marker, offset }: Drawn): void {
-    const tooltip = marker.getTooltip();
-    if (!tooltip) return;
-    const at = this.map.latLngToContainerPoint(marker.getLatLng()).add([offset.x, offset.y]);
-    const width = this.map.getSize().x;
-    let direction: L.Direction = at.y < 70 ? "bottom" : "top";
-    let shift = L.point(offset.x, direction === "bottom" ? offset.y + 16 : offset.y - 16);
-    if (at.x < 110) {
-      direction = "right";
-      shift = L.point(offset.x + 16, offset.y);
-    } else if (at.x > width - 110) {
-      direction = "left";
-      shift = L.point(16 - offset.x, offset.y);
-    }
-    tooltip.options.direction = direction;
-    tooltip.options.offset = shift;
-    if (tooltip.isOpen()) tooltip.update();
   }
 
   /**
@@ -243,7 +212,6 @@ export class PinLayer {
     entries.forEach((entry, k) => {
       const offset = offsets[k] ?? { x: 0, y: 0 };
       const { root } = entry;
-      entry.offset = offset;
       const length = Math.hypot(offset.x, offset.y);
       root.style.setProperty("--dx", `${offset.x}px`);
       root.style.setProperty("--dy", `${offset.y}px`);
@@ -251,7 +219,6 @@ export class PinLayer {
       root.style.setProperty("--len", `${Math.max(0, length - 11)}px`);
       root.style.setProperty("--ang", `${Math.atan2(offset.y, offset.x)}rad`);
       root.toggleAttribute("data-moved", length > 0);
-      this.aim(entry);
     });
   };
 
