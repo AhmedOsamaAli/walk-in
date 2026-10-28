@@ -1,6 +1,6 @@
 name: Deploy the web app to Cloudflare Pages
 
-# The web app is served from Cloudflare Pages (https://walkin-app.pages.dev), which never sleeps, and its /api requests
+# The web app is served from Cloudflare Pages (https://walkin-founders.pages.dev), which never sleeps, and its /api requests
 # go to the backend on Render through frontend/functions. Render redeploys the backend on every push to main; this
 # keeps the front door in step.
 on:
@@ -38,4 +38,4 @@ jobs:
       - run: npm run build
       - name: Deploy (skipped until the Cloudflare secrets exist)
         if: env.CLOUDFLARE_API_TOKEN != ''
-        run: npx --yes wrangler@4 pages deploy dist --project-name walkin-app --branch main --commit-dirty=true
+        run: npx --yes wrangler@4 pages deploy dist --project-name walkin-founders --branch main --commit-dirty=true
