@@ -227,7 +227,8 @@ def test_a_perk_that_only_restates_the_pledge_is_refused_in_the_draft_and_the_ca
 
 def test_a_kit_still_building_starts_no_campaign(world):
     client = world["client"]
-    made = client.post("/api/kits", json={"run_id": world["run_id"], "index": 1}).json()
+    # Built first: a build still running would end by marking the kit ready (KitStore.finish), over the change below.
+    made = ready_kit(client, world["run_id"], index=1)
     change(client, kits, kits.c.token == made["token"], status="building")
     answer = client.post("/api/campaigns/draft", json=terms(world, kit={"token": made["token"]}))
     assert answer.status_code == 409 and "ready" in answer.json()["detail"]
