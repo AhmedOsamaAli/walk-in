@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitLines, layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type PosterText } from "./poster";
+import { BACK_PAD, fitLines, layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type PosterText } from "./poster";
 
 const TEXT: PosterText = {
   name: "Golden Hour",
@@ -84,6 +84,50 @@ describe("poster layout", () => {
     expect(fitLines("one two three four", 9, measure, 3)).toEqual(["one two", "three", "four"]);
     expect(fitLines("one two three four five six", 9, measure, 2)).toEqual(["one two", "three…"]);
     expect(fitLines("", 9, measure, 2)).toEqual([]);
+  });
+});
+
+describe("the poster with a Founders campaign", () => {
+  const BACK = "Back it before it opens: pledge $25, charged only if 40 neighbors join by Nov 30.";
+
+  it("sets the campaign's line in a box beside the QR code, every word of it", () => {
+    const layout = layoutPoster({ ...TEXT, back: BACK }, roughMeasure);
+    const back = layout.back;
+    const qr = layout.qr;
+    expect(back).not.toBeNull();
+    expect(qr).not.toBeNull();
+    if (!back || !qr) return;
+    expect(back.text.lines.join(" ")).toBe(BACK);
+    // Left of the code, level with its top, inside the margins.
+    expect(back.box.x).toBe(POSTER_M);
+    expect(back.box.y).toBe(qr.y);
+    expect(back.box.x + back.box.width).toBeLessThan(qr.x);
+    for (const width of back.text.widths) expect(POSTER_M + BACK_PAD + width).toBeLessThan(back.box.x + back.box.width);
+    expect(back.text.y.at(-1)).toBeLessThan(back.box.y + back.box.height);
+    // The subline follows it, smaller, above the proof at the foot; the hours give way when there is no room.
+    expect(layout.subline?.size).toBeLessThan(19);
+    expect(layout.subline?.y[0]).toBeGreaterThan(back.box.y + back.box.height);
+    expect(layout.subline?.y.at(-1)).toBeLessThan(layout.proof?.y[0] ?? POSTER_H);
+    if (layout.hours) expect(layout.hours.y.at(-1)).toBeLessThan(layout.proof?.y[0] ?? POSTER_H);
+  });
+
+  it("leaves the rest of the poster where it was", () => {
+    const plain = layoutPoster(TEXT, roughMeasure);
+    const backed = layoutPoster({ ...TEXT, back: BACK }, roughMeasure);
+    expect(plain.back).toBeNull();
+    expect(backed.name).toEqual(plain.name);
+    expect(backed.headline).toEqual(plain.headline);
+    expect(backed.map).toEqual(plain.map);
+    expect(backed.qr).toEqual(plain.qr);
+    expect(backed.proof).toEqual(plain.proof);
+  });
+
+  it("drops the subline rather than run it into the proof under a long line", () => {
+    const long = `${BACK} ${BACK}`;
+    const layout = layoutPoster({ ...TEXT, back: long }, roughMeasure);
+    expect(layout.back?.text.lines.length).toBeLessThanOrEqual(4);
+    const bottom = layout.subline ? (layout.subline.y.at(-1) ?? 0) : 0;
+    expect(bottom).toBeLessThan(POSTER_H - 50);
   });
 });
 

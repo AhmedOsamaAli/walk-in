@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { paypalOf, type KitCampaign } from "../../api/founders";
 import type { KitPoster } from "../../api/kit";
-import { LINK_KINDS, shortLink } from "../../lib/kit";
+import { inSandbox, posterLine } from "../../lib/founders";
+import { absoluteUrl, LINK_KINDS, shortLink } from "../../lib/kit";
 import { isPlainClick } from "../../lib/navigation";
+import { useSession } from "../../state/session";
+import { SandboxNotice } from "../founders/SandboxNotice";
 import type { Landing } from "./TrackedLinks";
 import { PosterArt } from "./PosterArt";
 
@@ -36,19 +40,24 @@ interface PosterSectionProps {
   /** The poster's tracked link, for the QR code. */
   link: string | null;
   landing: Landing;
+  /** The viewer's own open Founders campaign for the kit: the QR code opens it, and the poster says its terms. */
+  campaign: KitCampaign | null;
   /** Takes the owner to the field for their link, in the kit's Links tab, with the cursor in it. */
   onAddLink: () => void;
 }
 
 /**
  * The poster on screen, printed on its own (the page's print styles hide everything else), or saved as an SVG file. Its
- * QR code needs a page of the owner's to send a passer-by to: without one, the poster has none and asks for the link.
+ * QR code needs a page to send a passer-by to: the owner's open Founders campaign, else a page of the owner's own;
+ * without either, the poster has none and asks for the link.
  */
-export function PosterSection({ poster, link, landing, onAddLink }: PosterSectionProps) {
+export function PosterSection({ poster, link, landing, campaign, onAddLink }: PosterSectionProps) {
   const svg = useRef<SVGSVGElement>(null);
   const [printing, setPrinting] = useState(false);
+  const { config } = useSession();
   const own = landing.kind === "own" ? landing : null;
-  const code = own ? link : null;
+  const code = campaign ? absoluteUrl(campaign.url) : own ? link : null;
+  const back = campaign ? posterLine(campaign.amount, campaign.goal, campaign.deadline) : null;
 
   useEffect(() => {
     if (!printing) return;
@@ -73,10 +82,10 @@ export function PosterSection({ poster, link, landing, onAddLink }: PosterSectio
   return (
     <div className="poster-section">
       <figure className="poster-frame">
-        <PosterArt poster={poster} link={code} svgRef={svg} />
+        <PosterArt poster={poster} link={code} back={back} svgRef={svg} />
       </figure>
       <div className="poster-side">
-        {own ? null : (
+        {own || campaign ? null : (
           <div className="poster-ask" role="note">
             <p>
               <b>No QR code yet.</b> A QR code needs somewhere useful to send a passer-by: your website, an Instagram or
@@ -100,9 +109,21 @@ export function PosterSection({ poster, link, landing, onAddLink }: PosterSectio
         <p className="poster-side-lead">
           A sheet for the window, set from the kit&apos;s checked lines and drawn on the streets around the door: the people who
           pass it are the people it is about.
+          {campaign ? " Its QR code opens your Founders campaign, so a passer-by can back it on the spot." : ""}
         </p>
+        {campaign && inSandbox(paypalOf(config)) ? <SandboxNotice /> : null}
         <dl className="spec poster-spec">
-          {own && code ? (
+          {campaign && code ? (
+            <div>
+              <dt>QR code opens</dt>
+              <dd>
+                <span className="poster-link">{shortLink(code)}</span>
+                <small className="spec-basis">
+                  Your Founders campaign, where neighbors pledge with PayPal. The line beside the code is its own terms.
+                </small>
+              </dd>
+            </div>
+          ) : own && code ? (
             <div>
               <dt>QR code opens</dt>
               <dd>
@@ -152,7 +173,7 @@ export function PosterSection({ poster, link, landing, onAddLink }: PosterSectio
       {printing
         ? createPortal(
             <div className="print-only print-poster" aria-hidden="true">
-              <PosterArt poster={poster} link={code} />
+              <PosterArt poster={poster} link={code} back={back} />
             </div>,
             document.body,
           )

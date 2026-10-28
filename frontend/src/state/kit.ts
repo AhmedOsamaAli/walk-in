@@ -69,10 +69,19 @@ export type KitLoad =
   | { state: "missing" }
   | { state: "failed"; message: string };
 
-/** A kit by its token, followed every two seconds while it is being built; `restart` follows it again (after a retry). */
-export function useKit(token: string) {
+/**
+ * A kit by its token, followed every two seconds while it is being built; `restart` follows it again (after a retry).
+ * Given who is signed in (`viewer`: undefined until the session has first answered), a sign-in or sign-out reads it
+ * again, since which of its Founders campaigns is the viewer's own changes with them.
+ */
+export function useKit(token: string, viewer?: string | null) {
   const [load, setLoad] = useState<{ token: string; load: KitLoad }>({ token, load: { state: "loading" } });
   const [run, setRun] = useState(0);
+  const [seen, setSeen] = useState(viewer);
+  if (viewer !== seen) {
+    setSeen(viewer);
+    if (seen !== undefined && viewer !== undefined) setRun(run + 1);
+  }
 
   useEffect(() => {
     const abort = new AbortController();

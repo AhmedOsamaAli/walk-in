@@ -2,8 +2,10 @@ import { ExampleBanner } from "../components/ExampleBanner";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { pageUrl, type PageRoute } from "../lib/routes";
 import { kitExample, useExamples } from "../state/examples";
+import { CampaignPage } from "./CampaignPage";
 import { DossierPage } from "./DossierPage";
 import { ExamplesPage } from "./ExamplesPage";
+import { FoundersPage } from "./FoundersPage";
 import { KitPage } from "./KitPage";
 import { PlacesPage } from "./PlacesPage";
 import { PrivacyPage } from "./PrivacyPage";
@@ -34,10 +36,14 @@ function Shown({ route, onFresh }: PageViewProps) {
       return <PrivacyPage />;
     case "examples":
       return <ExamplesPage onFresh={onFresh} />;
+    case "founders":
+      return <FoundersPage />;
     case "kit":
       return <KitPage token={route.token} />;
     case "dossier":
       return <DossierPage token={route.token} />;
+    case "campaign":
+      return <CampaignPage route={route} />;
   }
 }
 

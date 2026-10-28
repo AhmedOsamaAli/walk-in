@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { ApiError } from "../api/client";
 import { kits, type Kit, type KitView } from "../api/kit";
 import { BrandMark } from "../components/BrandMark";
+import { FoundersTab, ownCampaign } from "../components/founders/FoundersTab";
 import { CopyChecks, CopyDeck } from "../components/kit/CopyDeck";
 import { DossierBody, dossierContents, dossierGist } from "../components/kit/DossierView";
 import { PosterSection } from "../components/kit/PosterSection";
@@ -20,6 +21,7 @@ import { scrollBehavior } from "../lib/motion";
 import { BRIEF_URL, dossierUrl, PLACES_URL } from "../lib/routes";
 import { useNow } from "../lib/useNow";
 import { useKit, useKitNews } from "../state/kit";
+import { useSession } from "../state/session";
 
 const BUILD_STEPS = [
   "The design sheet, if the concept had none yet",
@@ -221,6 +223,7 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const focusNext = useRef(false);
   const posterLink = kit.links.find((link) => link.key === "poster");
   const posterUrl = posterLink ? trackedUrl(landing.url, posterLink.query) : landing.url;
+  const campaign = ownCampaign(view);
   const contents = dossierContents(kit.dossier);
   const cover = kit.dossier.cover;
   const sections = kit.dossier.sections.length;
@@ -228,7 +231,14 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const items: TabItem[] = KIT_PARTS.map(({ id, label }) => ({
     id,
     label,
-    badge: id === "copy" ? String(pieces) : id === "links" && landing.kind === "own" ? String(kit.links.length) : null,
+    badge:
+      id === "copy"
+        ? String(pieces)
+        : id === "links" && landing.kind === "own"
+          ? String(kit.links.length)
+          : id === "founders" && campaign
+            ? `${campaign.supporters}/${campaign.goal}`
+            : null,
   }));
 
   // Once the chosen part shows.
@@ -283,15 +293,18 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
           no="01"
           title="The window poster"
           note={
-            landing.kind === "own"
-              ? "Print it for the window. Its QR code opens your link, tagged as the poster's channel."
-              : "Print it for the window. Add your link under Links and it carries a QR code to it."
+            campaign
+              ? "Print it for the window. Its QR code opens your Founders campaign, and it says the campaign's terms."
+              : landing.kind === "own"
+                ? "Print it for the window. Its QR code opens your link, tagged as the poster's channel."
+                : "Print it for the window. Add your link under Links and it carries a QR code to it."
           }
         />
         <PosterSection
           poster={kit.poster}
           link={posterUrl}
           landing={landing}
+          campaign={campaign}
           onAddLink={() => {
             choose("links", "field");
           }}
@@ -359,6 +372,23 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
         </div>
         {pager("report")}
       </TabPanel>
+
+      <TabPanel idPrefix={TABS} id="founders" selected={part === "founders"} className="pg-sec">
+        <SectionHead
+          no="05"
+          title="Founders"
+          note={`Let the neighbors back ${kit.concept.name} before the lease is signed. They pledge with PayPal, which only holds the money: everyone is charged only if enough of them join by your deadline.`}
+        />
+        <FoundersTab
+          view={view}
+          kit={kit}
+          onPoster={() => {
+            focusNext.current = true;
+            choose("poster");
+          }}
+        />
+        {pager("founders")}
+      </TabPanel>
     </>
   );
 }
@@ -397,9 +427,11 @@ function useTitleFocus(): (node: HTMLElement | null) => void {
   );
 }
 
-/** A launch kit by its link: followed while it is built, then its poster, ad copy, tracked links and report, a tab each. */
+/** A launch kit by its link: followed while it is built, then its poster, ad copy, tracked links, report and Founders, a
+ * tab each. */
 export function KitPage({ token }: { token: string }) {
-  const { load, restart } = useKit(token);
+  const { phase, user } = useSession();
+  const { load, restart } = useKit(token, phase === "loading" ? undefined : (user?.id ?? null));
   const titleRef = useTitleFocus();
   const view = load.state === "shown" ? load.view : null;
   const kit = view?.status === "ready" ? view.kit : null;

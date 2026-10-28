@@ -1,12 +1,13 @@
 /**
  * The launch kit's parts, as its page's tabs show them: the poster for the window first, then what goes out with it,
- * and the report for a landlord or a lender last.
+ * the report for a landlord or a lender, and last Founders, where the neighbors back the business before it opens.
  */
 export const KIT_PARTS = [
   { id: "poster", label: "Poster" },
   { id: "copy", label: "Ad copy" },
   { id: "links", label: "Links" },
   { id: "report", label: "Report" },
+  { id: "founders", label: "Founders" },
 ] as const;
 
 export type KitPart = (typeof KIT_PARTS)[number]["id"];

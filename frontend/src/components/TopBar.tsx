@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { markLabel, replays, type MarkState } from "../lib/brand";
 import { prefersReducedMotion } from "../lib/motion";
 import { isPlainClick, type HomeMove } from "../lib/navigation";
-import { BRIEF_URL, EXAMPLES_URL } from "../lib/routes";
+import { BRIEF_URL, EXAMPLES_URL, FOUNDERS_URL } from "../lib/routes";
 import type { Theme } from "../state/theme";
 import { AccountMenu } from "./AccountMenu";
 import { BrandMark } from "./BrandMark";
@@ -23,9 +23,14 @@ interface TopBarProps {
   inert?: boolean;
   /** The finished examples' link: on every page ("current" on their own), and gone once none turn out to exist. */
   examples?: "link" | "current" | null;
+  /** The Founders campaigns' link, on every page ("current" on their own). */
+  founders?: "link" | "current";
 }
 
-/** The mark, the examples, the account and the theme. A survey's own navigation is its tabs, pinned under this bar. */
+/**
+ * The mark, Founders, the examples, the account and the theme. A survey's own navigation is its tabs, pinned under this
+ * bar.
+ */
 export function TopBar({
   mark,
   progress,
@@ -35,6 +40,7 @@ export function TopBar({
   onToggleTheme,
   inert = false,
   examples = "link",
+  founders = "link",
 }: TopBarProps) {
   const [replay, setReplay] = useState(0);
   /** When the last walk-in started, on performance.now()'s clock; the first plays as the page loads. */
@@ -76,6 +82,14 @@ export function TopBar({
       </a>
       <span className="bar-gap" />
       <div className="bar-end">
+        <Link
+          className="bar-link bar-founders mono"
+          href={FOUNDERS_URL}
+          aria-current={founders === "current" ? "page" : undefined}
+          title="Businesses their neighbors can back with PayPal before they open"
+        >
+          Founders
+        </Link>
         {examples ? (
           <Link
             className="bar-link bar-examples mono"

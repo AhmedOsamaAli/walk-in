@@ -6,12 +6,15 @@ export class ApiError extends Error {
   readonly status: number;
   /** Whether `message` is the server's own words rather than a sentence about the status. */
   readonly explained: boolean;
+  /** The answer's JSON, for what an endpoint sends beside `detail` (a campaign's `problems`, `url` or `retry`). */
+  readonly body: unknown;
 
-  constructor(message: string, status: number, explained = false) {
+  constructor(message: string, status: number, explained = false, body: unknown = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.explained = explained;
+    this.body = body;
   }
 }
 
@@ -30,7 +33,7 @@ export async function apiError(response: Response): Promise<ApiError> {
   const detail = detailOf(body);
   const message =
     detail ?? (response.status === 429 ? "Too many requests. Try again in a while." : `Request failed (${response.status}).`);
-  return new ApiError(message, response.status, detail !== null);
+  return new ApiError(message, response.status, detail !== null, body);
 }
 
 export function messageOf(error: unknown): string {

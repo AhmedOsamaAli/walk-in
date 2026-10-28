@@ -1,13 +1,18 @@
 /* Accounts: the app's public settings, who is signed in, and the surveys saved to the account (the API contract). */
 import { post, request } from "./client";
+import type { PayPalConfig, PlacesCampaign } from "./founders";
 import type { PlacesKit } from "./kit";
 import type { Intent, RunStatus } from "./types";
 
-/** GET /api/config: the web app's public settings, limited to what signing in needs. */
+/** GET /api/config: the web app's public settings, limited to what signing in, pledging and surveying need. */
 export interface AppConfig {
   google_client_id: string | null;
   /** Development sign-in by email: never on the hosted site. */
   dev_login: boolean;
+  /** PayPal for Founders' pledges; a server without it sends none, or `enabled: false`. */
+  paypal?: PayPalConfig;
+  /** New surveys are off (the judging weeks, once Qloo's hackathon key is gone): the brief offers the surveyed ones. */
+  surveys_paused?: boolean;
 }
 
 export interface User {
@@ -35,10 +40,13 @@ export interface PlacesSurvey {
   url: string;
 }
 
-/** GET /api/me/places: the account's surveys and the launch kits made for them, newest first, at most 100 of each. */
+/** GET /api/me/places: the account's surveys, the launch kits made for them (newest first, at most 100 of each) and its
+ * Founders campaigns. */
 export interface Places {
   surveys: PlacesSurvey[];
   kits: PlacesKit[];
+  /** Missing from a server without Founders. */
+  campaigns?: PlacesCampaign[];
 }
 
 export const account = {
