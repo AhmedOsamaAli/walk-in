@@ -37,3 +37,19 @@ services:
         value: "45"
       - key: GROQ_API_KEY
         sync: false
+      # Walk-in Founders: PayPal (the sandbox until PAYPAL_ENV=live), its webhook, the scheduled settlement's secret,
+      # the in-app settlement period, and paused surveys for the judging weeks.
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: SETTLE_EVERY_S
+        value: "180"
+      - key: SURVEYS_PAUSED
+        value: "false"

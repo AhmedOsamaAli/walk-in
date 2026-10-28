@@ -112,6 +112,21 @@ class Settings:
     allowed_origins: tuple[str, ...] = field(default_factory=lambda: _env_list("ALLOWED_ORIGINS"))
     # Shared with the Cloudflare front door (frontend/functions): with it, X-Client-IP is the visitor's own address.
     proxy_secret: str = field(default_factory=lambda: _env("PROXY_SECRET"))
+    # Walk-in Founders: PayPal (developer.paypal.com, Apps & Credentials), the sandbox until PAYPAL_ENV=live. Without
+    # the keys nobody can pledge, and the pages say why.
+    paypal_client_id: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_ID"))
+    paypal_client_secret: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_SECRET"))
+    paypal_env: str = field(default_factory=lambda: _env("PAYPAL_ENV", "sandbox").lower())
+    # The webhook registered for this server's address (docs/founders/setup_paypal_webhook.py writes it); without it
+    # POST /api/paypal/webhook does not exist, and settlement keeps pledges and payouts in step on its own.
+    paypal_webhook_id: str = field(default_factory=lambda: _env("PAYPAL_WEBHOOK_ID"))
+    # The secret a scheduled job sends to POST /api/cron/settle (X-Cron-Secret); without it that endpoint does not exist.
+    cron_secret: str = field(default_factory=lambda: _env("CRON_SECRET"))
+    # Seconds between the in-app settlement passes (0 turns the loop off; the cron endpoint still settles).
+    settle_every: float = field(default_factory=lambda: _env_or("SETTLE_EVERY_S", 180.0))
+    # For the judging weeks, once Qloo's hackathon key is switched off: GET /api/run answers 503, and the web app shows
+    # the surveyed storefronts instead.
+    surveys_paused: bool = field(default_factory=lambda: _env_flag("SURVEYS_PAUSED"))
 
     @property
     def hosted(self) -> bool:
@@ -129,6 +144,19 @@ class Settings:
         if not self.hosted:
             origins.update(DEV_ORIGINS)
         return frozenset(origin for origin in origins if origin)
+
+    @property
+    def paypal_enabled(self) -> bool:
+        return bool(self.paypal_client_id and self.paypal_client_secret)
+
+    @property
+    def paypal_environment(self) -> str:
+        """'live' with PAYPAL_ENV=live, else 'sandbox': anything else never reaches real money."""
+        return "live" if self.paypal_env == "live" else "sandbox"
+
+    @property
+    def paypal_api_base(self) -> str:
+        return "https://api-m.paypal.com" if self.paypal_environment == "live" else "https://api-m.sandbox.paypal.com"
 
 
 settings = Settings()

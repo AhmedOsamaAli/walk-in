@@ -1,5 +1,5 @@
-"""Public settings, sign-in (Google, or a development login), sign-out, the signed-in user, My places and deleting the
-account."""
+"""Public settings, sign-in (Google, or a development login), sign-out, the signed-in user, My places (with the user's
+campaigns) and deleting the account."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 from .. import auth
 from ..config import settings
 from ..db.surveys import survey_status
+from ..payments import founders
+from ..payments.records import progress_of
 from ..ratelimit import client_ip
 
 router = APIRouter(prefix="/api")
@@ -36,9 +38,15 @@ def limit_sign_ins(request: Request) -> None:
 
 
 @router.get("/config")
-async def public_config() -> dict:
-    """What the web app needs to know before anyone signs in: how to sign in."""
-    return {"google_client_id": settings.google_client_id or None, "dev_login": settings.dev_login}
+async def public_config(request: Request) -> dict:
+    """What the web app needs to know before anyone signs in: how to sign in, whether pledging with PayPal works here
+    (and what PayPal's JavaScript SDK needs), and whether new surveys are paused."""
+    return {
+        "google_client_id": settings.google_client_id or None,
+        "dev_login": settings.dev_login,
+        "paypal": founders.paypal_config(request.app.state),
+        "surveys_paused": settings.surveys_paused,
+    }
 
 
 @router.post("/auth/google")
@@ -98,11 +106,16 @@ async def delete_me(request: Request, user: auth.SignedIn) -> Response:
 
 @router.get("/me/places")
 async def places(request: Request, user: auth.SignedIn) -> dict:
-    """The user's surveys and the launch kits made for them, newest first, at most 100 of each."""
+    """The user's surveys, the launch kits made for them and the campaigns the user started, newest first, at most 100
+    of each."""
     state = request.app.state
     now = state.now()
     surveys = await state.accounts.surveys(user["id"], PLACES)
     kits = await state.kits.owned_by(user["id"], PLACES)
+    campaigns = await state.campaigns.owned_by(user["id"], PLACES)
+    held: dict[str, list[dict]] = {row["id"]: [] for row in campaigns}
+    for pledge in await state.campaigns.pledges(held):
+        held[pledge["campaign_id"]].append(pledge)
     return {
         "surveys": [{
             "id": row["id"], "label": row["label"], "intent": row["intent"],
@@ -113,4 +126,9 @@ async def places(request: Request, user: auth.SignedIn) -> dict:
             "token": row["token"], "survey_id": row["survey_id"], "index": row["idx"], "name": row["name"] or "",
             "status": row["status"], "created_at": iso(row["created_at"]), "url": f"/k/{row['token']}",
         } for row in kits],
+        "campaigns": [{
+            "id": row["id"], "title": row["title"], "status": row["status"],
+            "supporters": progress_of(row, held[row["id"]], now)["supporters"], "goal": row["goal_count"],
+            "deadline": iso(row["deadline"]), "url": f"/p/{row['id']}",
+        } for row in campaigns],
     }

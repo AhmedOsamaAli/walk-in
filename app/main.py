@@ -24,12 +24,15 @@ from .answers import AnswerCache
 from .catchment import CatchmentService, make_reach
 from .config import ROOT, settings
 from .db import AccountStore, Database, KitStore, SurveyStore
+from .db.campaigns import CampaignStore
 from .db.surveys import survey_status
 from .db.tables import utcnow
 from .geocode import Abandoned, Geocoder
 from .kits import KitBuilder
 from .llm import LLM
 from .osm import OsmClient
+from .payments import founders
+from .payments.paypal import PayPalClient
 from .providers import build_llm
 from .qloo import QlooClient, QlooError
 from .ratelimit import DailyBudget, RateLimiter, client_ip
@@ -48,6 +51,10 @@ SIGN_INS_PER_HOUR = 30
 KITS_PER_HOUR = 12
 # On shutdown, running surveys get this many seconds to finish before they are stopped and saved as failed.
 SHUTDOWN_GRACE_S = 10
+# What GET /api/run answers while surveys are paused (SURVEYS_PAUSED), once Qloo's hackathon key is switched off.
+SURVEYS_PAUSED = "New surveys are paused; open one of the surveyed storefronts"
+# create_app's settlement period when none is given: SETTLE_EVERY_S, read when the app starts.
+SETTLE_FROM_SETTINGS = -1.0
 
 PRESETS = [
     {"id": "ues", "label": "Upper East Side, Manhattan", "lat": 40.7736, "lon": -73.9566,
@@ -63,17 +70,19 @@ PRESETS = [
 ]
 
 # Sign in with Google loads its script, button frame and styles from accounts.google.com/gsi
-# (developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy).
+# (developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy). PayPal's JavaScript
+# SDK (v6) loads its script and checkout frames from paypal.com, the sandbox's or the live one (docs/founders/CONTRACT.md).
 # The same policy as frontend/public/_headers (Cloudflare Pages) and vite.config.ts (preview).
 GOOGLE_SIGN_IN = "https://accounts.google.com/gsi/"
+PAYPAL = "https://www.sandbox.paypal.com https://www.paypal.com"
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
-    f"script-src 'self' {GOOGLE_SIGN_IN}client",
+    f"script-src 'self' {GOOGLE_SIGN_IN}client {PAYPAL}",
     f"style-src 'self' 'unsafe-inline' {GOOGLE_SIGN_IN}style",
     "img-src 'self' data: https:",
     "font-src 'self'",
-    f"connect-src 'self' {GOOGLE_SIGN_IN}",
-    f"frame-src {GOOGLE_SIGN_IN}",
+    f"connect-src 'self' {GOOGLE_SIGN_IN} {PAYPAL}",
+    f"frame-src {GOOGLE_SIGN_IN} {PAYPAL}",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -103,15 +112,21 @@ class Services:
     answers: AnswerCache = field(default_factory=lambda: AnswerCache(None))
     osm: OsmClient | None = None  # the OpenStreetMap cross-check of the gaps; without it, rows say it is off
     google: auth.GoogleKeys = field(default_factory=auth.GoogleKeys)
+    paypal: PayPalClient | None = None  # Walk-in Founders' pledges and payouts; without it nobody can pledge
 
     async def aclose(self) -> None:
         if self.osm is not None:
             await self.osm.aclose()
+        if self.paypal is not None:
+            await self.paypal.aclose()
         for service in (self.qloo, self.walker, self.geocoder, self.google):
             await service.aclose()
 
 
 def default_services() -> Services:
+    paypal = None
+    if settings.paypal_enabled:
+        paypal = PayPalClient(settings.paypal_client_id, settings.paypal_client_secret, settings.paypal_api_base)
     return Services(
         qloo=QlooClient(settings.qloo_api_key, settings.qloo_base_url, settings.cache_dir),
         walker=CatchmentService(settings.walk_cache_dir),
@@ -119,6 +134,7 @@ def default_services() -> Services:
         geocoder=Geocoder(),
         answers=AnswerCache(settings.agent_cache_dir, enabled=settings.agent_cache),
         osm=OsmClient(settings.cache_dir.parent / "osm"),
+        paypal=paypal,
     )
 
 
@@ -179,6 +195,8 @@ async def run(
     business: str = Query("", max_length=80, description="The business to open (intent=open)"),
     place_id: str = Query("", max_length=64, pattern=r"^[A-Za-z0-9-]*$", description="The owner's place (intent=improve)"),
 ) -> StreamingResponse:
+    if settings.surveys_paused:
+        raise HTTPException(503, SURVEYS_PAUSED)
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
     try:
@@ -437,17 +455,20 @@ WEB_ROOT = ROOT / "frontend" / "dist"  # the React build: npm run build in front
 
 def create_app(
     services_factory: Callable[[], Services] = default_services, database_url: str | None = None,
-    web_root: Path | None = None,
+    web_root: Path | None = None, settle_every: float | None = SETTLE_FROM_SETTINGS,
 ) -> FastAPI:
     """The app. `database_url` overrides DATABASE_URL; tests give each app a SQLite file of its own. `web_root` overrides
-    the React build it serves (WEB_ROOT); without its index.html, the app serves the API only."""
+    the React build it serves (WEB_ROOT); without its index.html, the app serves the API only. `settle_every` is the
+    settlement loop's period in seconds (SETTLE_EVERY_S unless given); None or 0 turns the loop off."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         database = Database(database_url or settings.database_url)
         await database.migrate()
         surveys = SurveyStore(database)
-        await surveys.purge(settings.survey_retention_days, keep=settings.examples)
+        # A survey behind a campaign stays, with its kit, whoever ran it: the campaign's page links to both.
+        backed = await CampaignStore(database).survey_ids()
+        await surveys.purge(settings.survey_retention_days, keep=(*settings.examples, *backed))
         accounts = AccountStore(database)
         await accounts.purge_sessions(utcnow())
         services = services_factory()
@@ -466,8 +487,10 @@ def create_app(
         app.state.kit_limiter = RateLimiter(KITS_PER_HOUR, 3600)
         app.state.kit_budget = DailyBudget(settings.kit_daily_limit)
         await app.state.builder.resume()  # kits a restart cut off are built again
+        every = settings.settle_every if settle_every == SETTLE_FROM_SETTINGS else settle_every
         try:
-            yield
+            async with founders.running(app, every):
+                yield
         finally:
             await app.state.live.stop(SHUTDOWN_GRACE_S)
             await app.state.builder.stop()  # unfinished kits stay "building", and the next start builds them
@@ -481,17 +504,21 @@ def create_app(
             "Reads Qloo taste data for the area people can reach from the door, on foot or by car, ranks what the block is "
             "missing and designs the business. GET /api/run streams a survey as server-sent events, and GET /api/runs/{id} "
             "returns its events again; the other endpoints are JSON. POST /api/kits builds a concept's launch kit (free). "
-            "Signing in with Google keeps surveys and kits in My places."
+            "Signing in with Google keeps surveys and kits in My places. Walk-in Founders: an owner starts a campaign from "
+            "a launch kit (POST /api/campaigns), and neighbors back it with PayPal (GET /api/campaigns finds them): PayPal "
+            "only holds each pledge, and everyone is charged only if enough neighbors join by the deadline."
         ),
         lifespan=lifespan,
     )
     app.state.now = utcnow  # the app's clock; tests move it
     app.state.examples_cache = {}  # GET /api/examples, by the ids configured
+    app.state.origin_exempt = frozenset()  # API paths called from elsewhere than a page (founders.CALLBACKS)
 
     @app.middleware("http")
     async def security(request: Request, call_next):
-        """Turns away unsafe API calls from other sites' pages, sets the cookies endpoints queued, and the headers."""
-        if auth.origin_allowed(request):
+        """Turns away unsafe API calls from other sites' pages, sets the cookies endpoints queued, and the headers.
+        PayPal's webhook and the scheduled settlement are no page's calls: each proves itself otherwise."""
+        if request.url.path in app.state.origin_exempt or auth.origin_allowed(request):
             response = await call_next(request)
             auth.apply_cookies(request, response)
         else:
@@ -508,13 +535,15 @@ def create_app(
     app.include_router(account.router)
     app.include_router(kits.router)
     app.include_router(examples.router)
+    founders.install(app)
     root = web_root or WEB_ROOT
     if not (root / "index.html").exists():
         log.warning("frontend/dist is missing (npm run build in frontend/): serving the API only")
         return app
 
     # Shared links to a survey (/s), a launch kit (/k) and its printable dossier, My places (/me), the examples
-    # (/examples) and the privacy note (/privacy) are pages of the web app.
+    # (/examples), the privacy note (/privacy), a campaign (/p) and the open campaigns (/founders) are pages of the web
+    # app.
     @app.get("/s/{key}", include_in_schema=False)
     @app.get("/k/{key}", include_in_schema=False)
     @app.get("/k/{key}/dossier", include_in_schema=False)
@@ -524,6 +553,8 @@ def create_app(
     async def shared_page() -> FileResponse:
         return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
+    for path in founders.PAGES:
+        app.add_api_route(path, shared_page, include_in_schema=False)
     app.mount("/", RevalidatingStaticFiles(directory=root, html=True), name="web")
     return app
 
