@@ -1,8 +1,7 @@
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import type { TasteEntity, TastePayload } from "../api/types";
-import { safeUrl } from "../lib/format";
-import { initials } from "../lib/initials";
 import { SectionHead } from "./SectionHead";
+import { Thumbnail } from "./Thumbnail";
 
 /** Where Walk-in puts a list to work: the launch plan's ad settings (launch.py) or the experience plan (experience.py). */
 interface Use {
@@ -24,26 +23,10 @@ const USES = {
 } satisfies Record<string, Use[]>;
 
 function NameItem({ entity }: { entity: TasteEntity }) {
-  const [broken, setBroken] = useState(false);
-  const image = safeUrl(entity.image);
   const meta = entity.year ? String(entity.year) : entity.since ? `since ${entity.since}` : null;
   return (
     <li>
-      {image && !broken ? (
-        <img
-          src={image}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => {
-            setBroken(true);
-          }}
-        />
-      ) : (
-        <span className="ph" aria-hidden="true">
-          {initials(entity.name)}
-        </span>
-      )}
+      <Thumbnail image={entity.image} name={entity.name} />
       <span className="nm">
         {entity.name}
         {meta ? <small className="mono">{meta}</small> : null}

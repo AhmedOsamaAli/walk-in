@@ -1,13 +1,8 @@
 import type { Ref } from "react";
+import type { TitleField } from "../lib/titleBlock";
 import { MapsLink } from "./MapsLink";
 
-export interface TitleField {
-  label: string;
-  /** One entry per line, so a value breaks where it should, never mid-coordinate. */
-  lines: readonly string[];
-  /** Coordinates and other measured values read best in the drafting face. */
-  mono?: boolean;
-}
+export type { TitleField } from "../lib/titleBlock";
 
 interface SiteHeaderProps {
   /** "Site under survey": the first word is set bold. */

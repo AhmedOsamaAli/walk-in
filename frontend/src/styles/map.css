@@ -54,6 +54,14 @@
 }
 @keyframes bobMid { 50% { transform: translate(-50%, calc(-50% - 4px)); } }
 
+/* The map's code would not load (pages/Stage.tsx): a note where the map would be, still. */
+.map-failed {
+  position: absolute; z-index: 500; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: max-content; max-width: calc(100% - 32px); padding: 6px 12px;
+  background: var(--card); color: var(--ink); border: var(--rule); border-radius: 999px;
+  font: 500 12.5px/16px var(--f-sans); text-align: center;
+}
+
 /* The map's key at its bottom-left, once a site is placed: what its dashed ring is, in words ("30-min drive · 272 km²",
    "Tracing a 30-min drive…"), on a solid chip readable over any tiles, or over none when they fail to load. Full screen,
    the card at the foot says it instead; beside a survey on wide screens, the legend under the map. On the strip of a

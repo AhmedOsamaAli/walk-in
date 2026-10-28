@@ -1,11 +1,9 @@
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cx } from "../lib/css";
-import { nextTab, pagerOf, type TabItem } from "../lib/tabs";
+import { nextTab, pagerOf, panelId, tabId, type TabItem } from "../lib/tabs";
 
 export type { TabItem } from "../lib/tabs";
-
-export const tabId = (prefix: string, id: string) => `${prefix}-tab-${id}`;
-export const panelId = (prefix: string, id: string) => `${prefix}-panel-${id}`;
+export { panelId, tabId } from "../lib/tabs";
 
 interface TabsProps {
   /** What the tabs are, said before them and to screen readers: "Results", "Your kit". */

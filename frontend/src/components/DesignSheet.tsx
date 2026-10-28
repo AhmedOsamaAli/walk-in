@@ -1,6 +1,12 @@
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import type { Concept } from "../api/types";
-import { DesignContent } from "./DesignContent";
+import { designChunk } from "../chunks";
+import { lazyComponent } from "../lib/lazy";
+import { Drafting, SheetUnavailable } from "./DesignDrafting";
+import { ErrorBoundary } from "./ErrorBoundary";
+
+/** The sheet's contents load with their own chunk the first time a sheet opens; its drafting state shows meanwhile. */
+const DesignContent = lazyComponent(designChunk, (chunk) => chunk.DesignContent);
 
 export interface DesignTarget {
   runId: string;
@@ -55,7 +61,24 @@ export function DesignSheet({ target, onClose }: DesignSheetProps) {
         Close
       </button>
       {target ? (
-        <DesignContent key={`${target.runId}:${target.index}`} runId={target.runId} index={target.index} concept={target.concept} />
+        <ErrorBoundary
+          key={`${target.runId}:${target.index}`}
+          fallback={
+            <div className="design-body">
+              <SheetUnavailable concept={target.concept} />
+            </div>
+          }
+        >
+          <Suspense
+            fallback={
+              <div className="design-body" aria-busy="true">
+                <Drafting concept={target.concept} index={target.index} />
+              </div>
+            }
+          >
+            <DesignContent runId={target.runId} index={target.index} concept={target.concept} />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
     </dialog>
   );

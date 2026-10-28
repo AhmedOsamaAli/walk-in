@@ -362,7 +362,7 @@ function rulesSummary(notes: string): string {
   return ` · ${text.length > RULES_SHOWN ? `${text.slice(0, RULES_SHOWN - 1).trimEnd()}…` : text}`;
 }
 
-interface BriefProps {
+export interface BriefProps {
   hidden: boolean;
   /** Why the link the page was opened with shows the brief instead, say a survey that is no longer available. */
   notice: string | null;

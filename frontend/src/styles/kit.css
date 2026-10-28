@@ -1,58 +1,6 @@
-/* The launch kit (free): the card on a design sheet, the kit's page, its report as a document, and both on paper.
+/* The launch kit's page and its report, as a document and on paper: loaded with those pages (pages/kitPages.ts). The
+   kit's card on a design sheet and the print rules every page shares are in kit-offer.css, which loads with the app.
    Every color is a token and keeps its role in both themes; on paper everything is ink on white whatever the theme. */
-
-/* ---------- Kits in My places: their statuses ---------- */
-.state[data-state="ready"] { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
-.state[data-state="building"] { background: var(--blue-wash); border-color: var(--blue); color: var(--blue); }
-.places-empty-note { font: 400 14.5px/1.45 var(--f-sans); color: var(--text-4); }
-
-/* ---------- The launch kit on a design sheet: what is inside, and one action ---------- */
-.kit-offer {
-  display: grid; gap: 16px;
-  padding: 20px 22px 18px;
-  background: var(--card); border: var(--rule); border-radius: var(--r-m);
-}
-.kit-offer-head { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: var(--hair); }
-.kit-offer-eyebrow { font-size: 10.5px; color: var(--blue); overflow-wrap: anywhere; }
-.kit-offer-title { font: 400 23px/1.15 var(--f-serif); letter-spacing: -.012em; text-wrap: balance; }
-.kit-contents { counter-reset: kit; }
-/* Two cells: the number, and the item's one <span> (a bare run of text would be a cell of its own in the number's column). */
-.kit-contents li {
-  display: grid; grid-template-columns: 34px minmax(0, 1fr);
-  padding: 9px 0; border-bottom: var(--hair); font-size: 14.5px; line-height: 1.45; color: var(--text-2);
-}
-.kit-contents li > span { min-width: 0; text-wrap: pretty; }
-.kit-contents li:first-child { padding-top: 0; }
-.kit-contents li:last-child { padding-bottom: 0; border-bottom: 0; }
-.kit-contents li::before {
-  content: counter(kit, decimal-leading-zero); counter-increment: kit;
-  padding-top: 3px; font: 500 11px var(--f-mono); color: var(--blue);
-}
-.kit-contents b { font-weight: 600; color: var(--ink); }
-.kit-offer-body { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 44px; padding-top: 2px; }
-.kit-offer-wait { width: min(230px, 100%); }
-/* A button busy starting something stays focusable (aria-disabled), drawn as the disabled ones are. */
-.ink-button[aria-disabled="true"] { opacity: .55; cursor: progress; }
-.ink-button[aria-disabled="true"]:hover { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
-.kit-owned {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px;
-  width: 100%; padding: 12px 12px 12px 16px;
-  background: var(--blue-wash); border: 1px solid var(--blue); border-radius: var(--r-m);
-}
-.kit-owned p { font-size: 14.5px; font-weight: 500; color: var(--blue); }
-.kit-offer-note { font-size: 14px; line-height: 1.45; color: var(--red); }
-.kit-offer-note:empty { display: none; }
-.kit-offer-fine { font-size: 10px; color: var(--ash); text-wrap: balance; }
-/* On a phone the whole card fits under the sheet's floating Close button, in any of its states. */
-@media (max-width: 560px) {
-  .kit-offer { gap: 12px; padding: 16px 16px 14px; }
-  .kit-offer-head { padding-bottom: 10px; }
-  .kit-offer-title { font-size: 21px; }
-  .kit-contents li { padding: 7px 0; font-size: 14px; }
-  .kit-owned { gap: 8px; padding: 10px 12px; }
-  .kit-owned p { font-size: 14px; }
-  .kit-offer .ink-button { width: 100%; }
-}
 
 /* ---------- The kit's page: building, not built, gone ---------- */
 .kit-state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px 34px; align-items: start; }
@@ -109,11 +57,7 @@
 @media (max-width: 480px) {
   .kit-page .kit-tabs { padding: 0 max(0px, calc(var(--pad) - 11px)); }
 }
-/* What the keyboard reaches scrolls clear of the pinned tabs too (47 px tall, 43 on a phone). */
-:root:has(.kit-tabs) { scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + 59px); }
-@media (max-width: 480px) {
-  :root:has(.kit-tabs) { scroll-padding-top: calc(var(--bar-h) + var(--wake-h) + var(--live-h) + 55px); }
-}
+/* What the keyboard reaches scrolls clear of the pinned tabs as under every tab bar (tabs.css). */
 
 /* ---------- Ad copy (tab 02): one card per channel, every field in a paste well ---------- */
 .ad-deck { columns: 2 360px; column-gap: 16px; }
@@ -475,13 +419,6 @@
 @page poster { margin: 10mm; }
 
 @media print {
-  /* Ink on white whatever the screen's theme: the tokens the pages' print styles leave dark. */
-  :root, :root[data-theme="dark"] {
-    --bone: #f1f0ea; --blue-wash: #e8effc; --blue-fill: #0f68ea; --fog: #b6b8bd; --shimmer: #faf9f6;
-    --on-blue: #ffffff; --on-yellow: #1d1d1f; --on-yellow-2: #3a3832; --on-yellow-3: #57544b;
-  }
-  .no-print { display: none !important; }
-
   :root[data-print="poster"] body > :not(.print-poster) { display: none !important; }
   :root[data-print="poster"] .print-poster { display: block; page: poster; }
   /* Fixed to the page area, so it sits in the middle of whichever sheet the printer holds. */
@@ -496,9 +433,6 @@
   .kit-page .page-actions, .kit-state-links, .kit-page .poster-ask a { display: none !important; }
   .kit-page .ad-card, .kit-page .link-row, .kit-page .poster-frame { break-inside: avoid; }
   .kit-page .poster-art { transform: none; box-shadow: none; }
-  /* A design sheet on paper keeps what the kit holds, not the button that makes it. */
-  .kit-offer-body, .kit-offer-note, .kit-offer-fine { display: none; }
-
   /* The report: a document, its running header and footer set by the page (lib/kit.ts reportPageCss). The cover has a
      page to itself, the contents the next, and every section starts a page of its own. */
   .dossier-page { page: report; min-height: 0; padding: 0 !important; background: none; }

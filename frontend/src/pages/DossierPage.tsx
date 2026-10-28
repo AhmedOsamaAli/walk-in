@@ -1,3 +1,4 @@
+import "../styles/kit.css";
 import { useEffect, useMemo } from "react";
 import type { Kit } from "../api/kit";
 import { DOSSIER_TITLES, DossierBody, dossierArea, dossierContents, dossierGist } from "../components/kit/DossierView";

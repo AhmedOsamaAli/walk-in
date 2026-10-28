@@ -1,3 +1,4 @@
+import "../styles/kit.css";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import { kits, type Kit, type KitView } from "../api/kit";

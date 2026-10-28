@@ -9,6 +9,9 @@ import { shownTab, type TabItem } from "./tabs";
 
 export type SurveyTab = "verdict" | "concepts" | "improve" | "gaps" | "area" | "taste" | "log";
 
+/** The survey's tabs and their panels share this prefix in their ids: "survey-tab-gaps", "survey-panel-gaps". */
+export const SURVEY_TABS_ID = "survey";
+
 const ORDER: Record<Intent, readonly SurveyTab[]> = {
   explore: ["concepts", "gaps", "area", "taste", "log"],
   open: ["verdict", "concepts", "gaps", "area", "taste", "log"],

@@ -12,6 +12,10 @@ export interface TabItem {
   teaser?: string;
 }
 
+/** The ids of a tab bar's tabs and panels, from the prefix they share: "kit-tab-poster", "kit-panel-poster". */
+export const tabId = (prefix: string, id: string) => `${prefix}-tab-${id}`;
+export const panelId = (prefix: string, id: string) => `${prefix}-panel-${id}`;
+
 /**
  * The tab a key moves to (the WAI-ARIA tabs pattern, a horizontal bar): the next or previous selectable tab, wrapping
  * round, or the first or last; null for any other key, or when no other tab can be selected.

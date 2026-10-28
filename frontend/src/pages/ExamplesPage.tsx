@@ -5,7 +5,8 @@ import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components
 import { cssVars } from "../lib/css";
 import { INTENTS } from "../lib/format";
 import { BRIEF_URL } from "../lib/routes";
-import { exampleFound, exampleTesting, exampleWho, useExamples } from "../state/examples";
+import { usePreloadWhenIdle } from "../preload";
+import { exampleFound, exampleLinks, exampleTesting, exampleWho, useExamples } from "../state/examples";
 import "../styles/examples.css";
 
 const isIntent = (value: string): value is Intent => Object.hasOwn(INTENTS, value);
@@ -67,11 +68,15 @@ function ExampleCard({ example, index }: { example: Example; index: number }) {
   );
 }
 
-/** "See what you get": the finished examples, free to open, before running a survey of one's own. */
+/**
+ * "See what you get": the finished examples, free to open, before running a survey of one's own. Once the page is idle,
+ * their surveys and kits, and the code that shows them, are fetched ahead, so each opens from memory.
+ */
 export function ExamplesPage({ onFresh }: { onFresh: () => void }) {
   const { phase, list } = useExamples();
   const titleRef = useFocusOnMount();
   useDocumentTitle("Examples");
+  usePreloadWhenIdle(list.flatMap(exampleLinks));
 
   return (
     <Page className="examples-page">
