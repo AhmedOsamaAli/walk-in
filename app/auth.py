@@ -21,6 +21,7 @@ import httpx
 import jwt
 from fastapi import Depends, HTTPException, Request, Response
 
+from . import tls
 from .config import origin_of, settings
 
 log = logging.getLogger("walkin")
@@ -98,7 +99,7 @@ class GoogleKeys:
 
     async def _fetch(self) -> None:
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout)
+            self._http = httpx.AsyncClient(timeout=self._timeout, verify=tls.context())
         self._fetched = self._clock()
         try:
             response = await self._http.get(self.url, timeout=self._timeout)
@@ -234,6 +235,7 @@ async def delete_account(request: Request, user: dict) -> None:
     state = request.app.state
     for run_id in await state.accounts.delete(user["id"]):
         state.runs.forget(run_id)
+        state.responses.forget_survey(run_id)  # its record and its kits, kept in memory as they were sent
     queue_cookie(request, SESSION_COOKIE, None)
     queue_cookie(request, DEVICE_COOKIE, None)
     request.state.user = None
@@ -265,6 +267,16 @@ async def require_user(request: Request) -> dict:
     if user is None:
         raise HTTPException(401, "Sign in first.")
     return user
+
+
+async def session_user_id(state: Any, token: str | None) -> str | None:
+    """The id of the user a session cookie signs in, or None: for work that goes on after the response has started,
+    such as a survey recording who ran it. It neither renews the session nor touches its cookie, which current_user
+    does on the requests that wait for it (the page asks GET /api/me on every load)."""
+    if not token:
+        return None
+    found = await state.accounts.session(token_hash(token), state.now())
+    return found[0]["id"] if found else None
 
 
 # An endpoint parameter for the signed-in user; 401 when nobody is signed in.

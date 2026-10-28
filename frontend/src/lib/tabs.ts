@@ -8,7 +8,13 @@ export interface TabItem {
   pending?: boolean;
   /** A short count or mark after the label, such as "3". */
   badge?: string | null;
+  /** One short line of what the tab shows, said on the way in from the tab before (TabPager). */
+  teaser?: string;
 }
+
+/** The ids of a tab bar's tabs and panels, from the prefix they share: "kit-tab-poster", "kit-panel-poster". */
+export const tabId = (prefix: string, id: string) => `${prefix}-tab-${id}`;
+export const panelId = (prefix: string, id: string) => `${prefix}-panel-${id}`;
 
 /**
  * The tab a key moves to (the WAI-ARIA tabs pattern, a horizontal bar): the next or previous selectable tab, wrapping

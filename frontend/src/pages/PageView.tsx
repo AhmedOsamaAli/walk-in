@@ -1,14 +1,19 @@
+import { Suspense } from "react";
+import { examplesChunk, foundersChunk, kitChunk, placesChunk, privacyChunk } from "../chunks";
 import { ExampleBanner } from "../components/ExampleBanner";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { lazyComponent } from "../lib/lazy";
 import { pageUrl, type PageRoute } from "../lib/routes";
 import { kitExample, useExamples } from "../state/examples";
-import { CampaignPage } from "./CampaignPage";
-import { DossierPage } from "./DossierPage";
-import { ExamplesPage } from "./ExamplesPage";
-import { FoundersPage } from "./FoundersPage";
-import { KitPage } from "./KitPage";
-import { PlacesPage } from "./PlacesPage";
-import { PrivacyPage } from "./PrivacyPage";
+
+// Each page loads with its own chunk the first time it opens.
+const ExamplesPage = lazyComponent(examplesChunk, (chunk) => chunk.ExamplesPage);
+const KitPage = lazyComponent(kitChunk, (chunk) => chunk.KitPage);
+const DossierPage = lazyComponent(kitChunk, (chunk) => chunk.DossierPage);
+const PlacesPage = lazyComponent(placesChunk, (chunk) => chunk.PlacesPage);
+const PrivacyPage = lazyComponent(privacyChunk, (chunk) => chunk.PrivacyPage);
+const FoundersPage = lazyComponent(foundersChunk, (chunk) => chunk.FoundersPage);
+const CampaignPage = lazyComponent(foundersChunk, (chunk) => chunk.CampaignPage);
 
 function Broken() {
   return (
@@ -17,6 +22,17 @@ function Broken() {
         <p className="page-alert" role="alert">
           This page could not be shown. Reload it to try again.
         </p>
+      </div>
+    </main>
+  );
+}
+
+/** The sheet a page sits on, empty while the page's own code loads, so nothing moves when the page arrives. */
+function Loading() {
+  return (
+    <main className="page" id="main" aria-busy="true">
+      <div className="page-sheet">
+        <p className="sr-only">Loading the page…</p>
       </div>
     </main>
   );
@@ -58,7 +74,9 @@ export function PageView({ route, onFresh }: PageViewProps) {
     <>
       {example ? <ExampleBanner example={example} onFresh={onFresh} page /> : null}
       <ErrorBoundary key={pageUrl(route)} fallback={<Broken />}>
-        <Shown route={route} onFresh={onFresh} />
+        <Suspense fallback={<Loading />}>
+          <Shown route={route} onFresh={onFresh} />
+        </Suspense>
       </ErrorBoundary>
     </>
   );

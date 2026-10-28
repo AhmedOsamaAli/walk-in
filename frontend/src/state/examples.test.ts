@@ -4,6 +4,7 @@ import {
   exampleChips,
   exampleFound,
   exampleLead,
+  exampleLinks,
   exampleTags,
   exampleTesting,
   exampleWho,
@@ -109,5 +110,10 @@ describe("examples", () => {
     expect(exampleLead({ ...EXAMPLE_DRIVE, headline: null })).toBe("Smash & Shroom");
     expect(exampleLead({ ...EXAMPLE_DRIVE, headline: " ", concepts: [] })).toBe("Personal care");
     expect(exampleLead({ ...EXAMPLE_DRIVE, headline: null, concepts: [], top_gaps: [] })).toBeNull();
+  });
+
+  it("names the pages an example opens on, to fetch ahead: its survey, and its kit when it has one", () => {
+    expect(exampleLinks(EXAMPLE_DRIVE)).toEqual(["/s/b21ec69b0e92", `/k/${String(EXAMPLE_DRIVE.kit?.token)}`]);
+    expect(exampleLinks({ ...EXAMPLE_DRIVE, kit: null })).toEqual(["/s/b21ec69b0e92"]);
   });
 });

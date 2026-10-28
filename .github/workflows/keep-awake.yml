@@ -1,9 +1,11 @@
-name: Keep the demo awake while judges test it
+name: Keep the demo awake
 
-# The free Render instance sleeps after 15 idle minutes and takes about a minute to wake (the Cloudflare front door
-# shows a note meanwhile). Around the submission (Nov 12-14) and through judging (Dec 1-15, with a day's margin) a ping
-# every 10 minutes keeps it awake; outside those windows it sleeps. Dates are UTC. Set the repository secret BACKEND_URL
-# (the backend's own address, such as https://walk-in-founders.onrender.com); without it there is nothing to ping.
+# The free Render instance sleeps after 15 idle minutes and takes about 40 seconds to wake (the Cloudflare front door
+# shows a note meanwhile, and serves the surveyed storefronts' pages it keeps). Around the submission (Nov 12-14) and
+# through judging (Dec 1-15, with a day's margin) a ping every 10 minutes keeps it awake; outside those windows it
+# sleeps. While Render's 750 free hours a month must also keep another service awake, Founders sets no KEEP_AWAKE_URL
+# (app/keepawake.py); this is its only pinger. Dates are UTC. Set the repository secret BACKEND_URL (the backend's own
+# address, such as https://walk-in-founders.onrender.com); without it there is nothing to ping.
 on:
   schedule:
     - cron: "*/10 * 12-14 11 *"  # submitted, Devpost's eligibility check

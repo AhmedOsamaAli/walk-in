@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from .. import auth
+from .. import auth, cache_policy
 from ..config import settings
 from ..db.surveys import survey_status
 from ..payments import founders
@@ -38,9 +38,11 @@ def limit_sign_ins(request: Request) -> None:
 
 
 @router.get("/config")
-async def public_config(request: Request) -> dict:
+async def public_config(request: Request, response: Response) -> dict:
     """What the web app needs to know before anyone signs in: how to sign in, whether pledging with PayPal works here
-    (and what PayPal's JavaScript SDK needs), and whether new surveys are paused."""
+    (and what PayPal's JavaScript SDK needs), and whether new surveys are paused. All of it changes only with a deploy,
+    so the front door may keep it (cache_policy.STATIC)."""
+    response.headers["Cache-Control"] = cache_policy.STATIC
     return {
         "google_client_id": settings.google_client_id or None,
         "dev_login": settings.dev_login,

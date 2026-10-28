@@ -1,3 +1,4 @@
+import "../styles/founders.css";
 import { useEffect, useState } from "react";
 import { founders, paypalOf, type CampaignCard, type Near } from "../api/founders";
 import { ProgressBar } from "../components/founders/ProgressBar";

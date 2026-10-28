@@ -22,7 +22,7 @@ export interface PlacedSpot extends MapPoint {
   label?: string;
 }
 
-interface SurveyMapProps {
+export interface SurveyMapProps {
   theme: Theme;
   site: MapPoint | null;
   /** The site's name, for the full-screen map's card. */

@@ -1,6 +1,6 @@
 /* The launch kit: its payload (app/survey/kit.py's build_kit, and the dossier it carries, app/survey/dossier.py), and
    the free kit API that makes one for a survey's concept and serves it to anyone with its link. */
-import { post, request } from "./client";
+import { fetched, post, request } from "./client";
 import type { KitCampaign } from "./founders";
 import type { ClaimKind, LatLon, LaunchChannel, LaunchPlan, UnitText, VerdictLevel } from "./types";
 
@@ -357,7 +357,10 @@ export interface KitView {
   kit: Kit | null;
   /** Why it failed, in plain words. */
   error: string | null;
-  /** The kit's open Founders campaigns, the viewer's own first; missing from a server without Founders. */
+  /**
+   * The kit's open Founders campaigns, the viewer's own first: not part of the kit's page (GET /api/kits/{token}/campaigns,
+   * state/kit.ts adds them), and missing until they have arrived.
+   */
   campaigns?: KitCampaign[];
 }
 
@@ -375,6 +378,9 @@ export interface PlacesKit {
 
 const segment = (text: string) => encodeURIComponent(text);
 
+/** Where a kit is read, and fetched ahead. */
+export const kitPath = (token: string) => `/api/kits/${segment(token)}`;
+
 export const kits = {
   /** Makes the kit for a survey's concept, or returns the one it already has; 429 when this address made too many. */
   make: (runId: string, index: number) => request<KitMade>("/api/kits", post({ run_id: runId, index })),
@@ -383,7 +389,8 @@ export const kits = {
     request<{ kit_url: string | null }>(`/api/kits?${new URLSearchParams({ run_id: runId, index: String(index) }).toString()}`, {
       signal,
     }),
-  get: (token: string, signal?: AbortSignal) => request<KitView>(`/api/kits/${segment(token)}`, { signal }),
+  /** A kit by its token, or as it was fetched ahead. */
+  get: async (token: string, signal?: AbortSignal) => (await fetched(kitPath(token), signal)) as KitView,
   /** Builds a kit that failed again (202); 409 when it is not a failed kit any more, 429 when this address made too many. */
   retry: (token: string) => request<KitMade>(`/api/kits/${segment(token)}/retry`, post()),
 };

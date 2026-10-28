@@ -9,11 +9,44 @@ import {
   naturalList,
   queriesText,
   replayText,
+  pictureAt,
   safeUrl,
   shortLabel,
   standingText,
+  thumbnailSources,
+  THUMBNAIL_PX,
   topicForms,
 } from "./format";
+
+describe("Qloo's pictures at the size they show", () => {
+  const picture = "https://images.qloo.com/i/0136097A-E543-4F5A-B0D3-91E0E402ABDF-420x-auto.jpg";
+
+  it("asks Qloo for a picture at the width it shows, which Qloo serves at any width", () => {
+    expect(pictureAt(picture, 200)).toBe("https://images.qloo.com/i/0136097A-E543-4F5A-B0D3-91E0E402ABDF-200x-auto.jpg");
+    expect(pictureAt(picture, 420)).toBe(picture);
+  });
+
+  it("leaves every other picture as it is", () => {
+    for (const other of [
+      "https://images.qloo.com/i/0136097A-200x-auto.jpg",
+      "https://images.qloo.com/i/0136097A-420x-auto.png",
+      "https://example.com/i/0136097A-420x-auto.jpg",
+      "https://images.qloo.com/i/0136097A-420x-auto.jpg?v=2",
+      "data:image/jpeg;base64,AAAA",
+    ]) {
+      expect(pictureAt(other, 200)).toBe(other);
+    }
+  });
+
+  it("tries a thumbnail at thumbnail size, then as the API sent it; a picture it cannot shrink once; an unsafe one never", () => {
+    expect(THUMBNAIL_PX).toBe(200);
+    expect(thumbnailSources(picture)).toEqual([pictureAt(picture, THUMBNAIL_PX), picture]);
+    expect(thumbnailSources("https://example.com/a.jpg")).toEqual(["https://example.com/a.jpg"]);
+    expect(thumbnailSources("http://images.qloo.com/i/x-420x-auto.jpg")).toEqual([]);
+    expect(thumbnailSources(null)).toEqual([]);
+    expect(thumbnailSources(undefined)).toEqual([]);
+  });
+});
 
 describe("survey freshness", () => {
   const now = new Date(2026, 9, 22, 18, 0);

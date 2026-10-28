@@ -11,6 +11,7 @@ from alembic.config import Config
 from sqlalchemy import URL, event, make_url
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from .. import jsonio
 from ..config import ROOT
 
 MIGRATIONS = ROOT / "migrations"
@@ -64,8 +65,11 @@ class Database:
         self.url = url
         target, connect_args = async_url(url)
         postgres = target.get_backend_name() == "postgresql"
-        # Neon suspends an idle database and drops its connections, so each is checked before use.
-        self.engine = create_async_engine(target, connect_args=connect_args, pool_pre_ping=postgres)
+        # Neon suspends an idle database and drops its connections, so each is checked before use. JSON columns (a
+        # survey's events, a kit's payload: 100-200 KB each) are read with orjson, to the same values as json.
+        self.engine = create_async_engine(
+            target, connect_args=connect_args, pool_pre_ping=postgres, json_deserializer=jsonio.loads,
+        )
         if not postgres:
             event.listen(self.engine.sync_engine, "connect", _enforce_foreign_keys)
 

@@ -133,3 +133,8 @@ export function exampleFound(example: Example): string {
 export function exampleLead(example: Example): string | null {
   return [example.headline, example.concepts[0], example.top_gaps[0]].find(text) ?? null;
 }
+
+/** The pages an example opens on: its survey, and its launch kit when it has one (the kit's report reads the same kit). */
+export function exampleLinks(example: Example): string[] {
+  return example.kit ? [example.url, example.kit.url] : [example.url];
+}

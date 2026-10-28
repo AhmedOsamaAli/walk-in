@@ -1,3 +1,4 @@
+import "../../styles/founders.css";
 import { useRef } from "react";
 import { paypalOf, type KitCampaign } from "../../api/founders";
 import type { Kit, KitView } from "../../api/kit";
@@ -130,7 +131,10 @@ export function FoundersTab({ view, kit, onPoster }: FoundersTabProps) {
 
   let body;
   if (mine) body = <YourCampaign campaign={mine} name={name} onPoster={onPoster} />;
-  else if (user) {
+  else if (view.campaigns === undefined) {
+    // The kit's campaigns are still on their way (state/kit.ts): no form for one the owner may already have.
+    body = <div className="sk sk-block short" aria-hidden="true" />;
+  } else if (user) {
     body = (
       <>
         <Others campaigns={others} name={name} />

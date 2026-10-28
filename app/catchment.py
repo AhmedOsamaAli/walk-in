@@ -21,11 +21,12 @@ from pathlib import Path
 
 import httpx
 
+from . import tls
+
 VALHALLA_URL = "https://valhalla1.openstreetmap.de/isochrone"
 WALK_M_PER_MIN = 80
 DRIVE_M_PER_MIN = 400  # circle fallback for a drive: 24 km/h, city traffic and lights
 ROAD_FACTOR = 0.7  # circle fallback for a road distance: roads wind, so a straight line reaches less far
-ALLOWED_MINUTES = (5, 10, 15)  # the walks offered before drives and distances; kept for old callers
 TRAVEL_MODES = ("walk", "drive", "distance")
 MIN_MINUTES, MAX_MINUTES = 5, 60  # the public Valhalla instance refuses time contours over 60 minutes
 MIN_KM, MAX_KM = 1.0, 100.0  # and distance contours over 100 km
@@ -142,23 +143,31 @@ def circle_ring(lat: float, lon: float, radius_m: float, vertices: int = 40) -> 
 
 
 def simplify_ring(ring: list[tuple[float, float]], max_points: int = QLOO_RING_POINTS) -> list[tuple[float, float]]:
-    """The outline with at most `max_points` points (Douglas-Peucker, coarser until it fits); short rings as they are."""
+    """The outline with at most `max_points` points (Douglas-Peucker, coarser until it fits); short rings as they are.
+
+    Douglas-Peucker splits each stretch at the point farthest from its chord whatever the tolerance; the tolerance only
+    decides how deep the splitting goes. So the splits are found once, each with the smallest distance on the way to
+    it, and each coarser tolerance keeps the points whose smallest distance is above it: the same points as running
+    the algorithm again at that tolerance, without running it again."""
     if len(ring) <= max_points:
         return ring
+    splits = _douglas_peucker_splits(ring)
     tolerance = 1e-5
     while True:
-        kept = _douglas_peucker(ring, tolerance)
+        kept = [0, *sorted(index for index, distance in splits if distance > tolerance), len(ring) - 1]
         if len(kept) <= max_points:
-            return kept if kept[0] == kept[-1] else kept + [kept[0]]
+            points = [ring[index] for index in kept]
+            return points if points[0] == points[-1] else points + [points[0]]
         tolerance *= 1.6
 
 
-def _douglas_peucker(points: list[tuple[float, float]], tolerance: float) -> list[tuple[float, float]]:
-    keep = [False] * len(points)
-    keep[0] = keep[-1] = True
-    stack = [(0, len(points) - 1)]
+def _douglas_peucker_splits(points: list[tuple[float, float]]) -> list[tuple[int, float]]:
+    """Every point Douglas-Peucker would keep at some tolerance, with the smallest split distance on the path that leads
+    to it: the point is kept at every tolerance below that distance."""
+    splits: list[tuple[int, float]] = []
+    stack = [(0, len(points) - 1, math.inf)]
     while stack:
-        first, last = stack.pop()
+        first, last, bound = stack.pop()
         (x1, y1), (x2, y2) = points[first], points[last]
         dx, dy = x2 - x1, y2 - y1
         norm = math.hypot(dx, dy)
@@ -168,10 +177,11 @@ def _douglas_peucker(points: list[tuple[float, float]], tolerance: float) -> lis
             d = abs(dy * px - dx * py + x2 * y1 - y2 * x1) / norm if norm else math.hypot(px - x1, py - y1)
             if d > worst:
                 worst, index = d, i
-        if index is not None and worst > tolerance:
-            keep[index] = True
-            stack += [(first, index), (index, last)]
-    return [p for p, k in zip(points, keep, strict=True) if k]
+        if index is not None:
+            reach = min(bound, worst)
+            splits.append((index, reach))
+            stack += [(first, index, reach), (index, last, reach)]
+    return splits
 
 
 @dataclass
@@ -319,7 +329,9 @@ class CatchmentService:
         self._cache_dir = cache_dir
         self._url = url
         self._timeout = timeout
-        self._http = httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "Walk-in/0.2 (Qloo Agentic Hackathon)"})
+        self._http = httpx.AsyncClient(
+            timeout=timeout, headers={"User-Agent": "Walk-in/0.2 (Qloo Agentic Hackathon)"}, verify=tls.context(),
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()

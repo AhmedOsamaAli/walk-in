@@ -1,6 +1,5 @@
-/* The launch kit's drawing and wording helpers: the channels it writes for, poster lines, the QR code, the tracked
-   links and the report's paper. Pure functions, so they are tested without a browser. */
-import qrcode from "qrcode-generator";
+/* The launch kit's drawing and wording helpers: the channels it writes for, poster lines, the tracked links and the
+   report's paper (the poster's QR code is lib/qr.ts). Pure functions, so they are tested without a browser. */
 import { ApiError } from "../api/client";
 import type { ChannelKey, KitStatus } from "../api/kit";
 import type { LaunchPlan } from "../api/types";
@@ -44,21 +43,6 @@ export const CHANNEL_NAMES: Record<ChannelKey, string> = {
 export function kitChannels(plan: LaunchPlan | null | undefined): ChannelKey[] {
   const present = new Set((plan?.channels ?? []).map((channel) => PLAN_CHANNELS[channel.channel]));
   return (["spotify", "nextdoor", "google_search", "meta", "poster"] as const).filter((key) => key === "poster" || present.has(key));
-}
-
-/** A QR code as one SVG path of unit squares, with its size in modules; medium error correction survives a scuffed print. */
-export function qrPath(text: string): { size: number; path: string } {
-  const code = qrcode(0, "M");
-  code.addData(text);
-  code.make();
-  const size = code.getModuleCount();
-  const parts: string[] = [];
-  for (let row = 0; row < size; row += 1) {
-    for (let col = 0; col < size; col += 1) {
-      if (code.isDark(row, col)) parts.push(`M${col} ${row}h1v1h-1z`);
-    }
-  }
-  return { size, path: parts.join("") };
 }
 
 /** "goldenhour.cafe/menu": a link as a poster prints it, without the scheme, the tags or a trailing slash. */

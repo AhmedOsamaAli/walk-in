@@ -2,6 +2,7 @@
    owner's rules changed. */
 import type { Concept, ConceptsPayload, LoveItem } from "../api/types";
 import { agentCredit, list } from "./format";
+import { themeOf } from "./wildTheme";
 
 /**
  * A concept as the section shows it: its index in the payload, which its design sheet and the sheet's link use, and its
@@ -32,7 +33,7 @@ function isLove(value: unknown): value is LoveItem {
   return typeof love.item === "string" && love.item.trim() !== "" && typeof love.source === "string";
 }
 
-/** The two loves a wild card combines, each named, with its evidence. */
+/** The two loves a wild card combines, each named, with its evidence; a themed wild card's second is its theme. */
 export function loves(concept: Concept): LoveItem[] {
   const items: unknown[] = Array.isArray(concept.combines) ? concept.combines : [];
   return items.filter(isLove).slice(0, 2);
@@ -68,11 +69,19 @@ export function ruleNames(understood: readonly string[]): string[] {
   return [...new Set(names.map((rule) => rule.charAt(0).toUpperCase() + rule.slice(1)))];
 }
 
+/** The standfirst's last sentences when there is a wild card: what it is, by its kind, and why it is not ranked. */
+function wildNote(concepts: readonly Concept[]): string {
+  const wild = concepts.find(isWildcard);
+  if (!wild) return "";
+  const what = themeOf(wild)
+    ? "a kind of place people here love, built around a theme from what they watch, hear and follow"
+    : "two things people here love, combined";
+  return ` The last is a wild card: ${what}. It is untested, so it is not ranked.`;
+}
+
 /** The section's standfirst: who designed the concepts and, when there is one, what the wild card is. */
 export function conceptsNote({ mode, model, note, concepts }: ConceptsPayload): string {
-  const wild = (concepts ?? []).some(isWildcard)
-    ? " The last is a wild card: two things people here love, combined. It is untested, so it is not ranked."
-    : "";
+  const wild = wildNote(concepts ?? []);
   if (mode === "agent") {
     return `Designed by ${agentCredit(model)} from the gaps the survey found. Every claim traces back to Qloo evidence.${wild}`;
   }

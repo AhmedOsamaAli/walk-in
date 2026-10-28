@@ -106,6 +106,13 @@ describe("conceptsNote", () => {
     );
   });
 
+  it("says what a themed wild card is built around", () => {
+    const themed: Concept = { ...WILD, theme: { key: "reality_tv", label: "reality TV", program: [], built_on: [], draws: null, basis: "" } };
+    expect(conceptsNote({ mode: "rules", concepts: [ranked("Tidewater", "Seafood", 67), themed] })).toMatch(
+      / The last is a wild card: a kind of place people here love, built around a theme from what they watch, hear and follow\. It is untested, so it is not ranked\.$/,
+    );
+  });
+
   it("says why there are no concepts", () => {
     expect(conceptsNote({ mode: "none", note: "Not enough Qloo data around this site." })).toBe(
       "Not enough Qloo data around this site.",

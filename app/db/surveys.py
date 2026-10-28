@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 
+from .. import jsonio
 from .database import Database
 from .tables import designs, surveys, utcnow
 
@@ -38,7 +39,18 @@ def pack_state(state: dict) -> bytes:
 
 
 def unpack_state(blob: bytes) -> dict:
-    return json.loads(zlib.decompress(blob).decode("utf-8"))
+    return jsonio.loads(zlib.decompress(blob))
+
+
+def started(
+    run_id: str, request: dict, created_at: datetime, user_id: str | None = None, device_id: str | None = None,
+) -> dict:
+    """A survey's row as it starts: running, with no events yet."""
+    return {
+        "id": run_id, "created_at": created_at, "updated_at": created_at, "status": "running", "intent": request["intent"],
+        "label": request["label"][:200], "lat": request["lat"], "lon": request["lon"], "request": request, "events": [],
+        "user_id": user_id, "device_id": device_id,
+    }
 
 
 class SurveyStore:
@@ -51,22 +63,24 @@ class SurveyStore:
         """Records a survey as it starts: what the owner asked for, who asked (when signed in), from which browser,
         and no events yet."""
         async with self._engine.begin() as connection:
-            await connection.execute(surveys.insert().values(
-                id=run_id, created_at=created_at, updated_at=created_at, status="running", intent=request["intent"],
-                label=request["label"][:200], lat=request["lat"], lon=request["lon"], request=request, events=[],
-                user_id=user_id, device_id=device_id,
-            ))
+            await connection.execute(surveys.insert().values(**started(run_id, request, created_at, user_id, device_id)))
 
     async def finish(
         self, run_id: str, status: str, events: list[list], state: dict | None, headline: str | None = None,
+        *, unsaved: dict | None = None,
     ) -> None:
         """Records how a survey ended: its status, every event it streamed, the run's final state (compressed) and its
-        headline (the top concept's name, or the top gap)."""
+        headline (the top concept's name, or the top gap). `unsaved` is the survey's start (start's arguments) when the
+        database never saved it, as when it failed while the survey began: the row is then written whole."""
         values = {"status": status, "events": events, "state": await asyncio.to_thread(pack_state, state) if state else None}
         if headline:
             values["headline"] = headline[:200]
         async with self._engine.begin() as connection:
-            await connection.execute(update(surveys).where(surveys.c.id == run_id).values(**values))
+            result = await connection.execute(update(surveys).where(surveys.c.id == run_id).values(**values))
+            if result.rowcount == 0 and unsaved is not None:
+                row = {**started(run_id, **unsaved), **values}
+                row.pop("updated_at")  # it ends now
+                await connection.execute(surveys.insert().values(**row))
 
     async def get(self, run_id: str, *, with_state: bool = True) -> dict | None:
         """A survey as saved, its state unpacked (None while it runs); without its state when it is not needed."""

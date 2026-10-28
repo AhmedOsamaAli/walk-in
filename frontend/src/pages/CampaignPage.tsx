@@ -1,3 +1,4 @@
+import "../styles/founders.css";
 import { useEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import { canRetry, founders, paypalOf, type Campaign, type CampaignProgress } from "../api/founders";

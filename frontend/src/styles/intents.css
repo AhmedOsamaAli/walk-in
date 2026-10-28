@@ -183,10 +183,8 @@ label.field > span { display: block; }
 }
 .xp-card img, .xp-card .ph {
   grid-row: span 2; width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--bone);
-  filter: var(--img-filter); mix-blend-mode: var(--img-blend); transition: filter .5s;
 }
 .xp-card .ph { display: grid; place-items: center; font: 600 12px/1 var(--f-mono); letter-spacing: .04em; color: var(--text-3); }
-.xp-card:hover img { filter: none; }
 .xp-name { align-self: end; font-size: 14px; font-weight: 500; line-height: 1.22; overflow-wrap: anywhere; }
 .xp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; align-self: start; margin-top: 3px; font-size: 10px; color: var(--text-4); }
 .xp-meta i { padding: 1px 7px 0; font-style: normal; border: 1px solid var(--edge); border-radius: 999px; }

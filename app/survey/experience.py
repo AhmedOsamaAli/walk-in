@@ -57,17 +57,22 @@ def is_specific(fans: dict, taste: dict) -> bool:
     return sum(1 for item in top if item in area) / len(top) < IGNORED_SHARE
 
 
-def plan(run: RunState, genre: str, this_year: int | None = None) -> dict | None:
-    """Soundtrack for every concept, a screen for bars and venues, talks for bars, venues and cafés."""
+def plan(run: RunState, genre: str, this_year: int | None = None, theme: dict | None = None) -> dict | None:
+    """Soundtrack for every concept, a screen for bars and venues, talks for bars, venues and cafés. A themed concept
+    (concepts.themed_wildcard) is built on its program, so the titles its theme stands on lead each section, and it gets
+    the screen or the talks its titles call for wherever it is: watch parties need a screen in a café too."""
     this_year = this_year or date.today().year
     taste = run.taste
     kind = scoring.genre_kind(genre)
+    built_on = (theme or {}).get("built_on") or []
+    lead = {card.get("id") for card in built_on}
+    domains = {card.get("domain") for card in built_on}
 
     def cards(domain: str, limit: int) -> list[dict]:
         # An artist who started within ten years is a new voice; a film or show is new for about two years.
         new_within = 10 if domain == "artists" else 2
         out = []
-        for card in taste.get(f"distinctive_{domain}", [])[:limit]:
+        for card in sorted(taste.get(f"distinctive_{domain}", []), key=lambda c: c.get("id") not in lead)[:limit]:
             item = {k: card[k] for k in ("id", "name", "image", "year", "since") if card.get(k) is not None}
             label = scoring.era(card.get("since") or card.get("year"), this_year, new_within)
             if label:
@@ -76,9 +81,9 @@ def plan(run: RunState, genre: str, this_year: int | None = None) -> dict | None
         return out
 
     sections = {"soundtrack": cards("artists", 8)}
-    if kind in ("bar", "venue"):
-        sections["screen"] = cards("movies", 4) + cards("tv", 4)
-    if kind in ("bar", "venue") or TALK_PLACES.search(genre):
+    if kind in ("bar", "venue") or domains & {"movies", "tv"}:
+        sections["screen"] = sorted(cards("movies", 4) + cards("tv", 4), key=lambda item: item.get("id") not in lead)
+    if kind in ("bar", "venue") or TALK_PLACES.search(genre) or "podcasts" in domains:
         sections["talks"] = cards("podcasts", 4)
     sections = {name: items for name, items in sections.items() if items}
     if not sections:

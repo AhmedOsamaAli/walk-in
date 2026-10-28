@@ -18,7 +18,7 @@ from ..catchment import Catchment, CatchmentService, simplified
 from ..demographics import ages_label
 from ..llm import LLM
 from ..qloo import QlooClient, QlooError, track_reads
-from . import constraints, intents
+from . import constraints, intents, themes
 from .concepts import caution, concepts_from_agent, rule_concepts
 from .evidence import annotate, people_here, public_gap
 from .models import Emit, RunState, RunStore, Site
@@ -176,6 +176,10 @@ async def design_concepts(q: QlooClient, llm: LLM, run: RunState, emit: Emit, an
     if not concepts:
         reason = "your notes rule out" if any(row.get("ruled_out") for row in run.gaps) else "this unit cannot host"
         mode, about = "none", {"note": f"Every category the block is missing is one {reason}."}
+    themed = next((c["theme"] for c in concepts if c.get("theme")), None)
+    if themed:
+        # Who the fans of the titles the themed wild card stands on lean toward: one more Qloo read, None if it fails.
+        themed["draws"] = await themes.draws(q, themed)
     warning = caution(run, concepts)
     if warning:
         about = {**about, "caution": warning}

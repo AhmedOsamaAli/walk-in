@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useState, type Ref } from "react";
 import type { KitPoster } from "../../api/kit";
-import { qrPath, scanCaption } from "../../lib/kit";
+import { scanCaption } from "../../lib/kit";
 import { BACK_PAD, BACK_SIZE, layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type Face, type Measure } from "../../lib/poster";
+import { qrPath } from "../../lib/qr";
 import { posterMapOf } from "../../lib/sitemap";
 import { PosterSiteMap } from "./SiteMap";
 

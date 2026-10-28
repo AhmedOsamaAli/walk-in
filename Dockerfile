@@ -20,6 +20,10 @@ RUN pip install -r requirements.txt
 COPY app ./app
 COPY alembic.ini ./
 COPY migrations ./migrations
+# Bytecode for the app and its migrations, written once here: the server's user cannot write __pycache__ (and
+# PYTHONDONTWRITEBYTECODE is set), so without it every start would compile them from source on the free tier's 0.1 CPU.
+# Python still reads bytecode with that variable set; checked-hash pycs stay valid whatever the files' timestamps.
+RUN python -m compileall -q --invalidation-mode checked-hash app migrations
 COPY --from=frontend /frontend/dist ./frontend/dist
 
 RUN useradd --create-home --uid 10001 walkin \

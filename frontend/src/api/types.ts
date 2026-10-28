@@ -409,17 +409,53 @@ export interface PlacePayload {
 
 /** One of the two things a wild-card concept combines, and the Qloo evidence that people here love it. */
 export interface LoveItem {
-  /** What people here love, in plain words: "coffee shops". */
+  /** What people here love, in plain words: "coffee shops", or a themed wild card's theme: "reality TV". */
   item: string;
-  /** Its category in the gap table. */
+  /** Its category in the gap table; empty for a theme, which is not a kind of place. */
   genre: string;
-  /** The evidence in words: the trips people here make for it, or how they rank it. */
+  /** The evidence in words: the trips people here make for it, how they rank it, or the titles they over-index on. */
   source: string;
+}
+
+/** Where on Qloo a title, artist or brand a themed wild card is built on comes from. */
+export type ThemeDomain = "tv" | "movies" | "podcasts" | "artists" | "brands";
+
+/** A show, film, podcast, artist or brand people here over-index on, which a themed wild card is built on. */
+export interface ThemeCard {
+  domain: ThemeDomain;
+  id: string;
+  name: string;
+  image?: string | null;
+}
+
+/** Who the fans of a theme's titles lean to, from Qloo's audience data: leans against everyone, not head counts. */
+export interface ThemeDraws {
+  /** The age bands they lean to, in order: "25–29", "30–34". */
+  ages: string[];
+  /** The gender they lean to, when the lean is clear: "female" or "male". */
+  gender: string | null;
+  basis: string;
+}
+
+/** What a themed wild card is built around: something people here watch, hear, follow or wear. */
+export interface ConceptTheme {
+  key: string;
+  /** In plain words: "reality TV". */
+  label: string;
+  /** What happens there, naming real titles: "Watch parties for Jersey Shore: Family Vacation and Cheer". */
+  program: string[];
+  /** The 3–6 titles, artists and brands it rests on, all from what people here over-index on. */
+  built_on: ThemeCard[];
+  /** Null when Qloo had no audience lean for them. */
+  draws: ThemeDraws | null;
+  /** Where the taste comes from: "What people within 1.5 km over-index on compared with … (Qloo)." */
+  basis: string;
 }
 
 /**
  * Lists written by the agent are cleaned by the server but not guaranteed to be lists, hence `unknown`. The ranked
- * concepts come first, then at most one wild card: two things people here love combined, untested and never ranked.
+ * concepts come first, then at most one wild card, untested and never ranked: two things people here love combined, or
+ * a kind of place they love built around a theme from what they watch, hear and follow.
  */
 export interface Concept {
   name: string;
@@ -440,10 +476,12 @@ export interface Concept {
   owner_rules?: unknown;
   /** The extra concept after the ranked ones. */
   wildcard?: boolean;
-  /** For the wild card: the two loves it combines. */
+  /** For the wild card: the two loves it combines; a themed one's second is its theme. */
   combines?: LoveItem[] | null;
   /** For the wild card: why it is untested. */
   caution?: string | null;
+  /** For a themed wild card: what it is built around. Older surveys have none. */
+  theme?: ConceptTheme | null;
 }
 
 export interface ConceptsPayload {

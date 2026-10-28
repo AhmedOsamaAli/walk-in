@@ -179,6 +179,12 @@ export const founders = {
   campaign: (id: string, signal?: AbortSignal) => request<Campaign>(`/api/campaigns/${segment(id)}`, { signal }),
   /** Open campaigns: the nearest first around a point, else the newest first; at most 50. */
   list: (near: Near | null, signal?: AbortSignal) => request<{ campaigns: CampaignCard[] }>(campaignsPath(near), { signal }),
+  /**
+   * A kit's campaigns that take pledges, the viewer's own first. Apart from the kit's page, which is the same for
+   * everyone and may come from a cache; these depend on who asks and change with every pledge.
+   */
+  forKit: async (token: string, signal?: AbortSignal) =>
+    (await request<{ campaigns: KitCampaign[] }>(`/api/kits/${segment(token)}/campaigns`, { signal })).campaigns,
   /** Starts a pledge: PayPal's order for the campaign's amount, with intent AUTHORIZE; 409 once it takes no more. */
   pledge: (id: string, flow: PledgeFlow = "buttons") =>
     request<PledgeStarted>(`/api/campaigns/${segment(id)}/pledges`, post({ flow })),

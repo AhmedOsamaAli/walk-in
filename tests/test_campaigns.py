@@ -490,7 +490,8 @@ def test_config_my_places_and_the_kit_page_show_campaigns(world):
     assert config["paypal"] == {"enabled": True, "client_id": "test-paypal-client", "environment": "sandbox",
                                 "currency": "USD"}
     assert config["surveys_paused"] is False
-    assert client.get(f"/api/kits/{kit['token']}").json()["campaigns"] == []
+    kit_campaigns = f"/api/kits/{kit['token']}/campaigns"
+    assert client.get(kit_campaigns).json() == {"campaigns": []}
 
     mine = start(world)
     pledge(client, mine)
@@ -504,18 +505,35 @@ def test_config_my_places_and_the_kit_page_show_campaigns(world):
     assert client.get("/api/me/places").json()["campaigns"][0]["id"] == theirs
 
     def listed() -> list[tuple]:
-        return [(c["id"], c["is_owner"], c["supporters"]) for c in client.get(f"/api/kits/{kit['token']}").json()["campaigns"]]
+        return [(c["id"], c["is_owner"], c["supporters"]) for c in client.get(kit_campaigns).json()["campaigns"]]
 
     assert listed() == [(theirs, True, 0), (mine, False, 1)]  # the viewer's own first
     dev_sign_in(client)
     assert listed() == [(mine, True, 1), (theirs, False, 0)]
-    page = client.get(f"/api/kits/{kit['token']}").json()["campaigns"][0]
+    page = client.get(kit_campaigns).json()["campaigns"][0]
     assert page == {"id": mine, "url": f"/p/{mine}", "is_owner": True, "status": "open", "amount": "25.00", "goal": 3,
                     "supporters": 1, "deadline": page["deadline"]}
     client.post("/api/auth/logout")
     assert listed() == [(theirs, False, 0), (mine, False, 1)]  # signed out: the newest first
     world["clock"].advance(days=11)
     assert listed() == []  # past their deadline, they take no pledges
+
+
+def test_the_kit_page_is_one_for_everyone_and_its_campaigns_are_never_kept(world):
+    """A kit's page may be kept in memory and by the front door, one copy for every visitor (app.cache_policy), so no
+    campaign is in it: campaigns change with every pledge and say which one is the viewer's own, so they have an
+    endpoint of their own that nothing keeps."""
+    client, kit = world["client"], world["kit"]
+    page = f"/api/kits/{kit['token']}"
+    mine = start(world)
+    pledge(client, mine)
+    as_owner = client.get(page)
+    client.post("/api/auth/logout")
+    as_visitor = client.get(page)
+    assert "campaigns" not in as_owner.json() and as_owner.json() == as_visitor.json()
+    listed = client.get(f"{page}/campaigns")
+    assert listed.headers["cache-control"] == "no-store"
+    assert [(c["id"], c["is_owner"], c["supporters"]) for c in listed.json()["campaigns"]] == [(mine, False, 1)]
 
 
 def test_without_paypal_nobody_can_pledge(monkeypatch):

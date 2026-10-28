@@ -116,6 +116,29 @@ export function safeUrl(url: unknown): string | null {
     : null;
 }
 
+/** Qloo's picture URL as the API sends it: 420 pixels wide, its height in proportion. */
+const QLOO_PICTURE = /^(https:\/\/images\.qloo\.com\/i\/[A-Za-z0-9-]+)-420x-auto\.jpg$/;
+
+/**
+ * A thumbnail's width in pixels. Thumbnails show 36 to 44 CSS pixels square (taste lists, experience cards): 132 pixels
+ * on a 3x phone, and 200 leaves room for a wide picture cropped to its square. A third of the 420-pixel picture's bytes.
+ */
+export const THUMBNAIL_PX = 200;
+
+/** The picture `width` pixels wide when it is one of Qloo's, which Qloo serves at any width; any other picture as it is. */
+export function pictureAt(url: string, width: number): string {
+  const match = QLOO_PICTURE.exec(url);
+  return match ? `${match[1]}-${width}x-auto.jpg` : url;
+}
+
+/** A thumbnail's pictures, to try in turn: Qloo's at thumbnail size, then as the API sent it; none for an unsafe URL. */
+export function thumbnailSources(image: unknown): string[] {
+  const full = safeUrl(image);
+  if (!full) return [];
+  const small = pictureAt(full, THUMBNAIL_PX);
+  return small === full ? [full] : [small, full];
+}
+
 /** A link to a place's own website or menu: http or https only, so no script URL can ever be opened. */
 export function safeLink(url: unknown): string | null {
   if (typeof url !== "string") return null;

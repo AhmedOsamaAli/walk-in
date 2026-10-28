@@ -98,9 +98,15 @@ FOCUS_KEYWORDS = {
 FOCUS_NAMES = {"food_drink": "food and drink", "retail": "retail", "leisure": "leisure and wellness"}
 
 
+@lru_cache(maxsize=64)
+def _word_pattern(words: tuple[str, ...], plural: str) -> re.Pattern[str]:
+    """One pattern for any of `words` as a whole word, alone or with the plural ending `plural` (a regex): it matches
+    where any one word's own pattern would, and is compiled once instead of once per word per call."""
+    return re.compile(rf"\b(?:{'|'.join(re.escape(word) for word in words)}){plural}\b")
+
+
 def _matches(genre_name: str, keywords: Iterable[str]) -> bool:
-    lowered = genre_name.lower()
-    return any(re.search(rf"\b{re.escape(word)}(s|es)?\b", lowered) for word in keywords)
+    return _word_pattern(tuple(keywords), "(s|es)?").search(genre_name.lower()) is not None
 
 
 # Shops that sell goods to take home, even when the goods are food or drink.
@@ -108,11 +114,13 @@ RETAIL_GOODS = ("liquor", "wine shop", "wine store", "bottle shop", "cheese shop
                 "convenience store", "spice", "health food store", "farmers market", "deli shop")
 
 
+@lru_cache(maxsize=8192)
 def is_food_service(genre_name: str) -> bool:
     """Eat or drink on the spot: a coffee shop or an ice cream shop is food and drink, not retail."""
     return _matches(genre_name, FOCUS_KEYWORDS["food_drink"]) and not _matches(genre_name, RETAIL_GOODS)
 
 
+@lru_cache(maxsize=8192)
 def matches_focus(genre_name: str, focus: str) -> bool:
     keywords = FOCUS_KEYWORDS.get(focus)
     if not keywords:
@@ -127,12 +135,14 @@ VENUE_WORDS = ("sports", "music", "karaoke", "comedy", "cinema", "bowling", "arc
                "taproom", "theater", "theatre")
 BAR_WORDS = ("bar", "lounge", "pub")
 WELLNESS_WORDS = ("spa", "salon", "personal care", "barber", "nail", "beauty", "massage", "gym", "fitness", "yoga", "pilates", "wellness", "tattoo")
+STOREFRONT_VENUE_WORDS = VENUE_WORDS + ("concert hall", "theater", "event venue")
 
 
 def _has_word(text: str, words: Iterable[str]) -> bool:
-    return any(re.search(rf"\b{re.escape(word)}s?\b", text) for word in words)
+    return _word_pattern(tuple(words), "s?").search(text) is not None
 
 
+@lru_cache(maxsize=8192)
 def genre_kind(genre: str) -> str:
     lowered = genre.lower()
     if _has_word(lowered, WELLNESS_WORDS):
@@ -146,12 +156,13 @@ def genre_kind(genre: str) -> str:
     return "food"
 
 
+@lru_cache(maxsize=8192)
 def strict_kind(genre: str) -> str | None:
     """The kind of business a genre names, or None for what is not a storefront business ('Tourist attraction')."""
     lowered = genre.lower()
     if _has_word(lowered, WELLNESS_WORDS):
         return "wellness"
-    if _has_word(lowered, VENUE_WORDS + ("concert hall", "theater", "event venue")):
+    if _has_word(lowered, STOREFRONT_VENUE_WORDS):
         return "venue"
     if _has_word(lowered, BAR_WORDS):
         return "bar"
@@ -741,6 +752,7 @@ def review_keywords(entity: dict) -> list[dict]:
     ]
 
 
+@lru_cache(maxsize=16384)
 def _fold(text: str) -> str:
     return "".join(ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)).lower()
 
@@ -749,8 +761,22 @@ def _fold(text: str) -> str:
 def _repeats(keyword: str, own: str) -> bool:
     """Whether a keyword repeats whole words of a place's name or address: 'zamalek' or 'el zamalek' in Zamalek, 'katz' at
     Katz's; 'tea' is not in 'Steak House'."""
-    words = re.sub(r"^(el|al|the) ", "", _fold(keyword.strip()))
-    return bool(re.search(rf"(?<!\w){re.escape(words)}(?!\w)", own))
+    words = LEADING_ARTICLE.sub("", _fold(keyword.strip()))
+    start = own.find(words)
+    while start >= 0:
+        end = start + len(words)
+        if (start == 0 or not _word_char(own[start - 1])) and (end == len(own) or not _word_char(own[end])):
+            return True
+        start = own.find(words, start + 1)
+    return False
+
+
+LEADING_ARTICLE = re.compile(r"^(el|al|the) ")
+
+
+def _word_char(char: str) -> bool:
+    """What \\w matches in a regex over text: letters, digits and the underscore, in any script."""
+    return char.isalnum() or char == "_"
 
 
 def topic_keys(entity: dict) -> set[tuple[str, str]]:
@@ -1167,6 +1193,21 @@ def entity_card(entity: dict) -> dict:
         if isinstance(props.get(field), int):
             card[key] = props[field]
     return card
+
+
+def tag_names(entity: dict, types: Iterable[str], limit: int = 8) -> list[str]:
+    """The names of an entity's tags of these types, in the order of `types`, each once however Qloo spells it ('R & B'
+    and 'R&B', 'Hip Hop' and 'Hip - Hop'), at most `limit`."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for kind in types:
+        for tag in entity.get("tags") or []:
+            name = tag.get("name")
+            key = re.sub(r"[\W_]+", "", name.casefold()) if isinstance(name, str) else ""
+            if tag.get("type") == kind and key and key not in seen:
+                seen.add(key)
+                names.append(name.strip())
+    return names[:limit]
 
 
 def era(year: int | None, this_year: int, new_within: int = 10) -> str | None:

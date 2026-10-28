@@ -1,6 +1,8 @@
 /* Walk-in Founders: neighbors back a business before it opens. The campaign page, the open campaigns, the kit's
-   Founders tab and its form, PayPal's button and the test-mode notice. Every color is a token and keeps its role in
-   both themes: the blue pen for progress and the one action, the highlighter for a goal met and what to read first. */
+   Founders tab and its form, PayPal's button, the test-mode notice and the campaigns in My places, loaded with the pages
+   and parts that use them (the first screen's few rules are founders-shell.css). Every color is a token and keeps its
+   role in both themes: the blue pen for progress and the one action, the highlighter for a goal met and what to read
+   first. */
 
 /* ---------- Money: the test-mode notice, wherever money appears ---------- */
 .sandbox {
@@ -324,23 +326,6 @@
   .cf-terms, .cf-draft { padding: 18px 16px; }
   .cf-perks li { grid-template-columns: 24px minmax(0, 1fr) auto; }
   .cf-perks li .text-button { grid-column: 2; justify-self: start; }
-}
-
-/* ---------- The brief while new surveys are paused ---------- */
-.go-paused { flex-basis: 100%; font: italic 380 19px/1.35 var(--f-serif); color: var(--text-2); }
-.go-row a.go { text-decoration: none; }
-
-/* ---------- The top bar: Founders beside the examples ---------- */
-/* Phones and the narrowest tablets: the mark, Founders, the examples, the account and the theme cannot all fit with the
-   mark's word, so the mark keeps its door (the link is named for screen readers either way). */
-@media (max-width: 520px) {
-  .bar .mark-word { display: none; }
-}
-@media (max-width: 440px) {
-  .bar-examples-verb { display: none; }
-}
-@media (max-width: 340px) {
-  .bar-founders { letter-spacing: 0; font-size: 10px; }
 }
 
 @media print {

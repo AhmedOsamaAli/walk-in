@@ -1,4 +1,5 @@
 import type { Area } from "../lib/area";
+import { createPrefetchCache, settled } from "./prefetch";
 import { toRunRecord } from "./stream";
 import type { Design, Example, GeocodeResult, HeatCell, PlaceHit, Preset, ReverseResult, RunRecord, RunRequest, Walk } from "./types";
 
@@ -74,6 +75,15 @@ export async function isWaking(response: Response): Promise<boolean> {
   }
 }
 
+/**
+ * Whether the front door answered from a copy it keeps at the edge (functions/_lib/cache.ts), without the backend: such
+ * an answer says nothing about whether the engine is up.
+ */
+export function fromEdge(response: Response): boolean {
+  const cached = response.headers.get("x-walkin-cache");
+  return cached === "hit" || cached === "stale";
+}
+
 /** Resolves true after `ms`, or false as soon as the signal aborts. */
 export function sleep(ms: number, signal?: AbortSignal | null): Promise<boolean> {
   return new Promise((resolve) => {
@@ -132,7 +142,7 @@ export async function fetchAwake(input: string, init: RequestInit = {}, deps: Wa
   for (;;) {
     const response = await deps.fetch(input, init);
     if (!(await isWaking(response))) {
-      if (response.status < 500) tell("answered");
+      if (response.status < 500 && !fromEdge(response)) tell("answered");
       return response;
     }
     const wait = retryAfterMs(response, deps.now());
@@ -170,6 +180,70 @@ export function post(body?: unknown): RequestInit {
   return body === undefined ? { method: "POST" } : { method: "POST", body: JSON.stringify(body) };
 }
 
+/* ---------- Answers fetched ahead of a click (prefetch.ts) ---------- */
+
+/**
+ * One GET of JSON for an answer fetched ahead: no waiting through a nap, and nothing told to the engine's note, since
+ * nobody asked for it yet. The view that opens it asks again, in full, when this fails.
+ */
+async function fetchAhead(path: string): Promise<unknown> {
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw await apiError(response);
+  return response.json();
+}
+
+/** Survey records and kits asked for before they are opened, shared by every view that opens one. */
+export const ahead = createPrefetchCache({ fetch: fetchAhead, keep: settled, now: () => Date.now() });
+
+/** The server's own final word on a request, such as 404 for a survey that is gone: asking again would only repeat it. */
+function final(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+}
+
+/** The promise, or an AbortError as soon as the signal aborts. */
+function unlessAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      reject(new DOMException("The request was aborted.", "AbortError"));
+    };
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/**
+ * A GET's JSON: the answer fetched ahead when there is one, else the server's. An early ask that failed is asked again
+ * in full (waiting through a nap), unless the server's answer was final, such as 404.
+ */
+export async function fetched(path: string, signal?: AbortSignal): Promise<unknown> {
+  const early = ahead.take(path);
+  if (early) {
+    try {
+      return await unlessAborted(early, signal);
+    } catch (error) {
+      if (signal?.aborted || final(error)) throw error;
+    }
+  }
+  return request<unknown>(path, { signal });
+}
+
+/** Where a survey's record is read, and fetched ahead. */
+export const runPath = (id: string) => `/api/runs/${encodeURIComponent(id)}`;
+
 export const api = {
   presets: () => request<Preset[]>("/api/presets"),
   /** Finished surveys anyone can open, with their launch kit and report; empty when none is configured. */
@@ -185,9 +259,9 @@ export const api = {
   heatmap: (lat: number, lon: number, tag: string) =>
     request<{ cells?: HeatCell[] }>(`/api/heatmap?${query({ lat, lon, tag })}`),
   design: (runId: string, index: number) => request<Design>("/api/design", post({ run_id: runId, index })),
-  /** A survey as the server recorded it; a 404 means it is gone. */
+  /** A survey as the server recorded it, or as it was fetched ahead; a 404 means it is gone. */
   run: async (id: string, signal?: AbortSignal): Promise<RunRecord> => {
-    const record = toRunRecord(await request<unknown>(`/api/runs/${encodeURIComponent(id)}`, { signal }));
+    const record = toRunRecord(await fetched(runPath(id), signal));
     if (!record) throw new Error("The server sent a survey this app cannot read.");
     return record;
   },

@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .. import auth
+from .. import auth, cache_policy
 from ..payments.records import major, progress_of
 from ..ratelimit import client_ip
+from ..response_cache import Page, page_response
+from ..survey import kit as launch_kit
 from ..survey.dossier import business_name
 
 router = APIRouter(prefix="/api")
@@ -71,14 +75,44 @@ async def find_kit(request: Request, run_id: str = Query(..., max_length=32), in
 
 
 @router.get("/kits/{token}")
-async def kit_page(request: Request, token: str = Path(..., pattern=TOKEN)) -> dict:
+async def kit_page(request: Request, token: str = Path(..., pattern=TOKEN)) -> Response:
     """A kit, for anyone with its link; the page asks again while it is building. A kit saved without its street map
-    gets it here when it can (app.kits). `campaigns` are the Walk-in Founders campaigns started from it that still take
-    pledges, the viewer's own first, then the newest: the poster's QR code opens the viewer's own."""
-    kit = await request.app.state.kits.kit(token)
-    if kit is None:
+    gets it here when it can (app.kits). It is the same for everyone, so memory and the front door may keep it; the
+    campaigns started from it are GET /api/kits/{token}/campaigns."""
+    page = await kit_page_for(request.app.state, token)
+    if page is None:
         raise HTTPException(404, "Kit not found.")
-    kit = await request.app.state.builder.with_streets(kit)
+    return page_response(page, cache_policy.for_kit(page.survey_id, page.status, settled=page.settled), request)
+
+
+async def kit_page_for(state, token: str) -> Page | None:
+    """A kit's page as GET /api/kits/{token} sends it, or None when there is no such kit: from memory once it is ready
+    with its street map (it never changes again), else from the database."""
+
+    async def read() -> Page | None:
+        kit = await state.kits.kit(token)
+        if kit is None:
+            return None
+        kit = await state.builder.with_streets(kit)
+        body = page_body(kit_fields(kit))
+        final = kit["status"] == "ready" and not launch_kit.lacks_street_map(kit["payload"])
+        return Page(body, kit["survey_id"], kit["status"], final=final, settled=not state.builder.fillable(kit))
+
+    return await state.responses.fetch(f"kit:{token}", read)
+
+
+def page_body(content: dict) -> bytes:
+    """The bytes FastAPI's default JSONResponse makes of a route's dict. The kit's payload comes from the database as
+    JSON already, so FastAPI's jsonable_encoder would only copy it (55 ms for a 180 KB kit, before rendering it); it
+    runs only if something in the page is not JSON."""
+    try:
+        return JSONResponse(content).body
+    except TypeError:
+        return JSONResponse(jsonable_encoder(content)).body
+
+
+def kit_fields(kit: dict) -> dict:
+    """What a kit's page is sent: the payload once it is ready, why it failed when it did."""
     return {
         "token": kit["token"],
         "status": kit["status"],
@@ -89,8 +123,15 @@ async def kit_page(request: Request, token: str = Path(..., pattern=TOKEN)) -> d
         "survey_url": f"/s/{kit['survey_id']}?sheet={kit['idx']}",
         "kit": kit["payload"] if kit["status"] == "ready" else None,
         "error": kit["error"] if kit["status"] == "failed" else None,
-        "campaigns": await kit_campaigns(request, kit["token"]),
     }
+
+
+@router.get("/kits/{token}/campaigns")
+async def campaigns_for_kit(request: Request, token: str = Path(..., pattern=TOKEN)) -> dict:
+    """The Walk-in Founders campaigns started from a kit that still take pledges, the viewer's own first, then the
+    newest: the poster's QR code opens the viewer's own. Apart from the kit's page because they change with every pledge
+    and depend on who asks, so nothing keeps them (no-store). No such kit has none."""
+    return {"campaigns": await kit_campaigns(request, token)}
 
 
 async def kit_campaigns(request: Request, token: str) -> list[dict]:

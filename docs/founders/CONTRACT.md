@@ -111,8 +111,10 @@ what is due. Both are exempt from the Origin check.
 
 `GET /api/me/places` (exists; extend it) adds `campaigns: { id, title, status, supporters, goal, deadline, url }[]`.
 
-`GET /api/kits/{token}` (exists; extend it) adds `campaigns: { id, url, is_owner, status, amount, goal, supporters, deadline }[]`:
-the kit's open campaigns, the viewer's own first, then newest first. The poster uses the viewer's own open campaign.
+`GET /api/kits/{token}/campaigns` → `{ campaigns: { id, url, is_owner, status, amount, goal, supporters, deadline }[] }`:
+the kit's open campaigns, the viewer's own first, then newest first; never cached (no-store). The poster uses the
+viewer's own open campaign. They are not part of `GET /api/kits/{token}`: that page is the same for every visitor, so
+memory and the front door keep it (app/cache_policy.py), while campaigns change with every pledge and depend on who asks.
 
 ## Pages
 

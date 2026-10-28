@@ -1,3 +1,4 @@
+import "../styles/founders.css";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { account, type Places, type PlacesSurvey, type User } from "../api/account";
 import { ApiError } from "../api/client";

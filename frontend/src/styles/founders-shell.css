@@ -1,0 +1,19 @@
+/* Walk-in Founders on the first screen: the brief while new surveys are paused, and Founders in the top bar. The rest of
+   its styles (founders.css) load with the pages and parts that use them. */
+
+/* ---------- The brief while new surveys are paused ---------- */
+.go-paused { flex-basis: 100%; font: italic 380 19px/1.35 var(--f-serif); color: var(--text-2); }
+.go-row a.go { text-decoration: none; }
+
+/* ---------- The top bar: Founders beside the examples ---------- */
+/* Phones and the narrowest tablets: the mark, Founders, the examples, the account and the theme cannot all fit with the
+   mark's word, so the mark keeps its door (the link is named for screen readers either way). */
+@media (max-width: 520px) {
+  .bar .mark-word { display: none; }
+}
+@media (max-width: 440px) {
+  .bar-examples-verb { display: none; }
+}
+@media (max-width: 340px) {
+  .bar-founders { letter-spacing: 0; font-size: 10px; }
+}

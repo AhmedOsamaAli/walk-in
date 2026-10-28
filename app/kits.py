@@ -28,7 +28,7 @@ from .survey import kit as launch_kit
 from .survey.models import RunState, RunStore
 
 if TYPE_CHECKING:
-    from .main import Services
+    from .services import Services
 
 log = logging.getLogger("walkin")
 
@@ -155,13 +155,18 @@ class KitBuilder:
 
     # ---------- Kits saved without a street map ----------
 
+    def fillable(self, kit: dict) -> bool:
+        """Whether a street map may still be added to this kit when it is opened: it is ready, its maps lack one, and
+        a source of it is configured. A kit that is not fillable will not change again."""
+        if kit.get("status") != "ready" or not launch_kit.lacks_street_map(kit.get("payload")):
+            return False
+        return self._services.osm is not None or self.tiles is not None
+
     async def with_streets(self, kit: dict) -> dict:
         """The kit as its page shows it (KitStore.kit, with its payload): a ready kit whose maps lack the street map gets
         it now, saved with the kit, when it comes within FILL_WAIT_S seconds; otherwise the kit as it is, and the fetch
         goes on for the next open. Never raises."""
-        if kit.get("status") != "ready" or not launch_kit.lacks_street_map(kit.get("payload")):
-            return kit
-        if self._services.osm is None and self.tiles is None:
+        if not self.fillable(kit):
             return kit
         token = kit["token"]
         if time.monotonic() - self._failed_fills.get(token, -math.inf) < FILL_REST_S:

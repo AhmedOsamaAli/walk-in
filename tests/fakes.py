@@ -308,6 +308,25 @@ class FakeQloo:
         return famous[:18] + [place(f"{genre} Local Gem {i}", genre, *offset(500, 90 * i), i) for i in range(2)]
 
 
+# Qloo's genres on this neighborhood's own shows and podcast in the themed world: two reality shows and a podcast about
+# TV, so reality TV qualifies as a theme (three titles from two domains). The plain world's titles carry no genres, as
+# taste cards saved before genres existed.
+THEMED_GENRES = {"Pier Pressure": "Reality tv", "Night Market": "Reality tv", "Block Radio": "TV & Film"}
+
+
+class ThemedQloo(FakeQloo):
+    """The fake world with Qloo's genres on the shows and the podcast people here over-index on."""
+
+    async def insights(self, params: dict) -> dict:
+        data = await super().insights(params)
+        for found in (data.get("results") or {}).get("entities") or []:
+            genre = THEMED_GENRES.get(found["name"])
+            if genre:
+                found["tags"] = [*found["tags"], {"id": f"urn:tag:genre:media:{slug(genre)}", "name": genre,
+                                                  "type": "urn:tag:genre:media"}]
+        return data
+
+
 class FakeWalker:
     async def walk(self, lat: float, lon: float, minutes: int = 10):
         return circle_catchment(lat, lon, minutes)

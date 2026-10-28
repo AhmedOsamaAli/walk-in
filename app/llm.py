@@ -6,7 +6,10 @@ OpenAI v1. Nothing here is required: without a key the app runs on deterministic
 Free tiers are small (Gemini: a handful of requests per minute and a few dozen per day; Groq: 8,000 tokens per minute;
 both for each model), so every call walks a chain of models across providers. A model that is rate limited,
 overloaded or hanging rests for a while and the next one answers; a tool-calling conversation stays on one model for
-as long as it can, and waits briefly when every model is about to come back.
+as long as it can, and waits briefly when every model is about to come back, within one wait budget for the whole
+conversation (a survey's agent: AGENT_WAIT_BUDGET). Prompts carry compact JSON (compact_json).
+
+The openai package is imported when a model is first asked, in a worker thread, not with this module (_openai).
 """
 from __future__ import annotations
 
@@ -18,10 +21,15 @@ import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 import httpx
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, BadRequestError
+
+from . import tls
+
+if TYPE_CHECKING:
+    from openai import APIStatusError, AsyncOpenAI
 
 log = logging.getLogger("walkin")
 
@@ -53,8 +61,44 @@ DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 SECONDS_PER = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
 
+def _openai() -> ModuleType:
+    """The openai package, with the chat resources a client's first call would otherwise import on the event loop (the
+    whole of openai.resources). Together they are the heaviest import of the app (about half of `import app.main`,
+    seconds of CPU on the server's 0.1 CPU) and a server without an AI key never needs them, so they are imported when a
+    model is first asked: LLM.load imports them in a worker thread, so the event loop keeps serving meanwhile; after that
+    this is a lookup."""
+    import openai
+    import openai.resources.chat  # noqa: F401
+
+    return openai
+
+
 class LLMUnavailable(RuntimeError):
     """Every configured model is resting after rate limits, overload or errors."""
+
+
+class WaitBudget:
+    """The seconds one conversation may still spend waiting for resting models (AGENT_WAIT_BUDGET for a survey's
+    agent), so its worst case is bounded however often the free models rest."""
+
+    def __init__(self, seconds: float) -> None:
+        self.total = self.left = seconds
+
+
+def compact_json(value: Any) -> str:
+    """JSON for a prompt: no spaces, no empty (null) fields, whole numbers without a decimal point. The model reads the
+    same facts in fewer tokens."""
+    return json.dumps(_compact(value), ensure_ascii=False, separators=(",", ":"))
+
+
+def _compact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _compact(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list | tuple):
+        return [_compact(item) for item in value]
+    if isinstance(value, float) and value.is_integer() and abs(value) < 1e15:
+        return int(value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -78,11 +122,28 @@ class Provider:
         return options
 
 
-@dataclass(frozen=True)
 class Route:
-    client: AsyncOpenAI
-    options: dict[str, Any]
-    token_limit: int | None
+    """The way to one provider's models: the options it is sent, its token limit and its client. The client is made
+    when one of its models is first asked, with openai's own defaults and the TLS setup every outgoing client shares
+    (app.tls), so a server that never asks a model never loads openai."""
+
+    def __init__(self, provider: Provider, http_client: httpx.AsyncClient | None, timeout: float) -> None:
+        self.options = provider.options()
+        self.token_limit = provider.token_limit
+        self._provider = provider
+        self._http_client = http_client
+        self._timeout = timeout
+        self._client: AsyncOpenAI | None = None
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        if self._client is None:
+            openai = _openai()
+            self._client = openai.AsyncOpenAI(
+                api_key=self._provider.api_key, base_url=self._provider.base_url, max_retries=0, timeout=self._timeout,
+                http_client=self._http_client or openai.DefaultAsyncHttpxClient(timeout=self._timeout, verify=tls.context()),
+            )
+        return self._client
 
 
 class LLM:
@@ -99,6 +160,7 @@ class LLM:
         first_reply_timeout: float = 25.0,
         also: Sequence[Provider] = (),
         max_wait: float = 0.0,
+        wait_budget: float | None = None,
     ) -> None:
         """The main provider comes from the first arguments; `also` adds providers whose models follow its chain."""
         main = Provider(api_key, base_url, (model, *fallback_models), temperature, reasoning_effort)
@@ -106,11 +168,7 @@ class LLM:
         for provider in (main, *also):
             if not provider.api_key:
                 continue
-            client = AsyncOpenAI(
-                api_key=provider.api_key, base_url=provider.base_url, http_client=http_client, max_retries=0,
-                timeout=timeout,
-            )
-            route = Route(client, provider.options(), provider.token_limit)
+            route = Route(provider, http_client, timeout)
             for name in provider.models:
                 if name and name.strip():
                     self._routes.setdefault(name.strip(), route)
@@ -122,7 +180,17 @@ class LLM:
         self.first_reply_timeout = first_reply_timeout
         # Longest pause for a resting model to come back before a call gives up; 0 never waits.
         self.max_wait = max_wait
+        # Longest time, in all, one tool conversation (a survey's agent) may pause for resting models; None: no limit.
+        self.wait_budget = wait_budget
         self._resting: dict[str, float] = {}
+        self._loaded = False  # whether openai has been imported for this chain (load)
+
+    async def load(self) -> None:
+        """Imports openai the first time a model may be asked, in a worker thread, so the event loop keeps serving
+        meanwhile (a second or more on the server's 0.1 CPU); afterwards it costs nothing (see _openai)."""
+        if not self._loaded:
+            await asyncio.to_thread(_openai)
+            self._loaded = True
 
     def resting(self) -> dict[str, int]:
         """Models currently resting, with the seconds left."""
@@ -146,9 +214,13 @@ class LLM:
         prefer: str | None = None,
         timeout: float | None = None,
         on_wait: OnWait | None = None,
+        budget: WaitBudget | None = None,
         **kwargs,
     ):
-        """One completion from the first model that answers. Returns (response, model)."""
+        """One completion from the first model that answers. Returns (response, model). A wait for a resting model that
+        would outlast `budget` is not started: the call gives up as when every model rests past max_wait."""
+        await self.load()
+        openai = _openai()
         failures: list[str] = []
         skip: set[str] = set()  # models this request can never fit
         deadline = time.monotonic() + self.max_wait
@@ -167,7 +239,7 @@ class LLM:
                     response = await route.client.chat.completions.create(
                         model=model, messages=sent, timeout=timeout or self.timeout, **route.options, **kwargs
                     )
-                except (APIConnectionError, APIStatusError) as exc:
+                except (openai.APIConnectionError, openai.APIStatusError) as exc:
                     rest = rest_seconds(exc)
                     if rest is None:
                         raise
@@ -191,19 +263,24 @@ class LLM:
             if wake is None or wake > deadline:
                 raise LLMUnavailable("; ".join(failures) or "every model is resting after rate limits or errors")
             seconds = max(0.0, wake - time.monotonic()) + 0.05  # timers can fire a little early
+            if budget is not None and seconds > budget.left:
+                raise LLMUnavailable("; ".join([*failures, f"the agent's wait budget of {budget.total:g}s is spent"]))
             log.info("Every LLM model is resting; waiting %.1fs for the first to come back", seconds)
             if on_wait:
                 await on_wait(seconds, "start")
             await asyncio.sleep(seconds)
+            if budget is not None:
+                budget.left -= seconds
             if on_wait:
                 await on_wait(seconds, "end")
 
     async def complete_json(self, system: str, user: str) -> tuple[dict, str]:
         """A JSON answer and the model that gave it."""
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        await self.load()  # so the except clause below finds openai loaded
         try:
             response, model = await self._create(messages, response_format={"type": "json_object"})
-        except BadRequestError:
+        except _openai().BadRequestError:
             # Some providers reject response_format; the prompt still asks for JSON.
             response, model = await self._create(messages)
         return parse_json(response.choices[0].message.content), model
@@ -221,17 +298,18 @@ class LLM:
         on_wait: OnWait | None = None,
     ) -> tuple[dict | None, str | None]:
         """Tool-calling loop. Returns the arguments of `final_tool` (None if the model never calls it) and the model
-        that finished the conversation. Tool calls from one model turn run concurrently.
-        """
+        that finished the conversation. Tool calls from one model turn run concurrently. Waits for resting models share
+        one budget for the whole conversation (wait_budget)."""
         messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         model: str | None = None
+        budget = WaitBudget(self.wait_budget) if self.wait_budget is not None else None
         for step in range(max_steps):
             if on_step:
                 await on_step(step, "start")
             try:
                 response, model = await self._create(
                     messages, prefer=model, tools=tools, timeout=self.first_reply_timeout if step == 0 else None,
-                    on_wait=on_wait,
+                    on_wait=on_wait, budget=budget,
                 )
             except Exception:
                 if on_step:
@@ -257,7 +335,7 @@ class LLM:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
-                    "content": json.dumps(result, ensure_ascii=False)[:8000],
+                    "content": compact_json(result)[:8000],
                 })
         return None, model
 
@@ -284,11 +362,12 @@ def call_arguments(call) -> dict:
 def rest_seconds(exc: Exception) -> float | None:
     """How long a model should rest after this failure: 0 when this request can never fit the model (the next one
     should try), None when any other model would fail the same way."""
-    if isinstance(exc, APITimeoutError):
+    openai = _openai()
+    if isinstance(exc, openai.APITimeoutError):
         return REST_HANGING
-    if isinstance(exc, APIConnectionError):
+    if isinstance(exc, openai.APIConnectionError):
         return REST_NETWORK
-    if not isinstance(exc, APIStatusError):
+    if not isinstance(exc, openai.APIStatusError):
         return None
     text = str(exc)
     if exc.status_code == 429:
@@ -321,7 +400,7 @@ def retry_delay(exc: APIStatusError) -> float | None:
 
 
 def describe(exc: Exception) -> str:
-    if isinstance(exc, APIStatusError):
+    if isinstance(exc, _openai().APIStatusError):
         if exc.status_code == 429:
             return "HTTP 429 (daily quota)" if DAILY.search(str(exc)) else "HTTP 429 (rate limit)"
         if exc.status_code == 413:

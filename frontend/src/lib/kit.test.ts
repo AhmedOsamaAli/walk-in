@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../api/client";
 import type { LaunchPlan } from "../api/types";
-import { absoluteUrl, cssString, kitChannels, kitError, linkKind, qrPath, reportPageCss, scanCaption, shortLink, trackedUrl, travelLetters, websiteUrl } from "./kit";
+import { absoluteUrl, cssString, kitChannels, kitError, linkKind, reportPageCss, scanCaption, shortLink, trackedUrl, travelLetters, websiteUrl } from "./kit";
+import { qrPath } from "./qr";
 
 function plan(channels: string[]): LaunchPlan {
   return {

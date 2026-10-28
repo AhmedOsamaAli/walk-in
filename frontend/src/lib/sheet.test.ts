@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Concept, Design, LaunchPlan } from "../api/types";
-import { offerItems, unitText } from "./sheet";
+import { AUDIENCE_CLEAR, AUDIENCE_GENERAL } from "./audience.fixtures";
+import { offerItems, sheetTabs, unitText } from "./sheet";
 
 const CONCEPT: Concept = {
   name: "Copper Kitchen",
@@ -81,5 +82,31 @@ describe("the unit in words", () => {
     expect(unitText({ size: "unknown", kitchen: "unknown", outdoor_space: "yes" })).toBe("outdoor space");
     expect(unitText({ size: "unknown", kitchen: "unknown", outdoor_space: "unknown" })).toBeNull();
     expect(unitText(null)).toBeNull();
+  });
+});
+
+describe("the sheet's tabs", () => {
+  const shown = (tabs: ReturnType<typeof sheetTabs>) => tabs.map(({ label, teaser }) => [label, teaser]);
+  const CONCEPT_TAB = ["Concept", "What it sells and how it runs, drawn from the evidence and your rules."];
+  const KIT_TAB = ["Launch kit", "Ad copy, a window poster, tracked links and a report for a landlord or a lender."];
+
+  it("name the people to win, and say where and when to reach them when there is a launch plan", () => {
+    expect(shown(sheetTabs(AUDIENCE_CLEAR, true))).toEqual([
+      CONCEPT_TAB,
+      ["Who you'd win", "Who the places people here love draw, by age, and where and when to reach them."],
+      KIT_TAB,
+    ]);
+    expect(shown(sheetTabs(AUDIENCE_GENERAL, false))[1]).toEqual([
+      "Who it draws",
+      "Who this kind of place draws, by age, compared with everyone.",
+    ]);
+  });
+
+  it("keep a launch plan's tab without an audience, and leave out the people when there is neither", () => {
+    expect(shown(sheetTabs(null, true))[1]).toEqual([
+      "Who to reach",
+      "Who to reach, where and when, and only what the evidence lets an ad say.",
+    ]);
+    expect(sheetTabs(undefined, false).map((tab) => tab.id)).toEqual(["concept", "kit"]);
   });
 });

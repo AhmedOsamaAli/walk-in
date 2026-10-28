@@ -30,6 +30,18 @@ TASTE_DOMAINS = {
     "tv": "urn:entity:tv_show",
     "podcasts": "urn:entity:podcast",
 }
+# The tags that say what a distinctive title or brand is, per taste domain, kept on its card for the themed wild card
+# (survey/themes.py): media genres and the specific subgenres for films and shows, Qloo's and the music catalog's genres
+# for artists, and a brand's industry before its genre, which is broad (Patagonia's genres are Casual, Fashion and
+# Athletic; its industry is Outdoor Equipment).
+TASTE_GENRES = {
+    "brands": ("urn:tag:industry:qloo", "urn:tag:genre:brand"),
+    "artists": ("urn:tag:genre:qloo", "urn:tag:genre:music"),
+    "movies": ("urn:tag:genre:media", "urn:tag:genre:qloo", "urn:tag:subgenre:qloo"),
+    "tv": ("urn:tag:genre:media", "urn:tag:genre:qloo", "urn:tag:subgenre:qloo"),
+    "podcasts": ("urn:tag:genre:media",),
+}
+CARD_GENRES = 8  # a title's genres and its specific subgenres, while the taste event stays small
 
 
 def around_radius(catchment: Catchment) -> int:
@@ -66,13 +78,6 @@ def offset_point(lat: float, lon: float, distance_m: float, bearing_deg: float) 
     d_lat = distance_m * math.cos(math.radians(bearing_deg)) / 111_320
     d_lon = distance_m * math.sin(math.radians(bearing_deg)) / (111_320 * math.cos(math.radians(lat)))
     return lat + d_lat, lon + d_lon
-
-
-def reference_points(lat: float, lon: float, radius_m: float, bearings=REF_BEARINGS) -> list[tuple[float, float]]:
-    """Same-size comparison areas a few kilometres away, used instead of the whole city to avoid scale bias; before
-    use, each is checked for land (land_centres)."""
-    distance = reference_distance(radius_m)
-    return [offset_point(lat, lon, distance, bearing) for bearing in bearings]
 
 
 # A comparison area where Qloo lists fewer places than this is open water, a rail yard or an airfield, not a neighborhood.
@@ -173,11 +178,6 @@ async def scan_walk(q: QlooClient, catchment: Catchment) -> tuple[list[dict], li
             seen.add(pid)
             places.append(place)
     return [p for p in places if scoring.is_open(p)], [p for p in places if not scoring.is_open(p)]
-
-
-async def scan_block(q: QlooClient, catchment: Catchment) -> list[dict]:
-    """Up to 100 open places inside the walking catchment, deduplicated."""
-    return (await scan_walk(q, catchment))[0]
 
 
 async def _genre_ranking(q: QlooClient, signal: dict) -> list[dict]:
@@ -487,7 +487,8 @@ async def local_taste(q: QlooClient, lat: float, lon: float, ages: str = "all", 
 
     Brands and artists keep their popular lists too (they show when Qloo ranks the categories' fans like everyone
     else); for films, shows and podcasts only the distinctive ones are kept: popular ones are popular everywhere. With
-    an age focus, here and around alike lean toward that age group.
+    an age focus, here and around alike lean toward that age group. Each distinctive card keeps its `genres`
+    (TASTE_GENRES), which the themed wild card reads.
     """
     refs = await land_centres(q, lat, lon, radius, reference_distance(radius), TASTE_REF_BEARINGS)
     kinds = list(TASTE_DOMAINS.values())
@@ -502,7 +503,10 @@ async def local_taste(q: QlooClient, lat: float, lon: float, ages: str = "all", 
             local = [e for e in local if scoring.is_commercial_brand(e)]
         if domain in ("brands", "artists"):
             taste[domain] = [scoring.entity_card(e) for e in local if scoring.is_safe_name(e.get("name"))][:12]
-        taste[f"distinctive_{domain}"] = [scoring.entity_card(e) for e in scoring.distinctive_by_rank(local, references)]
+        taste[f"distinctive_{domain}"] = [
+            {**scoring.entity_card(e), "genres": scoring.tag_names(e, TASTE_GENRES[domain], CARD_GENRES)}
+            for e in scoring.distinctive_by_rank(local, references)
+        ]
     return taste
 
 

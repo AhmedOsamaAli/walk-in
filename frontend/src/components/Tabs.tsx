@@ -1,11 +1,9 @@
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { cx } from "../lib/css";
-import { nextTab, pagerOf, type TabItem } from "../lib/tabs";
+import { nextTab, pagerOf, panelId, tabId, type TabItem } from "../lib/tabs";
 
 export type { TabItem } from "../lib/tabs";
-
-export const tabId = (prefix: string, id: string) => `${prefix}-tab-${id}`;
-export const panelId = (prefix: string, id: string) => `${prefix}-panel-${id}`;
+export { panelId, tabId } from "../lib/tabs";
 
 interface TabsProps {
   /** What the tabs are, said before them and to screen readers: "Results", "Your kit". */
@@ -153,9 +151,32 @@ interface TabPagerProps {
   className?: string;
 }
 
+/** What the way on to the next tab says, as a card: "Next to discover", the tab's name, its teaser and an arrow. */
+function NextCard({ item }: { item: TabItem }) {
+  return (
+    <>
+      <span className="tab-pager-text">
+        <span className="tab-pager-eyebrow mono">
+          Next to discover<span className="sr-only">: </span>
+        </span>
+        <span className="tab-pager-label">{item.label}</span>
+        {item.teaser ? (
+          <span className="tab-pager-teaser">
+            <span className="sr-only">. </span>
+            {item.teaser}
+          </span>
+        ) : null}
+      </span>
+      <span className="tab-pager-arrow" aria-hidden="true">
+        →
+      </span>
+    </>
+  );
+}
+
 /**
- * A panel's last line, so the tabs read in order like pages: on to the next tab, filled, as the way forward; back to
- * the one before; from the last, back to the first.
+ * A panel's last line, so the tabs read in order like pages: on to the next tab, a filled card that says what it shows,
+ * as the way forward; back to the one before; from the last, back to the first.
  */
 export function TabPager({ items, current, onSelect, className }: TabPagerProps) {
   const { previous, next, wraps } = pagerOf(items, current);
@@ -176,18 +197,12 @@ export function TabPager({ items, current, onSelect, className }: TabPagerProps)
       {next ? (
         <button
           type="button"
-          className="tab-pager-next"
+          className={cx("tab-pager-next", !wraps && "tab-pager-card")}
           onClick={() => {
             onSelect(next.id);
           }}
         >
-          {wraps ? (
-            `Back to ${next.label}`
-          ) : (
-            <>
-              Next: {next.label} <span aria-hidden="true">→</span>
-            </>
-          )}
+          {wraps ? `Back to ${next.label}` : <NextCard item={next} />}
         </button>
       ) : null}
     </nav>

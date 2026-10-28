@@ -363,6 +363,35 @@ def test_when_every_model_is_out_of_quota_the_evidence_rules_step_in():
         assert len(requests) == tried  # resting models are not asked again
 
 
+def test_an_agent_past_its_wait_budget_hands_over_to_the_evidence_rules():
+    """AGENT_WAIT_BUDGET: when the next wait for resting models would go past the survey's budget, the agent stops and
+    the evidence rules design the concepts, and the log and the page say so as when every model is out of quota."""
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if not body.get("tools"):  # the no-data baseline is not the agent's: it answers
+            return httpx.Response(200, json={"id": "x", "object": "chat.completion", "created": 0, "model": "test-model",
+                                             "choices": [{"index": 0, "finish_reason": "stop", "message": {
+                                                 "role": "assistant", "content": '{"concepts": []}'}}]})
+        asked.append(body["model"])
+        return httpx.Response(429, headers={"retry-after": "1"}, json={"error": {
+            "message": "Rate limit reached on tokens per minute (TPM). Please try again in 50ms.", "type": "tokens",
+            "code": "rate_limit_exceeded"}})
+
+    llm = LLM("test-key", "https://llm.test/v1/", "test-model", fallback_models=["second-model"], max_wait=5,
+              wait_budget=0.3, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with make_client(llm=llm) as client:
+        events = sse_events(client.get("/api/run", params=RUN_PARAMS).text)
+        statuses = [(d["step"], d["state"]) for e, d in events if e == "status"]
+        assert first(events, "notice")["message"] == (
+            "Every free AI model is busy or out of quota right now, so these concepts come from the evidence rules."
+        )
+        assert first(events, "concepts")["mode"] == "rules" and ("agent-0", "failed") in statuses
+        assert not any(step.startswith("agent-wait") for step, _ in statuses)  # a wait past the budget never starts
+        assert asked == ["test-model", "second-model"]
+
+
 def test_repeated_checks_reuse_the_first_result_without_new_log_lines():
     first_turn = [tool_call("c1", "fan_taste", {"category": "Seafood", **because("Fit")})]
     second_turn = [
@@ -382,9 +411,9 @@ def test_repeated_checks_reuse_the_first_result_without_new_log_lines():
 
 
 def test_agent_live_tests_are_budgeted(monkeypatch):
-    from app.survey import concepts
+    from app.survey.concepts import agent
 
-    monkeypatch.setattr(concepts, "MAX_LIVE_TESTS", 1)
+    monkeypatch.setattr(agent, "MAX_LIVE_TESTS", 1)  # where the agent reads its budget
     investigate = [
         tool_call("c1", "test_category", {"category": "ramen", **because("A hunch")}),
         tool_call("c2", "test_category", {"category": "board game cafe", **because("Another hunch")}),

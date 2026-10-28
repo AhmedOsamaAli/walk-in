@@ -3,56 +3,33 @@
  * request to the backend on Render, so the app, its sign-in cookie and the survey stream share one origin.
  *
  * Render's free instance sleeps after 15 idle minutes and takes about a minute to wake. Until it answers, API calls get
- * 503 {"waking": true} from here instead of Render's own page, and the app shows its own note while it retries.
+ * 503 {"waking": true} from here instead of Render's own page, and the app shows its own note while it retries; the
+ * answers the backend marks shareable (examples, kits, presets, config) are kept at the edge meanwhile, and still open.
+ * How: ../_lib/proxy.ts; what is kept, and for how long: ../_lib/cache.ts.
  */
-
-interface Env {
-  /** The backend's origin, such as https://walk-in-aoa2.onrender.com. */
-  BACKEND_ORIGIN: string;
-  /** Shared with the backend, which trusts X-Client-IP (the visitor's address, for rate limits) only with it. */
-  PROXY_SECRET: string;
-}
+import type { EdgeCache } from "../_lib/cache";
+import { frontDoor, wait, type Env } from "../_lib/proxy";
 
 interface Context {
   request: Request;
   env: Env;
+  /** Keeps the function running after the answer has gone, for work such as the cache writes. */
+  waitUntil: (work: Promise<unknown>) => void;
 }
 
-// Set here only: a visitor's own values for these are dropped.
-const PROXY_HEADERS = ["x-client-ip", "x-proxy-secret", "x-forwarded-host"];
-
-export async function onRequest({ request, env }: Context): Promise<Response> {
-  const front = new URL(request.url);
-  const backend = new URL(env.BACKEND_ORIGIN);
-  const upstream = new Request(new URL(front.pathname + front.search, backend), request);
-  for (const name of PROXY_HEADERS) upstream.headers.delete(name);
-  upstream.headers.set("x-client-ip", request.headers.get("cf-connecting-ip") ?? "");
-  upstream.headers.set("x-proxy-secret", env.PROXY_SECRET);
-  upstream.headers.set("x-forwarded-host", front.host);
-
-  let response: Response;
-  try {
-    response = await fetch(upstream, { redirect: "manual" });
-  } catch {
-    return waking();
-  }
-  const type = response.headers.get("content-type") ?? "";
-  // While a free instance spins up, Render answers with a page of its own or a gateway error, never the API's JSON.
-  if (type.startsWith("text/html") || (response.status >= 502 && response.status <= 504 && !type.includes("json"))) {
-    return waking();
-  }
-  const location = response.headers.get("location");
-  if (location?.startsWith(backend.origin)) {
-    const headers = new Headers(response.headers);
-    headers.set("location", front.origin + location.slice(backend.origin.length));
-    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-  }
-  return response;
+/** Cloudflare's own cache, `caches.default`; null in a runtime without one, where nothing is kept. */
+function edgeCache(): EdgeCache | null {
+  return (globalThis as { caches?: { default?: EdgeCache } }).caches?.default ?? null;
 }
 
-function waking(): Response {
-  return Response.json(
-    { detail: "The survey engine is waking up; after a quiet spell that takes up to a minute.", waking: true },
-    { status: 503, headers: { "retry-after": "3", "cache-control": "no-store" } },
-  );
+export function onRequest(context: Context): Promise<Response> {
+  return frontDoor(context.request, {
+    env: context.env,
+    cache: edgeCache(),
+    waitUntil: (work) => {
+      context.waitUntil(work);
+    },
+    fetch: (request, init) => fetch(request, init),
+    sleep: wait,
+  });
 }

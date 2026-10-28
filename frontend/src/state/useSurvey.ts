@@ -16,8 +16,11 @@ export type RestoreResult =
 export interface Survey {
   survey: SurveyState;
   start: (run: RunRequest) => void;
-  /** Shows a recorded survey and follows it while it runs; resolves once it is on screen, or with why it is not. */
-  restore: (id: string) => Promise<RestoreResult>;
+  /**
+   * Shows a recorded survey and follows it while it runs; resolves once it is on screen, or with why it is not. The
+   * record waits for `ready` too (the view that shows it, still loading), so it shows in one go.
+   */
+  restore: (id: string, ready?: Promise<unknown>) => Promise<RestoreResult>;
   reset: () => void;
   toggleGap: (index: number) => void;
 }
@@ -94,13 +97,15 @@ export function useSurvey(): Survey {
     })();
   }, []);
 
-  const restore = useCallback(async (id: string): Promise<RestoreResult> => {
+  const restore = useCallback(async (id: string, ready?: Promise<unknown>): Promise<RestoreResult> => {
     const abort = takeOver(controller);
     dispatch({ type: "reset" });
     let record: RunRecord;
     try {
-      await engine.whenReady(abort.signal);
+      // No wait for the engine first: a napping one answers through the front door, which shows a finished survey it
+      // keeps (an example, say) at once, or says the engine is waking, which the request then waits out.
       record = await api.run(id, abort.signal);
+      await ready;
     } catch (error) {
       release(controller, abort);
       if (abort.signal.aborted) return { outcome: "superseded" };

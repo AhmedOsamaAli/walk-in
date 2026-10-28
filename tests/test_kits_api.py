@@ -76,8 +76,7 @@ def test_a_concept_s_kit_is_made_once_and_built_in_the_background():
         assert page == {
             "token": token, "status": "ready", "survey_id": run_id, "index": 0, "name": page["name"],
             "created_at": page["created_at"], "survey_url": f"/s/{run_id}?sheet=0", "kit": page["kit"], "error": None,
-            "campaigns": [],  # Walk-in Founders campaigns started from it (tests/test_campaigns.py)
-        }
+        }  # its Walk-in Founders campaigns are GET /api/kits/{token}/campaigns (tests/test_campaigns.py)
         assert page["name"] and page["created_at"].endswith("Z")
         payload = page["kit"]
         assert {"concept", "claims", "copy", "poster", "links", "dossier", "rejected", "notes", "mode", "built_at"} <= set(payload)

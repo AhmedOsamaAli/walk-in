@@ -1,3 +1,4 @@
+import "../styles/kit.css";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError } from "../api/client";
 import { kits, type Kit, type KitView } from "../api/kit";
@@ -228,9 +229,10 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
   const cover = kit.dossier.cover;
   const sections = kit.dossier.sections.length;
   const pieces = Object.keys(kit.copy).length;
-  const items: TabItem[] = KIT_PARTS.map(({ id, label }) => ({
+  const items: TabItem[] = KIT_PARTS.map(({ id, label, teaser }) => ({
     id,
     label,
+    teaser,
     badge:
       id === "copy"
         ? String(pieces)

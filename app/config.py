@@ -62,6 +62,9 @@ def origin_of(url: str) -> str | None:
 class Settings:
     qloo_api_key: str = field(default_factory=lambda: _env("QLOO_API_KEY"))
     qloo_base_url: str = field(default_factory=lambda: _env("QLOO_BASE_URL", "https://hackathon.api.qloo.com").rstrip("/"))
+    # Qloo requests in flight at once, across all surveys. Measured live (Oct 28, two sites, empty cache): 12 finished
+    # the Qloo-bound steps about 3 s sooner than 6 on both; 24 drew three times the HTTP 429s and was slowest.
+    qloo_concurrency: int = field(default_factory=lambda: int(_env_or("QLOO_CONCURRENCY", 12)))
     # Any OpenAI-compatible chat endpoint. Recommended free option: Gemini's OpenAI-compatible endpoint.
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY"))
     llm_base_url: str | None = field(default_factory=lambda: _env("LLM_BASE_URL") or None)
@@ -73,6 +76,9 @@ class Settings:
     llm_reasoning_effort: str | None = field(default_factory=lambda: _env("LLM_REASONING_EFFORT") or None)
     # Longest wait, in seconds, for a resting model to come back before the agent hands over to the evidence rules.
     llm_max_wait: float = field(default_factory=lambda: _env_or("LLM_MAX_WAIT", 40.0))
+    # Longest time, in all, one survey's agent may wait for resting models; past it, the evidence rules finish, so the
+    # worst concepts step is bounded (free tiers rest models often: waits of 17-58 s a survey were seen in October).
+    agent_wait_budget: float = field(default_factory=lambda: _env_or("AGENT_WAIT_BUDGET", 20.0))
     # A second free provider whose models follow the main chain (console.groq.com/keys). Its free tier allows 1,000
     # requests a day and 8,000 tokens a minute per model, so long agent conversations are cut to fit.
     groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY"))
@@ -82,10 +88,24 @@ class Settings:
     )
     groq_reasoning_effort: str | None = field(default_factory=lambda: _env("GROQ_REASONING_EFFORT", "low") or None)
     groq_token_limit: int = field(default_factory=lambda: int(_env_or("GROQ_TOKEN_LIMIT", 8000)))
+    # More OpenAI-compatible providers whose models follow Groq's, added without code: a JSON list such as
+    # [{"name": "...", "base_url": "https://.../v1", "key_env": "THEIR_API_KEY", "models": ["model-a", "model-b"]}]
+    # with optional "token_limit", "reasoning_effort" and "temperature". Each is inactive until the variable named by
+    # its "key_env" holds a key (app.providers).
+    llm_extra_providers: str = field(default_factory=lambda: _env("LLM_EXTRA_PROVIDERS"))
     # Agent answers are reused when a site's evidence is unchanged, which saves the free AI quota. "0" turns it off.
     agent_cache: bool = field(default_factory=lambda: _env("AGENT_CACHE", "1") != "0")
     # Most launch kits the server builds per day (UTC); each one asks the model for its ad copy.
     kit_daily_limit: int = field(default_factory=lambda: int(_env_or("KIT_DAILY_LIMIT", 60)))
+    # Megabytes of finished surveys and ready kits kept in memory as the bytes the API sends (app.response_cache),
+    # besides the examples, which are always kept; their gzipped copies add about a quarter. A record or a kit runs to
+    # 100-200 KB; the server has 512 MB.
+    response_cache_mb: int = field(default_factory=lambda: int(_env_or("RESPONSE_CACHE_MB", 32)))
+    # Survey states kept in memory for design sheets and launch kits, the latest first; older ones are restored from the
+    # database when asked for. One state holds 15 MB (a 10-minute walk) to 65 MB (a 15-minute drive) of Python objects,
+    # measured on real sites: keeping 100, as before October 28, took the server from 109 MB to 462 MB in six surveys
+    # (a walk and a drive in turn), still climbing; keeping 2 levels off near 370 MB.
+    run_store_size: int = field(default_factory=lambda: int(_env_or("RUN_STORE_SIZE", 2)))
     cache_dir: Path = field(default_factory=lambda: Path(_env("CACHE_DIR") or ROOT / ".cache" / "qloo"))
     walk_cache_dir: Path = field(default_factory=lambda: Path(_env("WALK_CACHE_DIR") or ROOT / ".cache" / "walk"))
     agent_cache_dir: Path = field(default_factory=lambda: Path(_env("AGENT_CACHE_DIR") or ROOT / ".cache" / "agent"))
@@ -112,6 +132,11 @@ class Settings:
     allowed_origins: tuple[str, ...] = field(default_factory=lambda: _env_list("ALLOWED_ORIGINS"))
     # Shared with the Cloudflare front door (frontend/functions): with it, X-Client-IP is the visitor's own address.
     proxy_secret: str = field(default_factory=lambda: _env("PROXY_SECRET"))
+    # A free Render instance sleeps after 15 minutes without a visit and takes about 40 seconds to wake, so the app visits
+    # this address every 5 minutes: the front door's health check (https://<the Pages address>/api/health), so each
+    # visit comes back in through Cloudflare like a visitor's. Empty: off. A workspace's 750 free hours a month keep one
+    # instance awake, not two.
+    keep_awake_url: str = field(default_factory=lambda: _env("KEEP_AWAKE_URL"))
     # Walk-in Founders: PayPal (developer.paypal.com, Apps & Credentials), the sandbox until PAYPAL_ENV=live. Without
     # the keys nobody can pledge, and the pages say why.
     paypal_client_id: str = field(default_factory=lambda: _env("PAYPAL_CLIENT_ID"))

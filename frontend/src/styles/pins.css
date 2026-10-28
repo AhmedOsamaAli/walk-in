@@ -109,11 +109,8 @@
 .pc-source a { color: inherit; text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 2px; }
 .pc-source a:hover { color: var(--blue); }
 
-/* Docked beside the results, the card opens under the small map, above the legend; tooltips stay narrow enough for
-   the small map. A tooltip takes its text's width: Leaflet's pane has none to give it. */
+/* Docked beside the results, the card opens under the small map, above the legend. */
 .map-frame[data-dock] .place-card { border-top: var(--rule); }
-.leaflet-tooltip.tip { width: max-content; }
-.map-frame[data-dock] .leaflet-tooltip.tip { max-width: 200px; }
 /* Full screen, it floats under the corner control on wide screens, and rises from the foot on phones, above the scale
    and the credits, which stay readable. The legend steps aside while it is open there. */
 .map-frame.expanded .place-card {

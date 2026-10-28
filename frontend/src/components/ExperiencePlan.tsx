@@ -1,7 +1,5 @@
-import { useState } from "react";
 import type { ExperienceCard, ExperiencePlan } from "../api/types";
-import { safeUrl } from "../lib/format";
-import { initials } from "../lib/initials";
+import { Thumbnail } from "./Thumbnail";
 
 const GROUPS = [
   { key: "soundtrack", title: "Soundtrack", what: "Artists to play" },
@@ -10,26 +8,10 @@ const GROUPS = [
 ] as const;
 
 function Card({ card }: { card: ExperienceCard }) {
-  const [broken, setBroken] = useState(false);
-  const image = safeUrl(card.image);
   const when = card.year ? String(card.year) : card.since ? `since ${card.since}` : null;
   return (
     <li className="xp-card">
-      {image && !broken ? (
-        <img
-          src={image}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => {
-            setBroken(true);
-          }}
-        />
-      ) : (
-        <span className="ph" aria-hidden="true">
-          {initials(card.name)}
-        </span>
-      )}
+      <Thumbnail image={card.image} name={card.name} />
       <span className="xp-name">{card.name}</span>
       <span className="xp-meta mono">
         {when}

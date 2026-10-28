@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ahead,
   ApiError,
   ENGINE_ASLEEP,
   fetchAwake,
+  fetched,
+  fromEdge,
   isWaking,
   probeEngine,
   request,
   retryAfterMs,
+  runPath,
   WAKE_BUDGET_MS,
   watchEngine,
   type WakeDeps,
@@ -134,6 +138,33 @@ describe("fetchAwake", () => {
       stop();
     }
   });
+
+  it("does not take a copy the edge kept for the backend's answer", async () => {
+    const watcher = { asking: vi.fn(), answered: vi.fn(), waking: vi.fn() };
+    const stop = watchEngine(watcher);
+    try {
+      const kept = (cache: string) => json({ id: "ex" }, 200, { "x-walkin-cache": cache });
+      await fetchAwake("/api/runs/ex", {}, fakeDeps(kept("hit")).deps);
+      await fetchAwake("/api/runs/ex", {}, fakeDeps(kept("stale")).deps);
+      expect(watcher.answered).not.toHaveBeenCalled();
+      await fetchAwake("/api/runs/ex", {}, fakeDeps(kept("miss")).deps);
+      await fetchAwake("/api/me", {}, fakeDeps(kept("bypass")).deps);
+      expect(watcher.answered).toHaveBeenCalledTimes(2);
+    } finally {
+      stop();
+    }
+  });
+});
+
+describe("fromEdge", () => {
+  it("is an answer the front door gave from a copy it keeps", () => {
+    const answer = (cache?: string) => json({}, 200, cache ? { "x-walkin-cache": cache } : {});
+    expect(fromEdge(answer("hit"))).toBe(true);
+    expect(fromEdge(answer("stale"))).toBe(true);
+    expect(fromEdge(answer("miss"))).toBe(false);
+    expect(fromEdge(answer("bypass"))).toBe(false);
+    expect(fromEdge(answer())).toBe(false);
+  });
 });
 
 describe("request", () => {
@@ -152,6 +183,46 @@ describe("request", () => {
   it("turns any other failure into an ApiError in the server's words", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ detail: "Sign in first." }, 401)));
     await expect(request("/api/me/places")).rejects.toMatchObject({ status: 401, message: "Sign in first." });
+  });
+});
+
+describe("answers fetched ahead", () => {
+  // `ahead` is the app's one cache: each test reads paths of its own.
+  it("opens a finished survey from the one answer fetched ahead, then from memory", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ id: "a1", status: "complete", events: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    ahead.prefetch(runPath("a1"));
+    ahead.prefetch(runPath("a1"));
+    await expect(fetched(runPath("a1"))).resolves.toMatchObject({ id: "a1", status: "complete" });
+    await expect(fetched(runPath("a1"))).resolves.toMatchObject({ id: "a1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes a 404 fetched ahead as the server's last word, without asking again", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ detail: "Not found." }, 404));
+    vi.stubGlobal("fetch", fetchMock);
+    ahead.prefetch(runPath("gone"));
+    await expect(fetched(runPath("gone"))).rejects.toMatchObject({ status: 404 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again, in full, when the early ask met the engine napping", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(napping()).mockResolvedValueOnce(json({ id: "nap", status: "complete" }));
+    vi.stubGlobal("fetch", fetchMock);
+    ahead.prefetch(runPath("nap"));
+    await expect(fetched(runPath("nap"))).resolves.toMatchObject({ id: "nap" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks the server when nothing was fetched ahead, and stops at once when the view goes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json({ id: "cold", status: "complete" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(fetched(runPath("cold"))).resolves.toMatchObject({ id: "cold" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    ahead.prefetch(runPath("left"));
+    const view = new AbortController();
+    view.abort();
+    await expect(fetched(runPath("left"), view.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
 });
 

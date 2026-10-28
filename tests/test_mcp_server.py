@@ -994,6 +994,27 @@ def test_the_campaign_tools_wait_while_the_free_server_wakes_up():
     assert progress == [waking_note, "Preparing the pledge with PayPal", waking_note]
 
 
+def test_a_themed_wild_card_is_listed_by_its_theme_with_what_happens_there():
+    themed = {
+        "name": "Cliffhanger Bar", "genre": "Cocktail bar", "gap_score": None, "wildcard": True,
+        "one_liner": "A cocktail bar with reality-TV watch parties.",
+        "theme": {"key": "reality_tv", "label": "reality TV",
+                  "program": ["Watch parties for Pier Pressure and Night Market", "Recap nights on Block Radio"]},
+    }
+    events = [
+        ("run", {"run_id": "t1", "site": {"label": "Fort Greene", "minutes": 10}, "llm": False}),
+        ("concepts", {"concepts": [{"name": "Crumb Theory", "genre": "Bakery", "gap_score": 81}, themed], "mode": "rules"}),
+    ]
+    lines = summarize(events, BASE).splitlines()
+    start = lines.index("**Concepts**") + 1
+    assert lines[start:start + 4] == [
+        "1. **Crumb Theory**",
+        "2. **Cliffhanger Bar** (themed wild card: reality TV, untested): A cocktail bar with reality-TV watch parties.",
+        "   - Watch parties for Pier Pressure and Night Market",
+        "   - Recap nights on Block Radio",
+    ]
+
+
 # ---------- Over the MCP protocol ----------
 
 def test_the_tools_over_the_mcp_protocol(monkeypatch):

@@ -32,7 +32,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import scoring
+from . import jsonio, scoring, tls
 from .catchment import Catchment
 from .geo import distance_m
 
@@ -49,9 +49,7 @@ ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
 )
 USER_AGENT = "Walk-in/0.3 (+https://github.com/AhmedOsamaAli/walk-in)"
-CREDIT = "© OpenStreetMap contributors"
-LICENSE = "ODbL"
-COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
+CREDIT = "© OpenStreetMap contributors"  # the data is ODbL: https://www.openstreetmap.org/copyright
 LABEL = "Cross-checking the map with OpenStreetMap"
 
 TIMEOUT_S = 12.0  # one request
@@ -676,17 +674,15 @@ def current() -> CrossCheck | None:
 
 # ---------- The client ----------
 
-def _saved(cache_file: Path) -> tuple[dict, float] | None:
-    try:
-        return json.loads(cache_file.read_text(encoding="utf-8")), cache_file.stat().st_mtime
-    except (OSError, ValueError):
-        return None
+def _save(cache_file: Path, data: dict) -> None:
+    """Keeps an answer on disk, as the cache has always kept it (JSON text, UTF-8); run in a worker thread."""
+    jsonio.write(cache_file, json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
 
 def _answer_of(response: httpx.Response) -> dict:
     if response.status_code != 200:
         raise OsmError(f"HTTP {response.status_code}")
-    data = response.json()
+    data = jsonio.loads(response.content)
     # A query that runs out of time or memory still answers 200, with what it found so far and a remark.
     remark = str(data.get("remark") or "")
     if "error" in remark.lower():
@@ -717,7 +713,9 @@ class OsmClient:
         self._timeout = timeout
         self._budget = budget
         self._max_age_s = max_age_s
-        self._http = httpx.AsyncClient(headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, transport=transport)
+        self._http = httpx.AsyncClient(
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, transport=transport, verify=tls.context(),
+        )
         # The instances ask for no parallel scripts; two surveys may ask at once, more wait.
         self._gate = asyncio.Semaphore(2)
         self._inflight: dict[str, asyncio.Future] = {}
@@ -743,7 +741,7 @@ class OsmClient:
     async def _answer(self, query: str) -> dict:
         key = hashlib.sha1(query.encode("utf-8")).hexdigest()
         cache_file = self._cache_dir / f"{key}.json"
-        saved = _saved(cache_file)
+        saved = await asyncio.to_thread(jsonio.read, cache_file)
         if saved and time.time() - saved[1] < self._max_age_s:
             self.cache_hits += 1
             return saved[0]
@@ -760,8 +758,7 @@ class OsmClient:
         try:
             try:
                 data = await self._fetch(query)
-                self._cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                await asyncio.to_thread(_save, cache_file, data)
             except OsmError as exc:
                 if not saved:
                     raise
@@ -838,7 +835,7 @@ class OsmClient:
         instance is asked. Raises OsmError when none answers in `budget` seconds and no older answer is on disk."""
         key = hashlib.sha1(query.encode("utf-8")).hexdigest()
         cache_file = self._cache_dir / f"{name}-{key}.json"
-        saved = _saved(cache_file)
+        saved = await asyncio.to_thread(jsonio.read, cache_file)
         if saved and time.time() - saved[1] < self._max_age_s:
             self.cache_hits += 1
             return saved[0]
@@ -850,8 +847,7 @@ class OsmClient:
             log.warning("OpenStreetMap did not answer (%s); using its answer from %s", exc, time.ctime(saved[1]))
             self.cache_hits += 1
             return saved[0]
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        await asyncio.to_thread(_save, cache_file, data)
         return data
 
     async def _fetch_shaped(self, query: str, shape: Callable[[dict], dict], timeout: float, budget: float) -> dict:

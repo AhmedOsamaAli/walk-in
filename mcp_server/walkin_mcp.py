@@ -673,9 +673,14 @@ def concept_lines(payload: Any) -> list[str]:
     if concepts:
         lines.append("**Concepts**")
         for number, concept in enumerate(concepts, 1):
-            kind = " (wildcard: two loves combined, untested)" if concept.get("wildcard") else ""
+            theme = concept.get("theme") if isinstance(concept.get("theme"), dict) else {}
+            label = text(theme.get("label"))
+            kind = (f" (themed wild card: {label}, untested)" if label
+                    else " (wildcard: two loves combined, untested)" if concept.get("wildcard") else "")
             one_liner = text(concept.get("one_liner"))
             lines.append(f"{number}. **{text(concept['name'])}**{kind}" + (f": {one_liner}" if one_liner else ""))
+            # What happens there, each line naming titles people here over-index on.
+            lines += [f"   - {line}" for line in texts(theme.get("program"))] if label else []
     else:
         note = text(payload.get("note"))
         lines.append("**Concepts:** none." + (f" {note}" if note else ""))

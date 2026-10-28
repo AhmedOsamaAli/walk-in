@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { siteName } from "../lib/fullmap";
 import type { Site } from "../state/site";
 
-interface NextStepProps {
+export interface NextStepProps {
   /** The site chosen on the brief, or null. */
   site: Site | null;
   /** The brief is the screen shown, and the full-screen map is not over it. */
