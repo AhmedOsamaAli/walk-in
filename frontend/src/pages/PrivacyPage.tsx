@@ -135,7 +135,8 @@ export function PrivacyPage() {
             <Link className="text-link" href={PLACES_URL}>
               My places
             </Link>
-            , “Delete my account” deletes your account and the surveys saved to it; their share links stop working.
+            , “Delete my account” deletes your account and the surveys saved to it; their share links stop working within
+            about ten minutes.
           </Item>
           <Item term="This browser">
             Signing out deletes the sign-in cookie, and deleting your account deletes both cookies. Clearing this
