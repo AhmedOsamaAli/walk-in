@@ -610,14 +610,24 @@ def test_a_duplicate_sender_batch_id_points_to_the_original_payout():
         "details": [{"field": "SENDER_BATCH_ID", "location": "body", "issue": "Batch with given sender_batch_id already exists"}],
         "links": [{"href": f"{API}/v1/payments/payouts/5UXD2E8A7EBQJ", "rel": "self", "method": "GET"}],
     })
-    client = client_for(Stub(replies=[duplicate]))
-    with pytest.raises(PayPalError) as error:
-        asyncio.run(client.create_payout(sender_batch_id="c1", receiver="o@example.com", amount="1.00", currency="USD",
-                                          note="n", email_subject="s", email_message="m", request_id="r1"))
-    assert paypal.duplicate_payout(error.value) == "5UXD2E8A7EBQJ"
+    # What the sandbox really sends (Oct 2026): no top-level links, the link inside the SENDER_BATCH_ID detail.
+    in_the_detail = httpx.Response(400, json={
+        "name": "USER_BUSINESS_ERROR", "message": "User business error.", "debug_id": "abd",
+        "details": [{"field": "SENDER_BATCH_ID", "location": "body", "issue": "Batch with given sender_batch_id already exists",
+                     "link": [{"href": "https://api.sandbox.paypal.com/v1/payments/payouts/GSPETCM3XT5TA", "rel": "self",
+                               "method": "GET", "encType": "application/json"}]}],
+    })
+    for reply, original in ((duplicate, "5UXD2E8A7EBQJ"), (in_the_detail, "GSPETCM3XT5TA")):
+        client = client_for(Stub(replies=[reply]))
+        with pytest.raises(PayPalError) as error:
+            asyncio.run(client.create_payout(sender_batch_id="c1", receiver="o@example.com", amount="1.00", currency="USD",
+                                              note="n", email_subject="s", email_message="m", request_id="r1"))
+        assert paypal.duplicate_payout(error.value) == original
     other = PayPalError(422, "UNPROCESSABLE_ENTITY", "Insufficient funds", details=[{"issue": "INSUFFICIENT_FUNDS"}])
     assert paypal.duplicate_payout(other) is None
     assert paypal.duplicate_payout(PayPalError(503, "SERVICE_UNAVAILABLE", "Try again")) is None
+    tricked = PayPalError(400, "USER_BUSINESS_ERROR", "already exists", details=[{"link": "not a list"}, {"link": [7]}])
+    assert paypal.duplicate_payout(tricked) is None
 
 
 def test_net_amount_reads_the_seller_receivable_breakdown():

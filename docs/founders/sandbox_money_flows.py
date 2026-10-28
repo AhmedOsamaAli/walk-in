@@ -1,8 +1,8 @@
 """Real PayPal sandbox check of the money flows Walk-in Founders uses, each approved by a sandbox buyer in headless
 Chromium (locale en_US): a pledge held then released (AUTHORIZE, approve, authorize, void), a pledge held then collected
 (a renewal PayPal refuses within the 3-day honor period, then capture and its net after PayPal's fee), a payout (sent,
-sent again with the same request id, then a duplicate sender_batch_id leading back to it), and the capture refunded.
-Prints statuses only, never secrets.
+then sent again with the same and with a new request id: each refused, linking back to the batch), and the capture
+refunded. Prints statuses only, never secrets.
 
     python docs/founders/sandbox_money_flows.py
 
@@ -193,23 +193,22 @@ async def main() -> int:
             )
             facts = pp.summarize_payout(sent)
             print(f"  sent: batch {facts['batch_status']}")
-            repeat = await client.create_payout(
-                sender_batch_id=sender, receiver=receiver, amount="1.00", currency="USD", note="Walk-in Founders sandbox test",
-                email_subject="Walk-in Founders sandbox test", email_message="A sandbox test payout.",
-                request_id=pp.request_key("test-payout", run),
-            )
-            print(f"  sent again (same request id): same batch: {pp.summarize_payout(repeat)['payout_batch_id'] == facts['payout_batch_id']}")
-            try:
-                await client.create_payout(
-                    sender_batch_id=sender, receiver=receiver, amount="1.00", currency="USD", note="duplicate",
-                    email_subject="duplicate", email_message="duplicate", request_id=str(uuid.uuid4()),
-                )
-                print("  a new request with the same sender_batch_id was accepted (unexpected)")
-                failed = True
-            except pp.PayPalError as exc:
-                original = pp.duplicate_payout(exc)
-                print(f"  a new request with the same sender_batch_id: {exc.status} {exc.name}; "
-                      f"leads back to the batch: {original == facts['payout_batch_id']}")
+            # PayPal does not replay a payout for its request id: any repeat of a sender_batch_id is refused, and the
+            # refusal links back to the batch it made (settlement records that batch instead of paying twice).
+            for label, request_id in (("the same request id", pp.request_key("test-payout", run)),
+                                      ("a new request id", str(uuid.uuid4()))):
+                try:
+                    await client.create_payout(
+                        sender_batch_id=sender, receiver=receiver, amount="1.00", currency="USD", note="duplicate",
+                        email_subject="duplicate", email_message="duplicate", request_id=request_id,
+                    )
+                    print(f"  sent again with {label}: accepted (unexpected: PayPal paid a sender_batch_id twice)")
+                    failed = True
+                except pp.PayPalError as exc:
+                    original = pp.duplicate_payout(exc)
+                    print(f"  sent again with {label}: {exc.status} {exc.name}; "
+                          f"leads back to the batch: {original == facts['payout_batch_id']}")
+                    failed = failed or original != facts["payout_batch_id"]
             for _ in range(6):
                 batch = pp.summarize_payout(await client.get_payout_batch(facts["payout_batch_id"]))
                 if batch["status"] != "pending":

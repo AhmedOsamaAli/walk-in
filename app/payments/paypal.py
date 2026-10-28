@@ -1,10 +1,11 @@
 """PayPal REST client (Orders v2, Payments v2, Payouts v1, Webhooks v1) and pure readers of its answers.
 
 The sandbox until PAYPAL_ENV=live (settings.paypal_api_base). Every POST carries a PayPal-Request-Id, so a retry after
-a timeout never charges or pays twice, and asks for the whole resource back (Prefer: return=representation). Orders set
+a timeout never charges twice, and asks for the whole resource back (Prefer: return=representation). Orders set
 the payer's experience in payment_source.paypal.experience_context, where PayPal moved it from the deprecated
-application_context. A payout batch is also idempotent by its sender_batch_id, which PayPal never pays twice within 30
-days. Money is a string or a Decimal, never a float. Secrets and access tokens are never logged.
+application_context. Payouts are made safe by their sender_batch_id instead, which PayPal never pays twice within 30
+days: it refuses any repeat, even with the same request id, and its refusal links to the batch it made (duplicate_payout).
+Money is a string or a Decimal, never a float. Secrets and access tokens are never logged.
 """
 from __future__ import annotations
 
@@ -778,13 +779,20 @@ def summarize_payout(answer: Mapping[str, Any]) -> dict:
 
 def duplicate_payout(exc: PayPalError) -> str | None:
     """The batch id of the payout PayPal already made with this sender_batch_id, when that is why it refused a payout:
-    its error links to the original batch."""
+    its error links to the original batch, at the error's top level as PayPal's reference shows, or in the detail about
+    SENDER_BATCH_ID (`details[].link`) as the sandbox sends it."""
     if exc.status not in (400, 409, 422):
         return None
     text = " ".join([exc.name, exc.message, *(str(detail.get("issue") or "") for detail in exc.details)]).lower()
     if "sender_batch_id" not in text and "duplicate" not in text and "already exists" not in text:
         return None
-    for link in exc.links:
+    links = list(exc.links)
+    for detail in exc.details:
+        for key in ("link", "links"):
+            found = detail.get(key)
+            if isinstance(found, list):
+                links.extend(link for link in found if isinstance(link, Mapping))
+    for link in links:
         href = str(link.get("href") or "").rstrip("/")
         if "/v1/payments/payouts/" in href:
             found = href.rsplit("/", 1)[-1].split("?", 1)[0]

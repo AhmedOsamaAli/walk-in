@@ -243,11 +243,13 @@ class FakePayPal:
             return failure(422, "UNPROCESSABLE_ENTITY", self.payout_refusal)
         if sender in self._batches:  # PayPal pays a sender_batch_id once in 30 days
             original = self._batches[sender]
+            # As the sandbox answers (Oct 2026): the link to the original batch sits in the detail, not at the top.
             return httpx.Response(400, json={
                 "name": "USER_BUSINESS_ERROR", "message": "User business error.", "debug_id": "dbg123",
                 "details": [{"field": "SENDER_BATCH_ID", "location": "body",
-                             "issue": "Batch with given sender_batch_id already exists"}],
-                "links": [{"href": f"{API}/v1/payments/payouts/{original}", "rel": "self", "method": "GET"}],
+                             "issue": "Batch with given sender_batch_id already exists",
+                             "link": [{"href": f"{API}/v1/payments/payouts/{original}", "rel": "self", "method": "GET",
+                                       "encType": "application/json"}]}],
             })
         batch_id = f"BATCH{next(self.ids)}"
         item = body["items"][0]
