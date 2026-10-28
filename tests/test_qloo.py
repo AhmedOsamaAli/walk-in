@@ -7,6 +7,7 @@ import time
 import httpx
 import pytest
 
+from app import jsonio
 from app.qloo import MAX_AGE_S, QlooClient, QlooError, track_reads
 
 PARAMS = {"filter.type": "urn:entity:place", "take": 1}
@@ -83,3 +84,45 @@ def test_surveys_running_at_once_count_their_own_reads(tmp_path):
 
     first, second = asyncio.run(both())
     assert (first.queries, second.queries) == (2, 3)
+
+
+def test_an_answer_is_kept_as_qloo_sent_it(tmp_path):
+    sent = b'{"results": {"entities": [{"name": "Caf\xc3\xa9", "popularity": 0.90}]}, "duration": 12}'
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=sent, headers={"content-type": "application/json"})
+
+    q = QlooClient("k", "https://qloo.test", tmp_path)
+    q._http = httpx.AsyncClient(base_url="https://qloo.test", transport=httpx.MockTransport(handle))
+    assert asyncio.run(q.insights(PARAMS)) == {"results": {"entities": [{"name": "Café", "popularity": 0.9}]}, "duration": 12}
+    assert (tmp_path / f"{q._cache_key('/v2/insights', PARAMS)}.json").read_bytes() == sent  # not parsed and written again
+    assert asyncio.run(q.insights(PARAMS))["results"]["entities"][0]["name"] == "Café" and q.cache_hits == 1
+
+
+def test_the_cache_is_read_off_the_event_loop(tmp_path, monkeypatch):
+    q, _ = client(tmp_path, [{"v": 1}])
+    asyncio.run(q.insights(PARAMS))
+    real_read = jsonio.read
+
+    def slow_disk(path):
+        time.sleep(0.3)  # a slow disk: the loop must keep serving meanwhile
+        return real_read(path)
+
+    monkeypatch.setattr(jsonio, "read", slow_disk)
+
+    async def read_while_ticking() -> tuple[dict, int]:
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.create_task(tick())
+        data = await q.insights(PARAMS)
+        ticker.cancel()
+        return data, ticks
+
+    data, ticks = asyncio.run(read_while_ticking())
+    assert data == {"v": 1} and ticks >= 10

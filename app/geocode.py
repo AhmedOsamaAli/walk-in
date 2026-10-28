@@ -9,6 +9,8 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
+from . import tls
+
 # Nominatim's address parts: the street a storefront is on, then the parts of town from the smallest up; a label names
 # the street address and the two smallest ('Williamsburg, Brooklyn', 'East Cesar Chavez, Austin').
 STREET_KEYS = ("road", "pedestrian", "square", "footway", "path", "place")
@@ -48,6 +50,7 @@ class Geocoder:
             base_url="https://nominatim.openstreetmap.org",
             headers={"User-Agent": "Walk-in/0.2 (Qloo Agentic Hackathon demo)"},
             timeout=15,
+            verify=tls.context(),
         )
 
     async def _get(

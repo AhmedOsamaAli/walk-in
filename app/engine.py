@@ -80,13 +80,6 @@ def offset_point(lat: float, lon: float, distance_m: float, bearing_deg: float) 
     return lat + d_lat, lon + d_lon
 
 
-def reference_points(lat: float, lon: float, radius_m: float, bearings=REF_BEARINGS) -> list[tuple[float, float]]:
-    """Same-size comparison areas a few kilometres away, used instead of the whole city to avoid scale bias; before
-    use, each is checked for land (land_centres)."""
-    distance = reference_distance(radius_m)
-    return [offset_point(lat, lon, distance, bearing) for bearing in bearings]
-
-
 # A comparison area where Qloo lists fewer places than this is open water, a rail yard or an airfield, not a neighborhood.
 MIN_REF_PLACES = 3
 # Where to look instead, in order: nearer and farther along the bearing, then turned a little either way.
@@ -185,11 +178,6 @@ async def scan_walk(q: QlooClient, catchment: Catchment) -> tuple[list[dict], li
             seen.add(pid)
             places.append(place)
     return [p for p in places if scoring.is_open(p)], [p for p in places if not scoring.is_open(p)]
-
-
-async def scan_block(q: QlooClient, catchment: Catchment) -> list[dict]:
-    """Up to 100 open places inside the walking catchment, deduplicated."""
-    return (await scan_walk(q, catchment))[0]
 
 
 async def _genre_ranking(q: QlooClient, signal: dict) -> list[dict]:

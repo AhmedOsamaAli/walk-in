@@ -9,6 +9,8 @@ import logging
 
 import httpx
 
+from . import tls
+
 log = logging.getLogger("walkin")
 
 # Seconds between visits: every 5 minutes leaves room for a failed visit inside Render's 15.
@@ -17,7 +19,9 @@ EVERY_S = 300.0
 
 async def keep_awake(url: str, every: float = EVERY_S, transport: httpx.AsyncBaseTransport | None = None) -> None:
     """Visits `url` every `every` seconds until cancelled. A failed visit is logged, and the next one comes on time."""
-    async with httpx.AsyncClient(timeout=30, headers={"User-Agent": "Walk-in keep-awake"}, transport=transport) as client:
+    async with httpx.AsyncClient(
+        timeout=30, headers={"User-Agent": "Walk-in keep-awake"}, transport=transport, verify=tls.context(),
+    ) as client:
         while True:
             await asyncio.sleep(every)
             try:

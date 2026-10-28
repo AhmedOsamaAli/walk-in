@@ -3,6 +3,9 @@
 Qloo's hackathon terms allow private server-side caching; the cache directory is gitignored
 so responses never end up in the public repository. A cached answer is used for a week; after that Qloo is asked
 again, and the older answer serves only when Qloo cannot answer (it is unreachable, or the key has expired).
+
+The cache is read and written in a worker thread, so the event loop keeps serving meanwhile, and an answer is kept as
+the bytes Qloo sent (app.jsonio), never parsed and written out again: a survey reads 27-66 MB of answers.
 """
 from __future__ import annotations
 
@@ -17,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+from . import jsonio, tls
 
 log = logging.getLogger("walkin")
 
@@ -57,14 +62,6 @@ def _count(fetched_at: float) -> None:
         reads.add(fetched_at)
 
 
-def _saved(cache_file: Path) -> tuple[dict, float] | None:
-    """A cached answer and when it was fetched."""
-    try:
-        return json.loads(cache_file.read_text(encoding="utf-8")), cache_file.stat().st_mtime
-    except (OSError, ValueError):
-        return None
-
-
 class QlooClient:
     def __init__(
         self,
@@ -81,6 +78,7 @@ class QlooClient:
             base_url=base_url,
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
             timeout=timeout,
+            verify=tls.context(),
         )
         self._cache_dir = cache_dir
         self._max_age_s = max_age_s
@@ -99,7 +97,7 @@ class QlooClient:
     async def get(self, path: str, params: dict[str, Any]) -> dict:
         key = self._cache_key(path, params)
         cache_file = self._cache_dir / f"{key}.json"
-        saved = _saved(cache_file)
+        saved = await asyncio.to_thread(jsonio.read, cache_file)  # an answer and when it was fetched
         if saved and time.time() - saved[1] < self._max_age_s:
             self.cache_hits += 1
             _count(saved[1])
@@ -113,9 +111,8 @@ class QlooClient:
         self._inflight[key] = future
         try:
             try:
-                data, fetched_at = await self._fetch(path, params), time.time()
-                self._cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                (data, raw), fetched_at = await self._fetch(path, params), time.time()
+                await asyncio.to_thread(jsonio.write, cache_file, raw)
             except QlooError as exc:
                 if not saved:
                     raise
@@ -132,7 +129,8 @@ class QlooClient:
         finally:
             self._inflight.pop(key, None)
 
-    async def _fetch(self, path: str, params: dict[str, Any]) -> dict:
+    async def _fetch(self, path: str, params: dict[str, Any]) -> tuple[dict, bytes]:
+        """Qloo's answer, parsed and as it was sent."""
         if not self.configured:
             raise QlooError("QLOO_API_KEY is not set, and this request is not cached.")
         async with self._gate:
@@ -152,7 +150,7 @@ class QlooClient:
                 if response.status_code >= 400:
                     raise QlooError(f"Qloo {path} returned HTTP {response.status_code}: {response.text[:200]}")
                 self.calls += 1
-                return response.json()
+                return jsonio.loads(response.content), response.content
         raise QlooError(f"Qloo {path}: retries exhausted")
 
     async def insights(self, params: dict[str, Any]) -> dict:

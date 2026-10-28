@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .. import scoring, space
+from .. import space
 
 FT2_PER_M2 = 10.7639
 
@@ -325,7 +325,3 @@ def parse(notes: str) -> Constraints:
         found.outdoor = True
         found.understood.append("outdoor space")
     return found
-
-
-def allows(constraints: Constraints, genre: str) -> bool:
-    return constraints.allows_genre(scoring.genre_title(genre))[0]

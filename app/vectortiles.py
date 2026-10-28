@@ -47,7 +47,7 @@ from pathlib import Path
 
 import httpx
 
-from . import basemap, osm
+from . import basemap, osm, tls
 from .basemap import Box, Point
 
 log = logging.getLogger("walkin")
@@ -586,7 +586,9 @@ class TileClient:
         self._url = url
         self._budget = budget
         self._timeout = timeout
-        self._http = httpx.AsyncClient(headers={"User-Agent": osm.USER_AGENT}, transport=transport, follow_redirects=True)
+        self._http = httpx.AsyncClient(
+            headers={"User-Agent": osm.USER_AGENT}, transport=transport, follow_redirects=True, verify=tls.context(),
+        )
         self._gate = asyncio.Semaphore(PARALLEL)
         self._info: tuple[dict, float] | None = None  # the TileJSON read, and until when it is used
         self.downloads = 0

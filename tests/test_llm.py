@@ -12,6 +12,7 @@ from app.llm import (
     LLMUnavailable,
     Provider,
     approx_tokens,
+    compact_json,
     fit,
     neutralize_signatures,
     parse_json,
@@ -80,7 +81,7 @@ def test_tool_loop_runs_tools_and_echoes_thought_signatures():
     second = seen[1]["messages"]
     assert second[2]["role"] == "assistant"
     assert second[2]["tool_calls"][0]["extra_content"]["google"]["thought_signature"] == "sig-1"
-    assert second[3] == {"role": "tool", "tool_call_id": "c1", "content": json.dumps({"ok": True})}
+    assert second[3] == {"role": "tool", "tool_call_id": "c1", "content": '{"ok":true}'}  # compact JSON
     assert seen[0]["reasoning_effort"] == "low"
     assert "temperature" not in seen[0]
 
@@ -215,7 +216,7 @@ def test_tool_calls_of_one_turn_run_concurrently_and_failures_become_results():
     assert result == {"done": True}
     assert max(start for start, _ in windows) < min(end for _, end in windows)  # the two runs overlapped
     results = [m["content"] for m in seen[1]["messages"] if m["role"] == "tool"]
-    assert results == ['{"n": 1}', '{"n": 2}', '{"error": "broken failed (ValueError)"}']
+    assert results == ['{"n":1}', '{"n":2}', '{"error":"broken failed (ValueError)"}']  # compact JSON
 
 
 def test_parse_json_only_returns_objects():
@@ -348,6 +349,62 @@ def test_the_agent_waits_for_a_model_that_comes_back_soon():
         groq_limit("Please try again in 50ms."), groq_limit("Please try again in 50ms.")]}, [], max_wait=0.5)
     with pytest.raises(LLMUnavailable):
         asyncio.run(impatient.complete_json("system", "user"))
+
+
+def resting_a_second() -> httpx.Response:
+    return groq_limit("Rate limit reached on tokens per minute (TPM). Please try again in 50ms.")
+
+
+def agent_on_resting_models(**kwargs) -> tuple[LLM, list, list]:
+    """Every model rests about a second before each of the agent's turns; the first turn asks for a check."""
+    seen, waits = [], []
+    check = completion({"role": "assistant", "content": None, "tool_calls": [tool_call("c1", "inspect_gap", {})]}, "groq-big")
+    done = completion({"role": "assistant", "content": None, "tool_calls": [tool_call("c2", "submit_concepts", {})]},
+                      "groq-big")
+    llm = two_providers({"gemini.test": [rate_limited("Day")], "groq.test": [
+        resting_a_second(), resting_a_second(), httpx.Response(200, json=check),
+        resting_a_second(), resting_a_second(), httpx.Response(200, json=done),
+    ]}, seen, max_wait=5, **kwargs)
+    return llm, seen, waits
+
+
+def run_agent(llm: LLM, waits: list) -> tuple[dict | None, str | None]:
+    async def inspect(args):
+        return {"ok": True}
+
+    async def on_wait(seconds: float, phase: str) -> None:
+        waits.append((phase, round(seconds, 1)))
+
+    return asyncio.run(llm.run_tools("s", "u", [], {"inspect_gap": inspect}, final_tool="submit_concepts",
+                                     on_wait=on_wait))
+
+
+def test_one_conversation_waits_for_resting_models_within_its_budget_only():
+    """AGENT_WAIT_BUDGET: a survey's agent waits this long at most, in all, for resting models; a wait that would go past
+    it is not started, and the agent stops as when every model is resting past LLM_MAX_WAIT."""
+    llm, seen, waits = agent_on_resting_models()  # no budget: it waits before each turn and finishes
+    assert run_agent(llm, waits) == ({}, "groq-big") and [phase for phase, _ in waits] == ["start", "end"] * 2
+
+    llm, seen, waits = agent_on_resting_models(wait_budget=1.5)  # room for one wait of a second, not two
+    started = time.perf_counter()
+    with pytest.raises(LLMUnavailable) as error:
+        run_agent(llm, waits)
+    assert [phase for phase, _ in waits] == ["start", "end"] and time.perf_counter() - started < 1.9
+    assert "wait budget" in str(error.value) and len(seen) == 6  # the second turn found both models resting, and stopped
+
+    llm, seen, waits = agent_on_resting_models(wait_budget=0.5)  # not even one wait fits
+    started = time.perf_counter()
+    with pytest.raises(LLMUnavailable):
+        run_agent(llm, waits)
+    assert waits == [] and time.perf_counter() - started < 0.5
+
+
+def test_tool_results_and_prompts_are_compact_json():
+    value = {"genre": "Café", "rank": 8.0, "share": 0.35, "missing": None, "rows": [1.0, None, {"x": None, "y": 2.5}],
+             "flag": True, "nested": {"km": 3.0, "text": "a, b: c"}}
+    assert compact_json(value) == ('{"genre":"Café","rank":8,"share":0.35,"rows":[1,null,{"y":2.5}],"flag":true,'
+                                   '"nested":{"km":3,"text":"a, b: c"}}')
+    assert json.loads(compact_json(value))["rows"][1] is None  # a list keeps its places
 
 
 def test_long_tool_results_are_cut_oldest_first_to_fit_a_token_limit():

@@ -170,10 +170,6 @@ def in_sentence(genre: str) -> str:
     return " ".join(kept)
 
 
-def places_word(count: int) -> str:
-    return "place" if count == 1 else "places"
-
-
 # The last word of a genre that names the place itself, and its plural ('coffee shop' -> 'coffee shops').
 PLACE_PLURALS = {
     "shop": "shops", "bar": "bars", "venue": "venues", "house": "houses", "bakery": "bakeries", "brewery": "breweries",
@@ -307,6 +303,8 @@ def _offer_counts(
     with too little evidence to be known for: one word that one place's reviews mention once or twice ('individual',
     'medicine' at a café), and no tag."""
     families = OFFER_FAMILIES.get(kind, OFFER_FAMILIES["food"])
+    prefixes = [(rank, scoring.DESIGN_FAMILIES[family]) for rank, family in enumerate(families)]
+    ranks_by_type: dict[str, int | None] = {}  # a tag type's family rank, found once per type
     menu_rank = families.index("menu") if "menu" in families else len(families)
     doing_rank = families.index("activities") if "activities" in families else len(families)
     genre_words = set(_offer_key(genre).split()) - {"bar", "venue", "club", "place"}
@@ -315,7 +313,10 @@ def _offer_counts(
         found: dict[str, tuple[str, int]] = {}
         heard: dict[str, int] = {}  # review mentions of the items only reviews name at this place
         for tag in place.get("tags") or []:
-            rank = next((i for i, f in enumerate(families) if (tag.get("type") or "").startswith(scoring.DESIGN_FAMILIES[f])), None)
+            tag_type = tag.get("type") or ""
+            if tag_type not in ranks_by_type:
+                ranks_by_type[tag_type] = next((rank for rank, prefix in prefixes if tag_type.startswith(prefix)), None)
+            rank = ranks_by_type[tag_type]
             if rank is not None and tag.get("name"):
                 found.setdefault(_offer_key(tag["name"]), (tag["name"], rank))
         tagged = set(found)
@@ -371,7 +372,7 @@ def offer_items(row: dict, constraints: Constraints | None = None, limit: int = 
     forbid (alcohol, pork, meat, anything that needs a hood or a kitchen the unit lacks) are left out."""
     kind = scoring.genre_kind(row["genre"])
     loved, names, ranks, weak = _offer_counts(example_places(row), kind, row["genre"])
-    nearby_keys = set(_offer_counts(competitor_places(row), kind, row["genre"])[0])
+    nearby = [(other, set(other.split())) for other in _offer_counts(competitor_places(row), kind, row["genre"])[0]]
     items: list[dict] = []
     for key, count in sorted(loved.items(), key=lambda item: -item[1]):
         name = names[key]
@@ -379,19 +380,24 @@ def offer_items(row: dict, constraints: Constraints | None = None, limit: int = 
             continue
         if constraints and not constraints.allows_item(name):
             continue
-        new_here = not any(key == other or set(key.split()) <= set(other.split()) for other in nearby_keys)
+        words = set(key.split())
+        new_here = not any(key == other or words <= other_words for other, other_words in nearby)
         items.append({"item": name, "key": key, "places": count, "new_here": new_here, "rank": ranks[key]})
     # A specific item covers its generic form ('Steak' adds nothing next to 'Steak frites').
-    items = [i for i in items if not any(i is not j and set(i["key"].split()) < set(j["key"].split()) for j in items)]
+    word_sets = [set(i["key"].split()) for i in items]
+    items = [i for i, words in zip(items, word_sets, strict=True) if not any(words < other for other in word_sets)]
     # What the business is known for first (a bar's drinks, then a restaurant's dishes), then what is new to the block.
     drinks_first = kind == "bar"
     items.sort(key=lambda i: (drinks_first and not ALCOHOL_ITEM.search(i["item"]), not i["new_here"], i["rank"], -i["places"]))
     # Variations of one item count once: 'Lagos old fashioned' and 'Tokyo old fashioned' are both an old fashioned.
     distinct: list[dict] = []
+    tails: set[str] = set()
     for item in items:
-        tail = " ".join(item["key"].split()[-2:])
-        if len(item["key"].split()) < 3 or not any(" ".join(d["key"].split()[-2:]) == tail for d in distinct):
+        words = item["key"].split()
+        tail = " ".join(words[-2:])
+        if len(words) < 3 or tail not in tails:
             distinct.append(item)
+            tails.add(tail)
     return [{k: v for k, v in i.items() if k not in ("key", "rank")} for i in distinct[:limit]]
 
 

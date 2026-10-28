@@ -44,6 +44,12 @@ class KitStore:
             row = (await connection.execute(query)).mappings().first()
         return dict(row) if row else None
 
+    async def ready_for(self, survey_id: str) -> list[str]:
+        """The tokens of a survey's ready kits, by concept."""
+        query = select(kits.c.token).where(kits.c.survey_id == survey_id, kits.c.status == "ready").order_by(kits.c.idx)
+        async with self._engine.connect() as connection:
+            return list((await connection.execute(query)).scalars())
+
     async def owned_by(self, user_id: str, limit: int = 100) -> list[dict]:
         """The kits of the user's surveys, newest first."""
         query = (

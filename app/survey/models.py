@@ -71,7 +71,8 @@ class RunState:
 
 
 class RunStore:
-    """The latest runs in memory; with a loader, older ones come back from the database when asked for."""
+    """The latest runs in memory, at most `capacity` of them; with a loader, older ones come back from the database when
+    asked for. A real survey's state holds 15-65 MB of Python objects, so the server keeps a few (RUN_STORE_SIZE)."""
 
     def __init__(self, capacity: int = 100, load: Callable[[str], Awaitable[RunState | None]] | None = None) -> None:
         self._runs: OrderedDict[str, RunState] = OrderedDict()
