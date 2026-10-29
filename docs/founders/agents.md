@@ -9,7 +9,7 @@ An AI assistant is a natural way in. People don't browse for campaigns; they ask
 me?" This page shows how an assistant uses Walk-in Founders from that question to a pledge, why that is agentic
 commerce done safely, and how to connect Walk-in's MCP server to an assistant. The endpoints are in
 [CONTRACT.md](CONTRACT.md), the tools in [mcp_server/README.md](../../mcp_server/README.md), and a summary for
-crawling agents in [llms.txt](../../frontend/public/llms.txt), served at https://walkin-app.pages.dev/llms.txt.
+crawling agents in [llms.txt](../../frontend/public/llms.txt), served at https://walkin-founders.pages.dev/llms.txt.
 
 ## End to end
 
@@ -104,7 +104,7 @@ so the assistant launches it as a child process. It calls only Walk-in's public 
    pip install -r mcp_server/requirements.txt
    ```
 
-2. Point the assistant at it, with `WALKIN_URL` set to the Walk-in site. The default is https://walkin-app.pages.dev;
+2. Point the assistant at it, with `WALKIN_URL` set to the Walk-in site. The default is https://walkin-founders.pages.dev;
    a local server works too (`http://127.0.0.1:8770` under uvicorn).
 
    Claude Desktop, in `claude_desktop_config.json` (on Windows `%APPDATA%\Claude\`, on macOS
@@ -116,7 +116,7 @@ so the assistant launches it as a child process. It calls only Walk-in's public 
        "walkin": {
          "command": "python",
          "args": ["C:\\path\\to\\walk-in-paypal\\mcp_server\\walkin_mcp.py"],
-         "env": { "WALKIN_URL": "https://walkin-app.pages.dev", "WALKIN_WAIT_SECONDS": "50" }
+         "env": { "WALKIN_URL": "https://walkin-founders.pages.dev", "WALKIN_WAIT_SECONDS": "50" }
        }
      }
    }
@@ -131,7 +131,7 @@ so the assistant launches it as a child process. It calls only Walk-in's public 
          "type": "stdio",
          "command": "python",
          "args": ["${workspaceFolder}/mcp_server/walkin_mcp.py"],
-         "env": { "WALKIN_URL": "https://walkin-app.pages.dev" }
+         "env": { "WALKIN_URL": "https://walkin-founders.pages.dev" }
        }
      }
    }

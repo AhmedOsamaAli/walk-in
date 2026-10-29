@@ -385,7 +385,7 @@ def test_a_survey_still_running_when_the_wait_ends_comes_back_with_its_link():
 def test_settings_come_from_the_environment(monkeypatch):
     monkeypatch.delenv("WALKIN_URL", raising=False)
     monkeypatch.delenv("WALKIN_WAIT_SECONDS", raising=False)
-    assert (Walkin().base, Walkin().survey_wait) == ("https://walkin-app.pages.dev", 240.0)
+    assert (Walkin().base, Walkin().survey_wait) == ("https://walkin-founders.pages.dev", 240.0)
     monkeypatch.setenv("WALKIN_URL", " http://127.0.0.1:8772/ ")
     monkeypatch.setenv("WALKIN_WAIT_SECONDS", "50")
     assert (Walkin().base, Walkin().survey_wait) == ("http://127.0.0.1:8772", 50.0)
@@ -455,7 +455,7 @@ def test_get_survey_reads_a_saved_survey_like_a_live_one():
     assert saved == asyncio.run(walkin.survey(lat=40.7145, lon=-73.958, business="Starbucks"))
     assert f"**Chain:** {VERDICT['chain']['line']}" in saved
     assert saved.endswith(f"{BASE}/s/82e186998efa\n{CREDIT}")
-    assert asyncio.run(walkin.record("https://walkin-app.pages.dev/s/82e186998efa?from=share")) == saved
+    assert asyncio.run(walkin.record("https://walkin-founders.pages.dev/s/82e186998efa?from=share")) == saved
 
 
 def test_get_survey_says_whether_it_is_still_running_or_failed():
@@ -691,9 +691,9 @@ def test_get_campaign_tells_a_campaign_in_plain_words():
 @pytest.mark.parametrize("given", [
     CAMPAIGN_ID,
     f"  {CAMPAIGN_ID}\n",
-    f"https://walkin-app.pages.dev/p/{CAMPAIGN_ID}",
-    f"https://walkin-app.pages.dev/p/{CAMPAIGN_ID}?pledge=5O190127TN364715T",
-    f"walkin-app.pages.dev/p/{CAMPAIGN_ID}/",
+    f"https://walkin-founders.pages.dev/p/{CAMPAIGN_ID}",
+    f"https://walkin-founders.pages.dev/p/{CAMPAIGN_ID}?pledge=5O190127TN364715T",
+    f"walkin-founders.pages.dev/p/{CAMPAIGN_ID}/",
     f"/p/{CAMPAIGN_ID}#pledge",
 ])
 def test_a_campaign_is_found_by_its_id_or_its_link(given):
@@ -705,7 +705,7 @@ def test_a_campaign_is_found_by_its_id_or_its_link(given):
 
 
 @pytest.mark.parametrize("given", [
-    "", "../api/health", "c0ffee 1234", "c0ffee1234abcd56/pledges", f"https://walkin-app.pages.dev/s/{CAMPAIGN_ID}",
+    "", "../api/health", "c0ffee 1234", "c0ffee1234abcd56/pledges", f"https://walkin-founders.pages.dev/s/{CAMPAIGN_ID}",
     "x" * 65,
 ])
 def test_what_is_not_a_campaign_id_is_never_asked_for(given):
@@ -784,7 +784,7 @@ def test_back_campaign_prepares_a_redirect_pledge_and_returns_paypals_link():
     async def notify(message: str | None = None) -> None:
         progress.append(message)
 
-    summary = asyncio.run(api.walkin(zone=UTC).back(f"https://walkin-app.pages.dev/p/{CAMPAIGN_ID}", progress=notify))
+    summary = asyncio.run(api.walkin(zone=UTC).back(f"https://walkin-founders.pages.dev/p/{CAMPAIGN_ID}", progress=notify))
 
     read, prepare = api.requests  # the campaign, then the pledge: nothing else
     assert (read.method, read.url.path) == ("GET", f"/api/campaigns/{CAMPAIGN_ID}")
@@ -1097,7 +1097,7 @@ def test_the_founders_tools_over_the_mcp_protocol(monkeypatch):
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
             calls = [
                 ("find_campaigns", {"place": "Williamsburg, Brooklyn"}),
-                ("get_campaign", {"campaign_id": f"https://walkin-app.pages.dev/p/{CAMPAIGN_ID}"}),
+                ("get_campaign", {"campaign_id": f"https://walkin-founders.pages.dev/p/{CAMPAIGN_ID}"}),
                 ("back_campaign", {"campaign_id": CAMPAIGN_ID}),
                 ("back_campaign", {"campaign_id": CAMPAIGN_ID}),  # a second pledge from the same address: rate-limited
                 ("back_campaign", {"campaign_id": "e0ded0000000000a"}),

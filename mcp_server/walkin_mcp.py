@@ -14,7 +14,7 @@ Claude Desktop, VS Code Copilot or any other MCP client can use it as a tool:
 - back_campaign prepares one pledge and returns PayPal's approval link: POST /api/campaigns/{id}/pledges with flow
   "redirect". A person opens the link and approves the pledge in PayPal; the tools never see a card or an account.
 
-It talks to nothing but WALKIN_URL (default https://walkin-app.pages.dev, whose front door forwards /api to the survey
+It talks to nothing but WALKIN_URL (default https://walkin-founders.pages.dev, whose front door forwards /api to the survey
 engine) and needs no keys. Run it with `python mcp_server/walkin_mcp.py`: it speaks MCP over stdin and stdout.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-DEFAULT_URL = "https://walkin-app.pages.dev"
+DEFAULT_URL = "https://walkin-founders.pages.dev"
 SURVEY_WAIT_S = 240.0  # a survey takes one to three minutes, and the free server up to one more to wake
 CALL_WAIT_S = 150.0  # any other call, waking included
 TOP_GAPS = 5
@@ -433,7 +433,7 @@ def run_params(
 
 
 def survey_id(value: str) -> str:
-    """A survey's id, also from its link ('https://walkin-app.pages.dev/s/b21ec69b0e92')."""
+    """A survey's id, also from its link ('https://walkin-founders.pages.dev/s/b21ec69b0e92')."""
     value = (value or "").strip()
     found = SURVEY_LINK.search(value)
     run_id = found.group(1) if found else value
@@ -443,7 +443,7 @@ def survey_id(value: str) -> str:
 
 
 def campaign_id(value: str) -> str:
-    """A campaign's id, also from its link ('https://walkin-app.pages.dev/p/3f9a1c2b7d4e5f60?pledge=...')."""
+    """A campaign's id, also from its link ('https://walkin-founders.pages.dev/p/3f9a1c2b7d4e5f60?pledge=...')."""
     value = (value or "").strip()
     found = CAMPAIGN_LINK.search(value)
     found_id = found.group(1) if found else value
@@ -1063,7 +1063,7 @@ async def list_examples() -> str:
 )
 async def get_survey(
     run_id: Annotated[str, Field(
-        description="The survey's run id, such as 'b21ec69b0e92', or its link (https://walkin-app.pages.dev/s/...).",
+        description="The survey's run id, such as 'b21ec69b0e92', or its link (https://walkin-founders.pages.dev/s/...).",
     )],
 ) -> str:
     """Read a Walk-in survey again by its run id: its area, age focus, top gaps with their evidence, concepts and, for a
@@ -1071,7 +1071,7 @@ async def get_survey(
     return await connect().record(run_id)
 
 
-CAMPAIGN_FIELD = "The campaign's id, such as '3f9a1c2b7d4e5f60', or its link (https://walkin-app.pages.dev/p/...)."
+CAMPAIGN_FIELD = "The campaign's id, such as '3f9a1c2b7d4e5f60', or its link (https://walkin-founders.pages.dev/p/...)."
 
 
 @mcp.tool(

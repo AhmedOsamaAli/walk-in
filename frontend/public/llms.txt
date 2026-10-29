@@ -2,7 +2,7 @@
 
 > Walk-in surveys an empty storefront with Qloo taste data and designs the business its block is missing. Walk-in Founders lets the neighbors back that business before the lease is signed: each one pledges a fixed amount with PayPal, PayPal only holds it, and everyone is charged only if enough people join by the deadline; otherwise every hold is released and nobody pays. This edition runs on PayPal's sandbox: test mode, no real money.
 
-AI assistants may find open campaigns, explain them and prepare a pledge for a person. A person approves every pledge in PayPal: no assistant approves one, and none ever handles a payment detail. The API is public JSON under https://walkin-app.pages.dev/api/ and needs no key. Errors are `{"detail": "plain words"}`. Amounts are strings with two decimals in US dollars ("25.00"); times are ISO 8601 in UTC. After a quiet spell the free server takes up to a minute to wake; meanwhile `/api` answers 503 `{"waking": true}` with a Retry-After header: wait that long and ask again.
+AI assistants may find open campaigns, explain them and prepare a pledge for a person. A person approves every pledge in PayPal: no assistant approves one, and none ever handles a payment detail. The API is public JSON under https://walkin-founders.pages.dev/api/ and needs no key. Errors are `{"detail": "plain words"}`. Amounts are strings with two decimals in US dollars ("25.00"); times are ISO 8601 in UTC. After a quiet spell the free server takes up to a minute to wake; meanwhile `/api` answers 503 `{"waking": true}` with a Retry-After header: wait that long and ask again.
 
 Rules for agents:
 
@@ -15,26 +15,26 @@ Rules for agents:
 
 ## Campaigns and pledges
 
-- [GET /api/campaigns?lat=&lon=&km=](https://walkin-app.pages.dev/api/campaigns): open campaigns within `km` (default 25, up to 100), nearest first; without `lat` and `lon`, the newest first; 50 at most. Each has `id, url, title, name, place {label, lat, lon}, distance_km, amount, goal, supporters, deadline`.
+- [GET /api/campaigns?lat=&lon=&km=](https://walkin-founders.pages.dev/api/campaigns): open campaigns within `km` (default 25, up to 100), nearest first; without `lat` and `lon`, the newest first; 50 at most. Each has `id, url, title, name, place {label, lat, lon}, distance_km, amount, goal, supporters, deadline`.
 - [GET /api/campaigns/{id}](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/docs/founders/CONTRACT.md#endpoints): one campaign: the business (`name`, `concept`), its `place` and `area`, `evidence` (why this, why here, from the survey), `title`, `pitch`, `perks`, the terms (`amount`, `goal`, `deadline`), `progress {supporters, goal, remaining, percent, total, funded}`, `status` (open, funded, collected, partial, expired or cancelled) and `accepting` (whether it still takes pledges).
 - [POST /api/campaigns/{id}/pledges](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/docs/founders/agents.md): body `{"flow": "redirect"}` → `{order_id, approve_url}`. Walk-in creates a PayPal order with intent AUTHORIZE for the campaign's amount and returns PayPal's approval link for the person. Once they approve, PayPal sends them to /p/{id}?pledge={order_id}, which places the hold and counts it; they can withdraw it there while the campaign is open. 409 when the campaign no longer takes pledges; 429 when this address prepared too many.
-- [GET /api/config](https://walkin-app.pages.dev/api/config): `paypal {enabled, environment ("sandbox" or "live"), currency}` and `surveys_paused`.
+- [GET /api/config](https://walkin-founders.pages.dev/api/config): `paypal {enabled, environment ("sandbox" or "live"), currency}` and `surveys_paused`.
 
 ## Surveys
 
-- [GET /api/examples](https://walkin-app.pages.dev/api/examples): finished surveys anyone can open for free, with their launch kits and reports.
-- [GET /api/geocode?q=](https://walkin-app.pages.dev/api/geocode?q=Williamsburg%2C%20Brooklyn): address search; matches with `label, lat, lon`.
+- [GET /api/examples](https://walkin-founders.pages.dev/api/examples): finished surveys anyone can open for free, with their launch kits and reports.
+- [GET /api/geocode?q=](https://walkin-founders.pages.dev/api/geocode?q=Williamsburg%2C%20Brooklyn): address search; matches with `label, lat, lon`.
 - [GET /api/run](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/mcp_server/README.md#tools): a survey, streamed as server-sent events (`run`, `status`, `catchment`, `gaps`, `verdict`, `concepts`, then `done` or `error`). Query: `lat, lon, label, travel` (walk, drive or distance), `minutes` (5–60) or `km` (1–100), `ages` (all, under_25, 25_34, 35_54 or 55_plus), and `intent=open` with a `business` to test an idea. One to three minutes.
 - [GET /api/runs/{id}](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/mcp_server/README.md#tools): a saved survey: its status and its events as streamed.
 - [GET /api/kits/{token}](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/docs/founders/CONTRACT.md#endpoints): a concept's free launch kit, with its open campaigns.
 
 ## MCP server
 
-- [Walk-in MCP server](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/mcp_server/README.md): stdio (`python mcp_server/walkin_mcp.py`; `WALKIN_URL` picks the site, https://walkin-app.pages.dev by default), no keys. Tools: `find_campaigns` (a place or lat/lon, km), `get_campaign` (id or link), `back_campaign` (id or link: PayPal's approval link and the terms), `survey_storefront`, `list_examples` and `get_survey`.
+- [Walk-in MCP server](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/mcp_server/README.md): stdio (`python mcp_server/walkin_mcp.py`; `WALKIN_URL` picks the site, https://walkin-founders.pages.dev by default), no keys. Tools: `find_campaigns` (a place or lat/lon, km), `get_campaign` (id or link), `back_campaign` (id or link: PayPal's approval link and the terms), `survey_storefront`, `list_examples` and `get_survey`.
 - [Walk-in Founders for AI assistants](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/docs/founders/agents.md): the flow end to end, why it is agentic commerce done safely, and how to connect the server.
 
 ## Optional
 
-- [Walk-in](https://walkin-app.pages.dev): the web app. /founders lists the open campaigns, /p/{id} is a campaign, /examples the finished surveys.
+- [Walk-in](https://walkin-founders.pages.dev): the web app. /founders lists the open campaigns, /p/{id} is a campaign, /examples the finished surveys.
 - [The Founders contract](https://github.com/AhmedOsamaAli/walk-in-paypal/blob/main/docs/founders/CONTRACT.md): every endpoint and rule in full.
 - [Source](https://github.com/AhmedOsamaAli/walk-in-paypal): code, tests and the README.

@@ -94,7 +94,7 @@ The assistant calls `find_campaigns(place="Williamsburg, Brooklyn", km=2)`:
 1. **Crumb Theory**: Back the bakery this block is missing
    - Williamsburg, Brooklyn · 350 m away
    - $25 pledge · 12 of 40 supporters · deadline Nov 30, 2026
-   - https://walkin-app.pages.dev/p/c0ffee1234abcd56
+   - https://walkin-founders.pages.dev/p/c0ffee1234abcd56
 
 get_campaign reads one in full: what it is, why there, its perks and its terms. back_campaign prepares a pledge for the person to approve in PayPal.
 Test mode: PayPal sandbox, no real money.
@@ -124,7 +124,7 @@ https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T
 - The link is for this one pledge. Anyone else who wants to back it needs their own: call back_campaign again for them.
 Test mode: PayPal sandbox, no real money.
 
-Campaign page: https://walkin-app.pages.dev/p/c0ffee1234abcd56
+Campaign page: https://walkin-founders.pages.dev/p/c0ffee1234abcd56
 ```
 
 > **Assistant:** Here is your PayPal link: https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T. Open it
@@ -150,7 +150,7 @@ Settings, from the environment:
 
 | Variable | Default | What it sets |
 |---|---|---|
-| `WALKIN_URL` | `https://walkin-app.pages.dev` | The Walk-in site. Its front door forwards `/api` to the survey engine. A local server works too: `http://127.0.0.1:8770` under uvicorn, `http://127.0.0.1:8000` in Docker. |
+| `WALKIN_URL` | `https://walkin-founders.pages.dev` | The Walk-in site. Its front door forwards `/api` to the survey engine. A local server works too: `http://127.0.0.1:8770` under uvicorn, `http://127.0.0.1:8000` in Docker. |
 | `WALKIN_WAIT_SECONDS` | `240` | How long `survey_storefront` waits for a survey, 10 to 600. See [Limits](#limits). |
 
 ## Client config
@@ -174,7 +174,7 @@ Then restart Claude Desktop.
       "command": "python",
       "args": ["C:\\path\\to\\walk-in\\mcp_server\\walkin_mcp.py"],
       "env": {
-        "WALKIN_URL": "https://walkin-app.pages.dev",
+        "WALKIN_URL": "https://walkin-founders.pages.dev",
         "WALKIN_WAIT_SECONDS": "50"
       }
     }
@@ -193,7 +193,7 @@ Add `.vscode/mcp.json` to the workspace, or run **MCP: Open User Configuration**
       "type": "stdio",
       "command": "python",
       "args": ["${workspaceFolder}/mcp_server/walkin_mcp.py"],
-      "env": { "WALKIN_URL": "https://walkin-app.pages.dev" }
+      "env": { "WALKIN_URL": "https://walkin-founders.pages.dev" }
     }
   }
 }
@@ -240,7 +240,7 @@ Any client that launches a stdio server works: command `python`, with the path t
 3. **Meadow Kitchen**: New American for the neighborhood's #2 interest, better than the 9 already inside the walk.
 4. **Reef & Roast** (wildcard: two loves combined, untested): A seafood place and a coffee shop in one: two things people here love, and nothing inside the 10-minute walk is both.
 
-Survey, design sheets and the free launch kit: https://walkin-app.pages.dev/s/76cc5edebd18
+Survey, design sheets and the free launch kit: https://walkin-founders.pages.dev/s/76cc5edebd18
 Data: Qloo taste data · OpenStreetMap (© OpenStreetMap contributors) · Valhalla routing.
 ```
 
