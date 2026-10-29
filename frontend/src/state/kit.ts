@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api/client";
+import { founders, type KitCampaign } from "../api/founders";
 import { kits, type KitStatus, type KitView } from "../api/kit";
 import { plainError } from "../lib/account";
 
@@ -69,10 +70,23 @@ export type KitLoad =
   | { state: "missing" }
   | { state: "failed"; message: string };
 
-/** A kit by its token, followed every two seconds while it is being built; `restart` follows it again (after a retry). */
-export function useKit(token: string) {
+/**
+ * A kit by its token, followed every two seconds while it is being built; `restart` follows it again (after a retry).
+ * Once it is ready its Founders campaigns are read beside it (they are not part of the kit's page, which may come from
+ * a cache): the kit shows without waiting for them, and `view.campaigns` is missing until they arrive. Given who is
+ * signed in (`viewer`: undefined until the session has first answered), a sign-in or sign-out reads the campaigns
+ * again, since which of them is the viewer's own changes with them.
+ */
+export function useKit(token: string, viewer?: string | null) {
   const [load, setLoad] = useState<{ token: string; load: KitLoad }>({ token, load: { state: "loading" } });
   const [run, setRun] = useState(0);
+  const [seen, setSeen] = useState(viewer);
+  const [signIns, setSignIns] = useState(0);
+  const [campaigns, setCampaigns] = useState<{ key: string; list: KitCampaign[] } | null>(null);
+  if (viewer !== seen) {
+    setSeen(viewer);
+    if (seen !== undefined && viewer !== undefined) setSignIns(signIns + 1);
+  }
 
   useEffect(() => {
     const abort = new AbortController();
@@ -112,7 +126,31 @@ export function useKit(token: string) {
     setRun((count) => count + 1);
   }, []);
 
-  return { load: load.token === token ? load.load : ({ state: "loading" } as const), restart };
+  const shown = load.token === token ? load.load : ({ state: "loading" } as const);
+  const ready = shown.state === "shown" && shown.view.status === "ready";
+  const key = `${token} ${run} ${signIns}`;
+  useEffect(() => {
+    if (!ready) return;
+    const abort = new AbortController();
+    founders.forKit(token, abort.signal).then(
+      (list) => {
+        if (!abort.signal.aborted) setCampaigns({ key, list });
+      },
+      () => {
+        // Without them the kit still shows, as a kit with no campaign yet; a reload asks again.
+        if (!abort.signal.aborted) setCampaigns({ key, list: [] });
+      },
+    );
+    return () => {
+      abort.abort();
+    };
+  }, [ready, token, key]);
+
+  const listed = campaigns?.key === key ? campaigns.list : undefined;
+  return {
+    load: shown.state === "shown" && listed ? { ...shown, view: { ...shown.view, campaigns: listed } } : shown,
+    restart,
+  };
 }
 
 /** What a page says aloud about its kit: that it is being built, then that it is ready or could not be built. */

@@ -1,18 +1,22 @@
+import "../styles/founders.css";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { account, type Places, type PlacesSurvey, type User } from "../api/account";
 import { ApiError } from "../api/client";
+import type { PlacesCampaign } from "../api/founders";
 import type { PlacesKit } from "../api/kit";
 import { Avatar } from "../components/Avatar";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ProgressBar } from "../components/founders/ProgressBar";
 import { Link } from "../components/Link";
 import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components/Page";
 import { SectionHead } from "../components/SectionHead";
 import { SignInOptions } from "../components/SignIn";
 import { dateText, plainError, SURVEY_STATUS, surveyOutcome } from "../lib/account";
 import { INTENTS, letter } from "../lib/format";
+import { dayText, heldText, statusText } from "../lib/founders";
 import { forgetGoogleChoice } from "../lib/google";
 import { KIT_OUTCOME, KIT_STATUS } from "../lib/kit";
-import { BRIEF_URL, kitUrl, PRIVACY_URL } from "../lib/routes";
+import { BRIEF_URL, FOUNDERS_URL, kitUrl, PRIVACY_URL } from "../lib/routes";
 import { useEngine } from "../state/engine";
 import { session, useSession } from "../state/session";
 
@@ -175,7 +179,73 @@ function Kits({ load }: { load: PlacesLoad }) {
   );
 }
 
-/** What the account has saved: its surveys and their launch kits, read in one request. */
+/** A Founders campaign: its title, how far along it is, its state and its deadline. */
+function CampaignRow({ campaign }: { campaign: PlacesCampaign }) {
+  const funded = campaign.supporters >= campaign.goal;
+  return (
+    <li>
+      <Link className="place-row" href={campaign.url}>
+        <span className="place-main">
+          <span className="place-kicker mono">Founders campaign</span>
+          <span className="place-name">{campaign.title}</span>
+          <span className="place-sub">
+            {campaign.supporters} of {campaign.goal} neighbors · {heldText(campaign.status, campaign.total)}
+            {campaign.status === "open" ? ` · ${funded ? "goal met" : `${campaign.goal - campaign.supporters} more needed`}` : ""}
+          </span>
+          <ProgressBar supporters={campaign.supporters} goal={campaign.goal} funded={funded} className="place-bar" />
+        </span>
+        <span className="place-meta mono">
+          <span className="state" data-state={campaign.status}>
+            {statusText(campaign.status)}
+          </span>
+          <time dateTime={campaign.deadline}>Ends {dayText(campaign.deadline)}</time>
+        </span>
+        <span className="place-arrow" aria-hidden="true">
+          →
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+/** The account's Founders campaigns, newest first. */
+function Campaigns({ load }: { load: PlacesLoad }) {
+  const campaigns = load.state === "shown" ? (load.places.campaigns ?? []) : [];
+  const note =
+    load.state === "shown" && campaigns.length
+      ? `${campaigns.length === 1 ? "One campaign" : `${campaigns.length} campaigns`}, newest first. Each page shows you its pledges and its payout.`
+      : "Neighbors back a business before it opens: they pledge with PayPal, which only holds the money until enough of them join.";
+
+  return (
+    <section className="pg-sec" aria-labelledby="places-campaigns" aria-busy={load.state === "loading"}>
+      <SectionHead id="places-campaigns" no="03" title="Founders campaigns" note={note} />
+      {load.state === "loading" ? <Loading /> : null}
+      {load.state === "failed" ? (
+        <Empty>
+          <p>Your campaigns load with your surveys.</p>
+        </Empty>
+      ) : null}
+      {load.state === "shown" ? (
+        campaigns.length ? (
+          <ol className="place-list">
+            {campaigns.map((campaign) => (
+              <CampaignRow key={campaign.id} campaign={campaign} />
+            ))}
+          </ol>
+        ) : (
+          <Empty>
+            <p>No campaigns yet.</p>
+            <Link className="text-link" href={FOUNDERS_URL}>
+              Start one from a launch kit <span aria-hidden="true">→</span>
+            </Link>
+          </Empty>
+        )
+      ) : null}
+    </section>
+  );
+}
+
+/** What the account has saved: its surveys, their launch kits and its Founders campaigns, read in one request. */
 function Saved({ userId }: { userId: string }) {
   const [load, setLoad] = useState<PlacesLoad>({ state: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -207,6 +277,7 @@ function Saved({ userId }: { userId: string }) {
     <>
       <Surveys load={load} onRetry={retry} />
       <Kits load={load} />
+      <Campaigns load={load} />
     </>
   );
 }
@@ -246,7 +317,7 @@ function AccountSection({ user, onLeft }: { user: User; onLeft: (how: Left) => v
 
   return (
     <section className="pg-sec" aria-labelledby="places-account">
-      <SectionHead id="places-account" no="03" title="Your account" note="What Walk-in keeps about you, and how to remove it." />
+      <SectionHead id="places-account" no="04" title="Your account" note="What Walk-in keeps about you, and how to remove it." />
       <div className="account-card">
         <div className="account-id">
           <Avatar user={user} className="avatar-large" />
@@ -257,7 +328,7 @@ function AccountSection({ user, onLeft }: { user: User; onLeft: (how: Left) => v
         </div>
         <p className="account-keeps">
           Walk-in keeps your account id, email, name and picture link, only to show you&apos;re signed in and to list your
-          surveys and their kits here. Nothing about you is sent to Qloo or the AI providers.{" "}
+          surveys, their kits and your campaigns here. Nothing about you is sent to Qloo or the AI providers.{" "}
           <Link className="text-link" href={PRIVACY_URL}>
             How Walk-in handles your data
           </Link>
@@ -341,8 +412,8 @@ export function PlacesPage() {
         titleRef={titleRef}
         standfirst={
           user
-            ? `Signed in as ${user.email}. Your surveys and their launch kits, saved to your account and open on any device.`
-            : "Your surveys and their launch kits, saved to your account and open on any device."
+            ? `Signed in as ${user.email}. Your surveys, their launch kits and your Founders campaigns, saved to your account and open on any device.`
+            : "Your surveys, their launch kits and your Founders campaigns, saved to your account and open on any device."
         }
       />
       {user ? (

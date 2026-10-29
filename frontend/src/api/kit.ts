@@ -1,6 +1,7 @@
 /* The launch kit: its payload (app/survey/kit.py's build_kit, and the dossier it carries, app/survey/dossier.py), and
    the free kit API that makes one for a survey's concept and serves it to anyone with its link. */
 import { fetched, post, request } from "./client";
+import type { KitCampaign } from "./founders";
 import type { ClaimKind, LatLon, LaunchChannel, LaunchPlan, UnitText, VerdictLevel } from "./types";
 
 /** A launch-plan claim with its id ("only", "new-1"…), which the copy lists when it leans on it. */
@@ -356,6 +357,11 @@ export interface KitView {
   kit: Kit | null;
   /** Why it failed, in plain words. */
   error: string | null;
+  /**
+   * The kit's open Founders campaigns, the viewer's own first: not part of the kit's page (GET /api/kits/{token}/campaigns,
+   * state/kit.ts adds them), and missing until they have arrived.
+   */
+  campaigns?: KitCampaign[];
 }
 
 /** A kit as My places lists it (GET /api/me/places). */

@@ -5,6 +5,7 @@ import { cssVars } from "../lib/css";
 import { coords, floorArea, INTENTS } from "../lib/format";
 import { spotTitle } from "../lib/fullmap";
 import { scrollBehavior } from "../lib/motion";
+import { EXAMPLES_URL } from "../lib/routes";
 import { walkLine, type WalkPreview } from "../lib/walk";
 import { isBigArea } from "../map/geometry";
 import {
@@ -19,8 +20,10 @@ import {
   type BriefForm,
   type Choice,
 } from "../state/brief";
+import { useSession } from "../state/session";
 import type { Site } from "../state/site";
 import { ExampleStrip } from "./ExampleStrip";
+import { Link } from "./Link";
 import { MapsLink } from "./MapsLink";
 import { PlaceSearch } from "./PlaceSearch";
 import { PresetIndex } from "./PresetIndex";
@@ -385,6 +388,8 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
   const chosen = useRef<HTMLDivElement>(null);
   const fromBrief = useRef(false);
   const { intent } = form;
+  /** New surveys are off for now (the judging weeks): the survey button gives way to the surveyed storefronts. */
+  const paused = useSession().config?.surveys_paused === true;
   const blocker = missing(site, form);
   /** The area to trace; none while "Other" holds a number out of the limits. */
   const area = briefArea(form);
@@ -419,8 +424,10 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
   // place").
   useEffect(() => {
     if (!reveal) return;
-    const button = go.current;
-    const next = button && !button.disabled ? button : card.current?.querySelector<HTMLElement>("input:not([type=radio])");
+    // The survey's button, or the surveyed storefronts' link while surveys are paused; else the field in the way.
+    const next =
+      card.current?.querySelector<HTMLElement>(".go-row .go:not(:disabled)") ??
+      card.current?.querySelector<HTMLElement>("input:not([type=radio])");
     next?.focus({ preventScroll: true });
     showCard(card.current);
   }, [reveal]);
@@ -621,26 +628,44 @@ export function Brief({ hidden, notice, site, trace, reveal, form, onForm, onSit
           ) : null}
 
           <div className="go-row">
-            <button
-              ref={go}
-              className="go"
-              type="button"
-              onClick={onSurvey}
-              disabled={blocker !== null}
-              aria-describedby={blocker ? "go-hint" : undefined}
-            >
-              <span>{INTENTS[intent].action}</span>
-              <i aria-hidden="true">
-                <svg viewBox="0 0 24 24">
-                  <path d="M4 12h15M13 6l6 6-6 6" />
-                </svg>
-              </i>
-            </button>
-            {blocker ? (
-              <p id="go-hint" className="go-hint mono">
-                {blocker}
-              </p>
-            ) : null}
+            {paused ? (
+              <>
+                <p className="go-paused" id="go-paused">
+                  New surveys are paused while judges try Walk-in:
+                </p>
+                <Link className="go" href={EXAMPLES_URL} aria-describedby="go-paused">
+                  <span>Open a surveyed storefront</span>
+                  <i aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M4 12h15M13 6l6 6-6 6" />
+                    </svg>
+                  </i>
+                </Link>
+              </>
+            ) : (
+              <>
+                <button
+                  ref={go}
+                  className="go"
+                  type="button"
+                  onClick={onSurvey}
+                  disabled={blocker !== null}
+                  aria-describedby={blocker ? "go-hint" : undefined}
+                >
+                  <span>{INTENTS[intent].action}</span>
+                  <i aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M4 12h15M13 6l6 6-6 6" />
+                    </svg>
+                  </i>
+                </button>
+                {blocker ? (
+                  <p id="go-hint" className="go-hint mono">
+                    {blocker}
+                  </p>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       ) : null}

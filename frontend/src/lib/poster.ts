@@ -33,6 +33,8 @@ export interface PosterLayout {
   headline: Block | null;
   map: { y: number; height: number };
   bandTop: number;
+  /** The Founders campaign's line in its yellow box, beside the QR code to the campaign; null without a campaign. */
+  back: { box: Box; text: Block } | null;
   subline: Block | null;
   hours: Block | null;
   hoursLabelY: number | null;
@@ -52,6 +54,8 @@ export interface PosterText {
   subline: string | null;
   hours: string | null;
   proof: string | null;
+  /** The owner's open Founders campaign, in a line from its own terms ("Back it before it opens: pledge $25, …"). */
+  back?: string | null;
 }
 
 /** Words broken into lines no wider than `width` when set; at most `most` lines, the last one ending in "…" if cut. */
@@ -105,10 +109,18 @@ const GUTTER = 28;
 const HOURS_SIZE = 13.5;
 const BOX_PAD = 16;
 const BOX_MOST = 232;
+export const BACK_SIZE = 17;
+export const BACK_PAD = 14;
+// The campaign's line is set a little heavier than the measure assumes: it keeps this much room spare.
+const BACK_SLACK = 0.94;
+/** Nothing in the band runs below this, clear of the proof line at the foot. */
+const BAND_FLOOR = POSTER_H - 58;
 
 /**
  * Lays the poster out; when the walk's map would be too small, the name is set smaller until it fits. Without a QR code
- * the band keeps its two columns: the subline on the left, and the hours in a box where the code would be.
+ * the band keeps its two columns: the subline on the left, and the hours in a box where the code would be. With a
+ * Founders campaign, the campaign's line takes the top of the left column in a yellow box beside the QR code; the
+ * subline follows it, smaller, and the hours only when they still fit.
  */
 export function layoutPoster(text: PosterText, measure: Measure, { qr = true }: { qr?: boolean } = {}): PosterLayout {
   let layout = attempt(text, measure, 1, qr);
@@ -156,13 +168,32 @@ function attempt(text: PosterText, measure: Measure, scale: number, withQr: bool
     : 0;
   const right = withQr ? QR_SIZE : boxWidth;
   const columnWidth = right ? INNER - right - GUTTER : INNER;
-  let subline: Block | null = null;
+  let back: PosterLayout["back"] = null;
   let bandY = bandTop + 26;
+  if (text.back) {
+    const width = (line: string) => measure(line, "sans", BACK_SIZE);
+    const lines = fitLines(text.back, (columnWidth - 2 * BACK_PAD) * BACK_SLACK, width, 4);
+    const words = block(lines, BACK_SIZE, slotTop + BACK_PAD - 2, 1.28, width);
+    const bottom = Math.round(bottomOf(words, slotTop) + BACK_PAD);
+    back = { box: { x: POSTER_M, y: slotTop, width: columnWidth, height: bottom - slotTop }, text: words };
+    bandY = bottom + 18;
+  }
+  let subline: Block | null = null;
   if (text.subline) {
-    const size = 19;
-    const lines = fitLines(text.subline, columnWidth, (line) => measure(line, "sans", size), 3);
-    subline = block(lines, size, bandY, 1.32, (line) => measure(line, "sans", size));
-    bandY = bottomOf(subline, bandY) + 14;
+    const said = text.subline;
+    const size = back ? 15 : 19;
+    const width = (line: string) => measure(line, "sans", size);
+    let lines = fitLines(said, columnWidth, width, back ? 2 : 3);
+    let candidate = block(lines, size, bandY, 1.32, width);
+    // Under the campaign's line, the subline shortens to fit the band, or gives way.
+    if (back && bottomOf(candidate, bandY) > BAND_FLOOR) {
+      lines = fitLines(said, columnWidth, width, 1);
+      candidate = block(lines, size, bandY, 1.32, width);
+    }
+    if (!back || bottomOf(candidate, bandY) <= BAND_FLOOR) {
+      subline = candidate;
+      bandY = bottomOf(subline, bandY) + 14;
+    }
   }
   let hours: Block | null = null;
   let hoursLabelY: number | null = null;
@@ -176,6 +207,10 @@ function attempt(text: PosterText, measure: Measure, scale: number, withQr: bool
     if (boxed) {
       const bottom = Math.round(bottomOf(hours, hoursLabelY) + BOX_PAD);
       hoursBox = { x: POSTER_W - POSTER_M - boxWidth, y: slotTop, width: boxWidth, height: bottom - slotTop };
+    } else if (back && bottomOf(hours, hoursLabelY) > BAND_FLOOR) {
+      // Under the campaign's line there may be no room left for them.
+      hours = null;
+      hoursLabelY = null;
     }
   }
 
@@ -193,6 +228,7 @@ function attempt(text: PosterText, measure: Measure, scale: number, withQr: bool
     headline,
     map: { y: mapTop, height: Math.round(bandTop - 22 - mapTop) },
     bandTop,
+    back,
     subline,
     hours,
     hoursLabelY,

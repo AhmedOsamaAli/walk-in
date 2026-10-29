@@ -2,11 +2,17 @@
 
 Walk-in surveys an empty storefront. It traces the real walk or drive area around it, reads Qloo's taste data for the
 people there, ranks what the area is missing, designs concepts checked against that evidence and builds a free launch
-kit. With this server, Claude Desktop, VS Code Copilot or any other MCP client can use it as a tool:
+kit. Walk-in Founders then lets the neighbors back the business before the lease is signed: each pledges with PayPal,
+PayPal only holds the money, and everyone is charged only if enough people join by the deadline. With this server,
+Claude Desktop, VS Code Copilot or any other MCP client can use it as a tool:
 
 - survey_storefront runs a survey: GET /api/geocode for a place, then GET /api/run, read as server-sent events;
 - list_examples lists the finished surveys anyone can open: GET /api/examples;
-- get_survey reads a survey again: GET /api/runs/{run_id}.
+- get_survey reads a survey again: GET /api/runs/{run_id};
+- find_campaigns lists open Founders campaigns near a place, or the newest: GET /api/campaigns;
+- get_campaign reads one campaign: GET /api/campaigns/{id};
+- back_campaign prepares one pledge and returns PayPal's approval link: POST /api/campaigns/{id}/pledges with flow
+  "redirect". A person opens the link and approves the pledge in PayPal; the tools never see a card or an account.
 
 It talks to nothing but WALKIN_URL (default https://walkin-app.pages.dev, whose front door forwards /api to the survey
 engine) and needs no keys. Run it with `python mcp_server/walkin_mcp.py`: it speaks MCP over stdin and stdout.
@@ -18,6 +24,8 @@ import json
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
+from datetime import datetime, timedelta, timezone, tzinfo
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
 import anyio
@@ -32,9 +40,19 @@ CALL_WAIT_S = 150.0  # any other call, waking included
 TOP_GAPS = 5
 RUN_ID = re.compile(r"[A-Za-z0-9-]{1,32}")
 SURVEY_LINK = re.compile(r"/s/([A-Za-z0-9-]{1,32})(?:[/?#]|$)")
-USER_AGENT = "walkin-mcp/1.0"
+USER_AGENT = "walkin-mcp/1.1"
+
+NEAR_KM = 25.0  # find_campaigns looks this far from a place unless told otherwise; Walk-in looks up to 100 km
+TOP_CAMPAIGNS = 10
+CAMPAIGN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+CAMPAIGN_LINK = re.compile(r"/p/([A-Za-z0-9_-]{1,64})(?:[/?#]|$)")
+PLEDGES_PATH = re.compile(r"/api/campaigns/[^/]+/pledges")
+UTC_ZONE = timezone(timedelta(0))
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 TOO_MANY_SURVEYS = "Walk-in allows a few surveys per hour from one address; try again later."
+TOO_MANY_PLEDGES = "Walk-in is preparing too many pledges from this address right now; try again later. No pledge was prepared."
+TEST_MODE = "Test mode: PayPal sandbox, no real money."
 CREDIT = "Data: Qloo taste data · OpenStreetMap (© OpenStreetMap contributors) · Valhalla routing."
 SHAPES = {"street network": "traced over the street network",
           "circle": "drawn as a circle because street routing was unavailable"}
@@ -123,17 +141,19 @@ def wait_from_env() -> float:
 
 
 class Walkin:
-    """Walk-in's public API as the tools use it: GETs that wait through the free server's naps, and the survey stream
+    """Walk-in's public API as the tools use it: calls that wait through the free server's naps, and the survey stream
     read to its end."""
 
     def __init__(
         self, base: str | None = None, *, transport: httpx.AsyncBaseTransport | None = None,
         survey_wait: float | None = None, sleep: Callable[[float], Awaitable[Any]] = anyio.sleep,
+        zone: tzinfo | None = None,
     ) -> None:
         self.base = (base or os.environ.get("WALKIN_URL") or DEFAULT_URL).strip().rstrip("/")
         self.transport = transport
         self.survey_wait = wait_from_env() if survey_wait is None else survey_wait
         self.sleep = sleep
+        self.zone = zone  # campaign deadlines are told in it; None is this computer's, as its browser shows them
 
     def client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -153,13 +173,22 @@ class Walkin:
         self, http: httpx.AsyncClient, path: str, params: dict[str, Any] | None = None, *,
         accept: str = "application/json", progress: Notify = quiet,
     ) -> httpx.Response:
-        """GET path as an open response, which the caller reads and closes.
+        """GET path as an open response, which the caller reads and closes (see send)."""
+        return await self.send(http, "GET", path, params, accept=accept, progress=progress)
+
+    async def send(
+        self, http: httpx.AsyncClient, method: str, path: str, params: dict[str, Any] | None = None, *,
+        body: dict[str, Any] | None = None, accept: str = "application/json", progress: Notify = quiet,
+    ) -> httpx.Response:
+        """The request as an open response, which the caller reads and closes.
 
         While the free server wakes (about a minute after a quiet spell), the front door answers 503 {"waking": true}:
-        that is asked again after its Retry-After. Any other failure raises WalkinError in plain words.
+        that is asked again after its Retry-After. The front door says so when the server did not answer, and a pledge
+        asked again would be harmless anyway: a PayPal order nobody approves holds nothing. Any other failure raises
+        WalkinError in plain words.
         """
         while True:
-            request = http.build_request("GET", path, params=params, headers={"Accept": accept})
+            request = http.build_request(method, path, params=params, json=body, headers={"Accept": accept})
             try:
                 response = await http.send(request, stream=True)
             except httpx.HTTPError as exc:
@@ -179,17 +208,23 @@ class Walkin:
 
     async def get_json(self, http: httpx.AsyncClient, path: str, params: dict[str, Any] | None = None, *,
                        progress: Notify = quiet) -> Any:
-        response = await self.get(http, path, params, progress=progress)
+        return await self.call_json(http, "GET", path, params, progress=progress)
+
+    async def call_json(
+        self, http: httpx.AsyncClient, method: str, path: str, params: dict[str, Any] | None = None, *,
+        body: dict[str, Any] | None = None, progress: Notify = quiet,
+    ) -> Any:
+        response = await self.send(http, method, path, params, body=body, progress=progress)
         try:
             await response.aread()
         except httpx.HTTPError as exc:
             raise WalkinError(self.unreachable(exc)) from exc
         finally:
             await close(response)
-        body = json_of(response)
-        if body is None:
+        found = json_of(response)
+        if found is None:
             raise WalkinError(f"Walk-in at {self.base} sent a page instead of data; check WALKIN_URL.")
-        return body
+        return found
 
     async def survey(
         self, *, place: str | None = None, lat: float | None = None, lon: float | None = None, travel: Travel = "walk",
@@ -287,6 +322,79 @@ class Walkin:
         ]
         return summarize(events, self.base, run_id=text(record.get("id")) or run_id, status=text(record.get("status")))
 
+    # Walk-in Founders: the neighbors back a business before its lease is signed.
+
+    async def campaigns(
+        self, *, place: str | None = None, lat: float | None = None, lon: float | None = None, km: float = NEAR_KM,
+        progress: Notify = quiet,
+    ) -> str:
+        """Open campaigns near a place or a point, nearest first; with neither, the newest anywhere."""
+        place = (place or "").strip()
+        if place and not 3 <= len(place) <= 160:
+            raise WalkinError("Give the place as an address or a neighborhood name of 3 to 160 characters.")
+        if not place and (lat is None) != (lon is None):
+            raise WalkinError("Give both lat and lon, or a place to search for; leave them all out for the newest campaigns.")
+        near = None  # what the list is near, as the summary names it
+        async with self.client() as http:
+            with answer_within(CALL_WAIT_S):
+                if place:
+                    lat, lon, near = await self.locate(http, place, progress)
+                elif lat is not None and lon is not None:
+                    near = f"{lat:.4f}, {lon:.4f}"
+                params = {"lat": f"{lat:.6f}", "lon": f"{lon:.6f}", "km": f"{km:g}"} if near else None
+                found = await self.get_json(http, "/api/campaigns", params, progress=progress)
+                listed = found.get("campaigns") if isinstance(found, dict) else None
+                if not isinstance(listed, list):
+                    raise WalkinError(f"Walk-in at {self.base} sent a campaign list this tool cannot read; check WALKIN_URL.")
+                items = [item for item in listed if isinstance(item, dict) and ref_of(item)]
+                paypal = await self.paypal(http, progress) if items else {}
+        return campaigns_summary(items, self, near=near, km=km, paypal=paypal)
+
+    async def campaign(self, value: str, *, progress: Notify = quiet) -> str:
+        """One campaign in plain words: what it is, where and why there, its terms, its progress and its status."""
+        found_id = campaign_id(value)
+        async with self.client() as http:
+            with answer_within(CALL_WAIT_S):
+                campaign = await self.campaign_record(http, found_id, progress)
+                paypal = await self.paypal(http, progress)
+        return campaign_summary(campaign, found_id, self, paypal)
+
+    async def back(self, value: str, *, progress: Notify = quiet) -> str:
+        """Prepares one pledge, a PayPal order that holds the money once its payer approves it, and returns PayPal's
+        link for the person to approve it. A campaign that no longer takes pledges gets no order."""
+        found_id = campaign_id(value)
+        async with self.client() as http:
+            with answer_within(CALL_WAIT_S):
+                campaign = await self.campaign_record(http, found_id, progress)
+                if campaign.get("accepting") is not True:
+                    raise WalkinError(refusal(campaign, self.zone))
+                await progress("Preparing the pledge with PayPal")
+                order = await self.call_json(
+                    http, "POST", f"/api/campaigns/{found_id}/pledges", body={"flow": "redirect"}, progress=progress,
+                )
+        approve = text(order.get("approve_url")) if isinstance(order, dict) else None
+        if approve is None:
+            raise WalkinError("Walk-in did not send PayPal's approval link, so there is nothing to approve yet; try again in a minute.")
+        if paypal_host(approve) is None:
+            raise WalkinError("Walk-in sent an approval link that is not PayPal's, so this tool does not pass it on; check WALKIN_URL.")
+        return pledge_summary(campaign, found_id, approve, self)
+
+    async def campaign_record(self, http: httpx.AsyncClient, found_id: str, progress: Notify) -> dict:
+        campaign = await self.get_json(http, f"/api/campaigns/{found_id}", progress=progress)
+        if not isinstance(campaign, dict):
+            raise WalkinError("Walk-in sent a campaign this tool cannot read.")
+        return campaign
+
+    async def paypal(self, http: httpx.AsyncClient, progress: Notify) -> dict:
+        """The server's PayPal settings from GET /api/config: whether pledging is on, and whether it is PayPal's sandbox.
+        A server that does not say gives {}, and the summary then claims neither."""
+        try:
+            config = await self.get_json(http, "/api/config", progress=progress)
+        except WalkinError:
+            return {}
+        found = config.get("paypal") if isinstance(config, dict) else None
+        return found if isinstance(found, dict) else {}
+
 
 async def close(response: httpx.Response) -> None:
     """Closes a response even while the call is being cancelled, so its connection is not left open."""
@@ -334,6 +442,25 @@ def survey_id(value: str) -> str:
     return run_id
 
 
+def campaign_id(value: str) -> str:
+    """A campaign's id, also from its link ('https://walkin-app.pages.dev/p/3f9a1c2b7d4e5f60?pledge=...')."""
+    value = (value or "").strip()
+    found = CAMPAIGN_LINK.search(value)
+    found_id = found.group(1) if found else value
+    if not CAMPAIGN_ID.fullmatch(found_id):
+        raise WalkinError(
+            "A campaign id is up to 64 letters, digits, dashes and underscores, such as 3f9a1c2b7d4e5f60, or its /p/ "
+            "link; find_campaigns lists the open campaigns."
+        )
+    return found_id
+
+
+def ref_of(item: dict) -> str | None:
+    """A listed campaign's id, when it is one."""
+    found = text(item.get("id"))
+    return found if found and CAMPAIGN_ID.fullmatch(found) else None
+
+
 def json_of(response: httpx.Response) -> Any:
     try:
         return response.json()
@@ -366,15 +493,35 @@ def failure(response: httpx.Response, path: str) -> str:
     if response.status_code == 429:
         if path == "/api/run":
             return TOO_MANY_SURVEYS
+        if PLEDGES_PATH.fullmatch(path):
+            return TOO_MANY_PLEDGES
         return "Walk-in is getting too many requests from this address; try again later."
     detail = detail_of(json_of(response))
     if path == "/api/geocode" and response.status_code >= 500:  # Nominatim is slow or down; coordinates still work
         return f"{detail or 'Walk-in could not search for the address right now.'} Give the site's lat and lon instead."
+    if path.startswith("/api/campaigns") and response.status_code in (404, 409):
+        return campaign_failure(response.status_code, path, detail)
     if detail:
         return detail
     if response.status_code >= 500:
         return f"Walk-in is unavailable right now (HTTP {response.status_code}); try again in a minute."
     return f"Walk-in answered {path} with HTTP {response.status_code}; check WALKIN_URL."
+
+
+def campaign_failure(status: int, path: str, detail: str | None) -> str:
+    """A campaign that is not there, or no longer takes pledges, and what to do next."""
+    if path == "/api/campaigns":  # FastAPI's own "Not Found": a server from before Founders
+        return "This Walk-in server has no Founders campaigns; check WALKIN_URL."
+    if status == 404:
+        said = detail if detail and detail != "Not Found" else "Walk-in has no campaign with that id."
+        return f"{sentence(said)} Check the id or link; find_campaigns lists the open campaigns."
+    if PLEDGES_PATH.fullmatch(path):
+        return f"{sentence(detail or 'This campaign no longer takes pledges.')} No pledge was prepared."
+    return sentence(detail or f"Walk-in answered {path} with HTTP {status}.")
+
+
+def sentence(words: str) -> str:
+    return words if words.endswith((".", "!", "?")) else f"{words}."
 
 
 def detail_of(body: Any) -> str | None:
@@ -575,20 +722,277 @@ def examples_summary(examples: Any, walkin: Walkin) -> str:
     return "\n".join(lines)
 
 
+# ---------- Founders: each campaign's own terms, in plain words ----------
+
+# PayPal's approval link, matched whole rather than parsed: parsers and browsers disagree on odd links (urlsplit reads
+# "https://evil.example\.paypal.com/" as a host on paypal.com; a browser opens evil.example). So: https, one of PayPal's
+# two checkout hosts exactly, then a path and query of plain URL characters, with no backslash, userinfo, port,
+# fragment or whitespace.
+PAYPAL_LINK = re.compile(r"https://(www\.sandbox\.paypal\.com|www\.paypal\.com)/[A-Za-z0-9/._~?=&%-]{0,2000}")
+SANDBOX_HOST = "www.sandbox.paypal.com"
+ENDINGS = {  # a campaign that takes no more pledges: its state in a word, and what became of the money
+    "funded": ("funded", "It met its goal, and PayPal is collecting the pledges."),
+    "collected": ("funded", "It met its goal, and the pledges were collected."),
+    "partial": ("funded", "It met its goal, and PayPal is still collecting some of the pledges."),
+    "expired": ("ended", "It ended short of its goal, so every hold was released and nobody paid."),
+    "cancelled": ("cancelled", "Its owner cancelled it, so every hold was released and nobody paid."),
+}
+
+
+def money(amount: Any, currency: Any = None) -> str | None:
+    """'25.00' -> '$25', '12.50' -> '$12.50', '1250.00' -> '$1,250'. Walk-in pledges are in US dollars; another
+    currency's code would follow the figure."""
+    if isinstance(amount, bool) or not isinstance(amount, str | int | float):
+        return None
+    try:
+        value = Decimal(str(amount).strip())
+    except InvalidOperation:
+        return None
+    if not value.is_finite():
+        return None
+    figure = f"{value:,.2f}".removesuffix(".00")
+    code = (text(currency) or "USD").upper()
+    return f"${figure}" if code == "USD" else f"{figure} {code}"
+
+
+def moment(value: Any, zone: tzinfo | None) -> datetime | None:
+    """An ISO 8601 time from Walk-in in the reader's time zone: this computer's when zone is None."""
+    found = text(value)
+    if found is None:
+        return None
+    if found.endswith(("Z", "z")):  # Python 3.10 reads no Z
+        found = f"{found[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(found)
+        return (parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC_ZONE)).astimezone(zone)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def day(at: datetime, *, year: bool = True) -> str:
+    """'Nov 30, 2026', or 'Nov 30', whatever the computer's language."""
+    return f"{MONTHS[at.month - 1]} {at.day}" + (f", {at.year}" if year else "")
+
+
+def clock(at: datetime) -> str:
+    """'11:59 PM UTC-5': the time of day and the zone it is told in."""
+    minutes = round((at.utcoffset() or timedelta(0)).total_seconds() / 60)
+    hours, rest = divmod(abs(minutes), 60)
+    zone = f"UTC{'+' if minutes > 0 else '-'}{hours}" + (f":{rest:02d}" if rest else "") if minutes else "UTC"
+    return f"{at.hour % 12 or 12}:{at.minute:02d} {'AM' if at.hour < 12 else 'PM'} {zone}"
+
+
+def distance(km: Any) -> str | None:
+    """'350 m away', '2.4 km away', '18 km away'."""
+    if isinstance(km, bool) or not isinstance(km, int | float) or km < 0:
+        return None
+    metres = round(km * 1000, -1)
+    if metres < 1000:
+        return f"{max(10, metres):.0f} m away"
+    return f"{km:.1f} km away" if km < 9.95 else f"{km:.0f} km away"
+
+
+def terms(campaign: dict, zone: tzinfo | None) -> str | None:
+    """The terms as the campaign's page says them, from the owner's numbers alone: 'PayPal holds $25. You are charged
+    only if 40 neighbors join by Nov 30; otherwise the hold is released.'"""
+    amount = money(campaign.get("amount"), campaign.get("currency"))
+    goal = campaign.get("goal")
+    deadline = moment(campaign.get("deadline"), zone)
+    if amount is None or isinstance(goal, bool) or not isinstance(goal, int) or deadline is None:
+        return None
+    join = "neighbor joins" if goal == 1 else "neighbors join"
+    return (f"PayPal holds {amount}. You are charged only if {goal} {join} by {day(deadline, year=False)}; "
+            "otherwise the hold is released.")
+
+
+def progress_line(progress: Any, currency: Any) -> str | None:
+    """'12 of 40 supporters (30%), 28 more needed; $300 pledged.'"""
+    if not isinstance(progress, dict):
+        return None
+    supporters, goal = progress.get("supporters"), progress.get("goal")
+    if not isinstance(supporters, int) or not isinstance(goal, int):
+        return None
+    line = f"{supporters} of {goal} supporters"
+    percent, remaining = progress.get("percent"), progress.get("remaining")
+    if progress.get("funded") is True:
+        line += ": the goal is met"
+    else:
+        if isinstance(percent, int | float) and not isinstance(percent, bool):
+            line += f" ({percent:g}%)"
+        if isinstance(remaining, int) and remaining > 0:
+            line += f", {remaining} more needed"
+    total = money(progress.get("total"), currency)
+    return f"{line}; {total} pledged." if total else f"{line}."
+
+
+def status_of(campaign: dict, zone: tzinfo | None) -> tuple[str, str]:
+    """The campaign's state in a word, and a sentence on what it means for the pledges."""
+    if campaign.get("accepting") is True:
+        deadline = moment(campaign.get("deadline"), zone)
+        return "open", f"Taking pledges until {day(deadline)}, {clock(deadline)}." if deadline else "Taking pledges."
+    status = text(campaign.get("status")) or "closed"
+    if status in ENDINGS:
+        return ENDINGS[status]
+    if status == "open":
+        return "closing", "Its deadline has passed, and Walk-in is settling it."
+    return status, "It takes no more pledges."
+
+
+def refusal(campaign: dict, zone: tzinfo | None) -> str:
+    word, said = status_of(campaign, zone)
+    return f"{text(campaign.get('name')) or 'This campaign'} no longer takes pledges ({word}). {said} No pledge was prepared."
+
+
+def paypal_host(url: str) -> str | None:
+    """PayPal's host when the whole link is a PayPal approval link (www.paypal.com, or www.sandbox.paypal.com for test
+    mode); None for any other link."""
+    found = PAYPAL_LINK.fullmatch(url)
+    return found.group(1) if found else None
+
+
+def is_sandbox(host: str | None) -> bool:
+    return host == SANDBOX_HOST
+
+
+def campaigns_summary(items: list[dict], walkin: Walkin, *, near: str | None, km: float, paypal: dict) -> str:
+    where = f" within {km:g} km of {near}" if near else ""
+    if not items:
+        hint = "find_campaigns without a place lists the newest anywhere. " if near else ""
+        return (f"No open Walk-in Founders campaigns{where or ' right now'}. {hint}Owners start one from a launch kit: "
+                f"{walkin.link('/founders')}")
+    count = f"{len(items)} open campaign{'s' if len(items) > 1 else ''}"
+    order = f", {'nearest' if near else 'newest'} first" if len(items) > 1 else ""
+    lines = [f"## Walk-in Founders: {count}{where}{order}"]
+    for number, item in enumerate(items[:TOP_CAMPAIGNS], 1):
+        lines += listed_lines(number, item, walkin)
+    if len(items) > TOP_CAMPAIGNS:
+        lines.append(f"Showing the {TOP_CAMPAIGNS} nearest of {len(items)}; a smaller km narrows the search." if near else
+                     f"Showing the {TOP_CAMPAIGNS} newest of {len(items)}; all of them: {walkin.link('/founders')}")
+    lines += ["", "get_campaign reads one in full: what it is, why there, its perks and its terms. back_campaign "
+                  "prepares a pledge for the person to approve in PayPal."]
+    if paypal.get("environment") == "sandbox":
+        lines.append(TEST_MODE)
+    return "\n".join(lines)
+
+
+def listed_lines(number: int, item: dict, walkin: Walkin) -> list[str]:
+    """A listed campaign: the business and its title, the place and how far, the pledge and the count, the link."""
+    name, title = text(item.get("name")) or "A business", text(item.get("title"))
+    lines = [f"{number}. **{name}**" + (f": {title}" if title and title != name else "")]
+    place = item.get("place") if isinstance(item.get("place"), dict) else {}
+    where = [part for part in (text(place.get("label")), distance(item.get("distance_km"))) if part]
+    if where:
+        lines.append(f"   - {' · '.join(where)}")
+    amount, supporters, goal = money(item.get("amount"), item.get("currency")), item.get("supporters"), item.get("goal")
+    total = money(item.get("total"), item.get("currency"))  # what its pledges come to; missing from older servers
+    deadline = moment(item.get("deadline"), walkin.zone)
+    count = f"{supporters} of {goal} supporters" if isinstance(supporters, int) and isinstance(goal, int) else None
+    deal = [
+        f"{amount} pledge" if amount else None,
+        f"{count}, {total} pledged" if count and total else count,
+        f"deadline {day(deadline)}" if deadline else None,
+    ]
+    if any(deal):
+        lines.append(f"   - {' · '.join(part for part in deal if part)}")
+    lines.append(f"   - {walkin.link(f'/p/{ref_of(item)}')}")
+    return lines
+
+
+def campaign_summary(campaign: dict, found_id: str, walkin: Walkin, paypal: dict) -> str:
+    """A campaign as its page shows a supporter: what and where, the status, the owner's pitch, why here (the survey's
+    evidence), the perks, the terms and the progress. The owner's own block, if any, is never read."""
+    name, title = text(campaign.get("name")) or "A Founders campaign", text(campaign.get("title"))
+    lines = [f"## {name}" + (f": {title}" if title and title != name else "")]
+    concept = campaign.get("concept") if isinstance(campaign.get("concept"), dict) else {}
+    what = " ".join(sentence(part) for part in (text(concept.get("genre")), text(concept.get("summary"))) if part)
+    if what:
+        lines.append(f"- What it is: {what}")
+    place = campaign.get("place") if isinstance(campaign.get("place"), dict) else {}
+    label, area = text(place.get("label")), text(place.get("area"))
+    if label:
+        lines.append(f"- Where: {label}" + (f" ({area})" if area else ""))
+    word, said = status_of(campaign, walkin.zone)
+    closed = moment(campaign.get("closed_at"), walkin.zone)
+    lines.append(f"- Status: {word}" + (f", closed {day(closed)}" if closed else "") + f". {said}")
+    pitch = text(campaign.get("pitch"))
+    if pitch:
+        lines += ["", pitch]
+    evidence = texts(campaign.get("evidence"))
+    if evidence:
+        lines += ["", "**Why here**, from Walk-in's survey of the block:", *(f"- {line}" for line in evidence)]
+    perks = texts(campaign.get("perks"))
+    if perks:
+        lines += ["", "**Founding supporters get:**", *(f"- {perk}" for perk in perks)]
+    lines.append("")
+    deal = terms(campaign, walkin.zone)
+    if deal:
+        lines.append(f"**The terms:** {deal}")
+    progress = progress_line(campaign.get("progress"), campaign.get("currency"))
+    if progress:
+        lines.append(f"**Progress:** {progress}")
+    if campaign.get("accepting") is True:
+        lines.append("Pledging with PayPal is switched off on this Walk-in server right now." if paypal.get("enabled") is False
+                     else "To back it, call back_campaign: it prepares the pledge, and the person approves it in PayPal.")
+    if paypal.get("environment") == "sandbox":
+        lines.append(TEST_MODE)
+    lines += ["", f"Campaign page: {walkin.link(f'/p/{found_id}')}"]
+    survey, kit = text(campaign.get("survey_url")), text(campaign.get("kit_url"))
+    more = [part for part in (f"Survey: {walkin.link(survey)}" if survey else None,
+                              f"Launch kit: {walkin.link(kit)}" if kit else None) if part]
+    if more:
+        lines.append(" · ".join(more))
+    if evidence:
+        lines.append(CREDIT)
+    return "\n".join(lines)
+
+
+def pledge_summary(campaign: dict, found_id: str, approve: str, walkin: Walkin) -> str:
+    """A prepared pledge: PayPal's approval link, the terms PayPal holds the money on, and what happens next."""
+    lines = [
+        f"## Back {text(campaign.get('name')) or 'the campaign'}: approve the pledge in PayPal",
+        "The person backing it opens this link and approves the pledge in PayPal themselves:",
+        approve,
+        "",
+    ]
+    deal = terms(campaign, walkin.zone)
+    if deal:
+        lines.append(f"**The terms:** {deal}")
+    lines.append("- Approving places a hold, not a charge. PayPal then brings the person back to the campaign's page, "
+                 "which confirms the hold and counts the pledge; it can be withdrawn there while the campaign is open.")
+    progress = progress_line(campaign.get("progress"), campaign.get("currency"))
+    deadline = moment(campaign.get("deadline"), walkin.zone)
+    so_far = [part for part in (progress, f"Deadline: {day(deadline)}, {clock(deadline)}." if deadline else None) if part]
+    if so_far:
+        lines.append(f"- So far: {' '.join(so_far)}")
+    lines.append("- The link is for this one pledge. Anyone else who wants to back it needs their own: call "
+                 "back_campaign again for them.")
+    if is_sandbox(paypal_host(approve)):
+        lines.append(TEST_MODE)
+    lines += ["", f"Campaign page: {walkin.link(f'/p/{found_id}')}"]
+    return "\n".join(lines)
+
+
 # ---------- The MCP server ----------
 
 INSTRUCTIONS = """Walk-in surveys an empty storefront for someone deciding what to open there. It traces the real walk \
 or drive area, reads Qloo's taste data for the people in it, ranks the kinds of places the area is missing against the \
 areas around it, and designs business concepts from that evidence; its web page then builds design sheets and a free \
-launch kit.
+launch kit. With Walk-in Founders, the neighbors back such a business before its lease is signed: each pledges a fixed \
+amount with PayPal, PayPal only holds it, and everyone is charged only if enough people join by the deadline; otherwise \
+every hold is released.
 
 - list_examples: finished surveys anyone can open, free. Good for showing what Walk-in gives.
 - survey_storefront: surveys a site (one to three minutes). It spends Qloo and AI quota and Walk-in allows a few per \
 hour from one address, so run it once per site and brief.
 - get_survey: reads a survey again by its run id or link, free; also the rest of one that was still running.
+- find_campaigns: open Founders campaigns near a place, or the newest anywhere, free.
+- get_campaign: one campaign in full (what it is, why there, its terms, progress and status), free.
+- back_campaign: prepares one pledge and returns PayPal's approval link. Call it only when the person asks to back \
+that campaign, and once per person. Give them the link: they open it and approve the pledge in PayPal themselves. \
+Never ask for a card, a PayPal login or any other payment detail: no tool takes one.
 
-Report what the tools return in their words: every number and sentence comes from Qloo's data and Walk-in's rules, \
-so add none of your own, and pass on the survey link."""
+Report what the tools return in their words: every number and sentence comes from Qloo's data, the campaign's owner \
+or Walk-in's rules, so add none of your own, and pass on the links."""
 
 # Warnings only on stderr: at INFO, FastMCP and httpx would log every request.
 mcp = FastMCP("Walk-in", instructions=INSTRUCTIONS, website_url=DEFAULT_URL, log_level="WARNING")
@@ -667,6 +1071,69 @@ async def get_survey(
     """Read a Walk-in survey again by its run id: its area, age focus, top gaps with their evidence, concepts and, for a
     business tested, the verdict. Free: it reads what Walk-in saved. A survey still running shows what it found so far."""
     return await connect().record(run_id)
+
+
+CAMPAIGN_FIELD = "The campaign's id, such as '3f9a1c2b7d4e5f60', or its link (https://walkin-app.pages.dev/p/...)."
+
+
+@mcp.tool(
+    title="Find Founders campaigns",
+    annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=True),
+    structured_output=False,
+)
+async def find_campaigns(
+    place: Annotated[str | None, Field(
+        description="Where to look: an address, neighborhood or city, such as 'Williamsburg, Brooklyn'. Walk-in's address "
+                    "search takes its first match, and lat and lon are then ignored. Leave place, lat and lon out for the "
+                    "newest campaigns anywhere.",
+    )] = None,
+    lat: Annotated[float | None, Field(description="The latitude to look around, with lon, when no place is given.")] = None,
+    lon: Annotated[float | None, Field(description="The longitude to look around, with lat, when no place is given.")] = None,
+    km: Annotated[float, Field(description="How far from the place or point to look, up to 100 km.")] = NEAR_KM,
+    ctx: Context | None = None,
+) -> str:
+    """Find open Walk-in Founders campaigns: businesses Walk-in designed for an empty storefront, which the neighbors can
+    back with a PayPal pledge before the lease is signed. Near a place, or lat and lon, they come nearest first; with
+    neither, the newest anywhere. Each comes with its place and distance, the pledge amount, its supporters so far
+    against its goal, its deadline and its link. Free and read-only; get_campaign gives one in full."""
+    return await connect().campaigns(place=place, lat=lat, lon=lon, km=km, progress=Progress(ctx))
+
+
+@mcp.tool(
+    title="Get a Founders campaign",
+    annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=True),
+    structured_output=False,
+)
+async def get_campaign(
+    campaign_id: Annotated[str, Field(description=CAMPAIGN_FIELD)],
+    ctx: Context | None = None,
+) -> str:
+    """Read one Walk-in Founders campaign in plain words: the business and its place, why it belongs there (lines of
+    evidence from Walk-in's survey), the owner's pitch and perks, the terms (what PayPal holds, how many neighbors must
+    join and by when), the progress and the status. Free and read-only."""
+    return await connect().campaign(campaign_id, progress=Progress(ctx))
+
+
+@mcp.tool(
+    title="Back a Founders campaign (prepare a PayPal pledge)",
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
+    structured_output=False,
+)
+async def back_campaign(
+    campaign_id: Annotated[str, Field(description=CAMPAIGN_FIELD)],
+    ctx: Context | None = None,
+) -> str:
+    """Prepare a pledge to back a Walk-in Founders campaign, and get PayPal's approval link for it.
+
+    The person must open the link and approve the pledge in PayPal themselves: this tool cannot approve it, and you
+    never see or handle a card, a bank or a PayPal account, so never ask for one. Approving only places a hold: nothing
+    is charged unless the campaign reaches its goal by its deadline, and every hold is released if it does not. The
+    pledge counts once PayPal brings the person back to the campaign's page.
+
+    Call it only when the person asks to back this campaign, and once per person: each call creates a new PayPal order
+    for one pledge. Returns the approval link, the terms in plain words and the progress so far.
+    """
+    return await connect().back(campaign_id, progress=Progress(ctx))
 
 
 def main() -> None:

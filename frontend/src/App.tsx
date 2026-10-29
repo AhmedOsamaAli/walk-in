@@ -120,7 +120,8 @@ export function App() {
   /* ---------- The brief's and the survey's own moves ---------- */
 
   function startSurvey() {
-    if (!site || surveying || missing(site, form)) return;
+    // While new surveys are paused, the brief offers the surveyed storefronts instead of its survey button.
+    if (!site || surveying || missing(site, form) || session.get().config?.surveys_paused) return;
     // Nothing waits for a dropped pin's address: without it yet, the survey goes by the pin's coordinates.
     const run = runRequest({ ...site, label: siteName(site) }, form);
     const fields = briefFields(run, briefWalk, form.place);
@@ -426,6 +427,7 @@ export function App() {
           onToggleTheme={toggleTheme}
           inert={pageInert}
           examples={noExamples ? null : page?.page === "examples" ? "current" : "link"}
+          founders={page?.page === "founders" ? "current" : "link"}
         />
         {page ? <PageView route={page} onFresh={surveyOwn} /> : null}
         {stageOn ? (

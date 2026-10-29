@@ -13,3 +13,5 @@ export const kitChunk = lazyModule(() => import("./pages/kitPages"));
 export const examplesChunk = lazyModule(() => import("./pages/ExamplesPage"));
 export const placesChunk = lazyModule(() => import("./pages/PlacesPage"));
 export const privacyChunk = lazyModule(() => import("./pages/PrivacyPage"));
+/** Walk-in Founders: the open campaigns and a campaign's page, with PayPal's buttons and the Founders styles. */
+export const foundersChunk = lazyModule(() => import("./pages/foundersPages"));

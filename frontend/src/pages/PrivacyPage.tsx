@@ -5,7 +5,7 @@ import { SectionHead } from "../components/SectionHead";
 import { BRIEF_URL, PLACES_URL } from "../lib/routes";
 
 /** The day this note last changed: say so here whenever it does. */
-const UPDATED = "23 October 2026";
+const UPDATED = "26 October 2026";
 const ISSUES = "https://github.com/AhmedOsamaAli/walk-in/issues";
 
 function Item({ term, children }: { term: string; children: ReactNode }) {
@@ -31,7 +31,7 @@ export function PrivacyPage() {
         eyebrow="Walk-in · Privacy"
         title="Your data, in plain words"
         titleRef={titleRef}
-        standfirst="Walk-in keeps what it needs to run a survey and to list your surveys for you. Nothing else."
+        standfirst="Walk-in keeps what it needs to run a survey, to list your surveys for you and to run Founders campaigns. Nothing else."
         fields={[
           { label: "Run by", lines: ["A Qloo Agentic Hackathon project"] },
           { label: "Ads and tracking", lines: ["None"] },
@@ -69,8 +69,18 @@ export function PrivacyPage() {
             Your Google account id, your email, your name and the link to your Google profile picture, only to show that
             you&apos;re signed in and to list your surveys in My places.
           </Item>
+          <Item term="Founders campaigns">
+            If you start one: its terms, its words and the PayPal email you give for the money, which its page shows only
+            to you, masked. Anyone with the campaign&apos;s link can read the rest.
+          </Item>
+          <Item term="Pledges">
+            PayPal takes a pledge on its own pages, so Walk-in never sees your card or your PayPal login. Walk-in keeps
+            PayPal&apos;s ids for your order and its hold, the amount and where the pledge stands, to count it and to collect
+            or release it, and PayPal&apos;s own notices about it.
+          </Item>
           <Item term="In your browser">
-            Your light or dark theme, and a “Not now” to the sign-in offer. Neither leaves your browser.
+            Your light or dark theme, a “Not now” to the sign-in offer, and the PayPal order id of each pledge you made from
+            it, so you can withdraw the pledge from there.
           </Item>
         </dl>
       </section>
@@ -102,6 +112,10 @@ export function PrivacyPage() {
           <Item term="Google">
             Runs the sign-in itself when you sign in with Google, and tells Walk-in your account id, email, name and picture
             link.
+          </Item>
+          <Item term="PayPal">
+            Takes each pledge on its own pages, holds it, and collects or releases it; once a campaign is collected, it pays
+            the owner. What you give PayPal there is under PayPal&apos;s own privacy statement.
           </Item>
           <Item term="Walk-in's hosts">
             Cloudflare serves the web app from its worldwide network; the survey engine runs on Render and the database on

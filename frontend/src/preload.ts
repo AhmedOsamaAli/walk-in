@@ -4,7 +4,7 @@
 import { useEffect } from "react";
 import { ahead, runPath } from "./api/client";
 import { kitPath } from "./api/kit";
-import { examplesChunk, kitChunk, mapChunk, placesChunk, privacyChunk, surveyChunk } from "./chunks";
+import { examplesChunk, foundersChunk, kitChunk, mapChunk, placesChunk, privacyChunk, surveyChunk } from "./chunks";
 import { whenIdle } from "./lib/lazy";
 import { parseRoute, type Route } from "./lib/routes";
 
@@ -15,6 +15,7 @@ const CHUNKS = {
   examples: examplesChunk,
   places: placesChunk,
   privacy: privacyChunk,
+  founders: foundersChunk,
 };
 
 export type ChunkName = keyof typeof CHUNKS;
@@ -25,7 +26,10 @@ export interface RouteNeeds {
   data: string | null;
 }
 
-/** What an address needs to show: the brief its map, a survey its view, the map and its record, a kit its page and itself. */
+/**
+ * What an address needs to show: the brief its map, a survey its view, the map and its record, a kit its page and itself.
+ * Founders' pages need their code only: a campaign's answer depends on who asks and changes with every pledge.
+ */
 export function needsOf(route: Route): RouteNeeds {
   switch (route.page) {
     case "brief":
@@ -39,6 +43,9 @@ export function needsOf(route: Route): RouteNeeds {
     case "places":
     case "privacy":
       return { chunks: [route.page], data: null };
+    case "founders":
+    case "campaign":
+      return { chunks: ["founders"], data: null };
   }
 }
 

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { examplesChunk, kitChunk, placesChunk, privacyChunk } from "../chunks";
+import { examplesChunk, foundersChunk, kitChunk, placesChunk, privacyChunk } from "../chunks";
 import { ExampleBanner } from "../components/ExampleBanner";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { lazyComponent } from "../lib/lazy";
@@ -12,6 +12,8 @@ const KitPage = lazyComponent(kitChunk, (chunk) => chunk.KitPage);
 const DossierPage = lazyComponent(kitChunk, (chunk) => chunk.DossierPage);
 const PlacesPage = lazyComponent(placesChunk, (chunk) => chunk.PlacesPage);
 const PrivacyPage = lazyComponent(privacyChunk, (chunk) => chunk.PrivacyPage);
+const FoundersPage = lazyComponent(foundersChunk, (chunk) => chunk.FoundersPage);
+const CampaignPage = lazyComponent(foundersChunk, (chunk) => chunk.CampaignPage);
 
 function Broken() {
   return (
@@ -50,10 +52,14 @@ function Shown({ route, onFresh }: PageViewProps) {
       return <PrivacyPage />;
     case "examples":
       return <ExamplesPage onFresh={onFresh} />;
+    case "founders":
+      return <FoundersPage />;
     case "kit":
       return <KitPage token={route.token} />;
     case "dossier":
       return <DossierPage token={route.token} />;
+    case "campaign":
+      return <CampaignPage route={route} />;
   }
 }
 

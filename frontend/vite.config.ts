@@ -11,15 +11,18 @@ const proxy: Record<string, ProxyOptions> = {
 // script or a remote font fails there first. Google Identity Services (the sign-in button) needs its library, its
 // stylesheet, its iframes and its endpoints, listed by their parent URLs as Google recommends:
 // https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid#content_security_policy
+// PayPal's JS SDK v6 (Founders' pledges) loads from PayPal, calls it and opens its checkout in a frame where a popup
+// cannot open (docs/founders/CONTRACT.md).
 const GOOGLE_SIGN_IN = "https://accounts.google.com/gsi/";
+const PAYPAL = "https://www.sandbox.paypal.com https://www.paypal.com";
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  `script-src 'self' ${GOOGLE_SIGN_IN}client`,
+  `script-src 'self' ${GOOGLE_SIGN_IN}client ${PAYPAL}`,
   `style-src 'self' 'unsafe-inline' ${GOOGLE_SIGN_IN}style`,
   "img-src 'self' data: https:",
   "font-src 'self'",
-  `connect-src 'self' ${GOOGLE_SIGN_IN}`,
-  `frame-src ${GOOGLE_SIGN_IN}`,
+  `connect-src 'self' ${GOOGLE_SIGN_IN} ${PAYPAL}`,
+  `frame-src ${GOOGLE_SIGN_IN} ${PAYPAL}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

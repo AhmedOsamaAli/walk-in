@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState, type Ref } from "react";
 import type { KitPoster } from "../../api/kit";
 import { scanCaption } from "../../lib/kit";
-import { layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type Face, type Measure } from "../../lib/poster";
+import { BACK_PAD, BACK_SIZE, layoutPoster, POSTER_H, POSTER_M, POSTER_W, posterAreaLine, roughMeasure, type Face, type Measure } from "../../lib/poster";
 import { qrPath } from "../../lib/qr";
 import { posterMapOf } from "../../lib/sitemap";
 import { PosterSiteMap } from "./SiteMap";
@@ -60,6 +60,8 @@ interface PosterArtProps {
   poster: KitPoster;
   /** The poster's tracked link to the owner's own page, drawn as the QR code; null prints the poster without one. */
   link: string | null;
+  /** The owner's open Founders campaign, in a line from its terms: set beside the QR code, which then opens it. */
+  back?: string | null;
   svgRef?: Ref<SVGSVGElement>;
 }
 
@@ -85,8 +87,9 @@ function Halo({ x, y, size, fill, text }: { x: number; y: number; size: number; 
 }
 
 /** The window poster as vector art: the name, the claim the evidence allows, the street map around the survey's area
- * (where people here go now, when the plan may say so) and, when the owner gave a link of their own, a QR code to it. */
-export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
+ * (where people here go now, when the plan may say so) and, when the owner gave a link of their own, a QR code to it.
+ * With the owner's open Founders campaign, the QR code opens the campaign and the campaign's terms sit beside it. */
+export function PosterArt({ poster, link, back = null, svgRef }: PosterArtProps) {
   const measure = useMeasure();
   const id = useId().replace(/[^\w-]/g, "");
   const layout = useMemo(
@@ -99,11 +102,12 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
           subline: poster.subline,
           hours: poster.hours,
           proof: poster.claim?.proof ?? null,
+          back,
         },
         measure,
         { qr: link !== null },
       ),
-    [poster, measure, link],
+    [poster, measure, link, back],
   );
   const map = useMemo(() => posterMapOf(poster), [poster]);
   const code = useMemo(() => (link ? qrPath(link) : null), [link]);
@@ -111,8 +115,13 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
   const { qr, hoursBox } = layout;
   const quiet = 10;
   // Set with 0.8 units between letters, which the measure leaves out.
-  const caption = link && qr ? scanCaption(link, qr.size + 20, (line) => measure(line, "mono", 9) + 0.8 * line.length) : null;
-  const label = [poster.name, poster.headline, poster.subline].filter(Boolean).join(". ");
+  const caption =
+    link && qr
+      ? back
+        ? "SCAN TO BACK IT"
+        : scanCaption(link, qr.size + 20, (line) => measure(line, "mono", 9) + 0.8 * line.length)
+      : null;
+  const label = [poster.name, poster.headline, back ?? poster.subline].filter(Boolean).join(". ");
   // The map's own words, set over it: who the area holds, and where people here go now when the plan may say so.
   const areaLine = posterAreaLine(poster.area_label ?? `${poster.minutes}-minute walk`);
   const areaWidth = measure(areaLine, "mono", 10.5) + 1.4 * areaLine.length;
@@ -198,6 +207,33 @@ export function PosterArt({ poster, link, svgRef }: PosterArtProps) {
       </g>
 
       <rect x={POSTER_M} y={layout.bandTop} width={INNER} height="1.4" fill={INK} />
+      {layout.back ? (
+        <g>
+          <rect
+            x={layout.back.box.x}
+            y={layout.back.box.y}
+            width={layout.back.box.width}
+            height={layout.back.box.height}
+            rx="10"
+            fill={YELLOW}
+            stroke={INK}
+            strokeWidth="1.3"
+          />
+          {layout.back.text.lines.map((line, index) => (
+            <text
+              key={line}
+              x={(layout.back?.box.x ?? POSTER_M) + BACK_PAD}
+              y={layout.back?.text.y[index]}
+              fontFamily={FONTS.sans}
+              fontSize={BACK_SIZE}
+              fontWeight="500"
+              fill={INK}
+            >
+              {line}
+            </text>
+          ))}
+        </g>
+      ) : null}
       {layout.subline?.lines.map((line, index) => (
         <text key={line} x={POSTER_M} y={layout.subline?.y[index]} fontFamily={FONTS.sans} fontSize={layout.subline?.size} fill={INK}>
           {line}

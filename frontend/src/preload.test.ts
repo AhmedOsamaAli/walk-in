@@ -10,6 +10,7 @@ const spies = vi.hoisted(() => ({
     examples: vi.fn(),
     places: vi.fn(),
     privacy: vi.fn(),
+    founders: vi.fn(),
   },
 }));
 
@@ -20,6 +21,7 @@ vi.mock("./chunks", () => ({
   examplesChunk: { preload: spies.chunks.examples },
   placesChunk: { preload: spies.chunks.places },
   privacyChunk: { preload: spies.chunks.privacy },
+  foundersChunk: { preload: spies.chunks.founders },
 }));
 
 vi.mock("./api/client", async (importOriginal) => ({
@@ -69,6 +71,9 @@ describe("what an address needs", () => {
     expect(needsOf({ page: "examples" })).toEqual({ chunks: ["examples"], data: null });
     expect(needsOf({ page: "places" })).toEqual({ chunks: ["places"], data: null });
     expect(needsOf({ page: "privacy" })).toEqual({ chunks: ["privacy"], data: null });
+    // Founders' pages: their code only, since a campaign's answer depends on who asks and changes with every pledge.
+    expect(needsOf({ page: "founders" })).toEqual({ chunks: ["founders"], data: null });
+    expect(needsOf({ page: "campaign", id: "c4f1e2", pledge: null, cancelled: false })).toEqual({ chunks: ["founders"], data: null });
   });
 
   it("reads a link's route, and none for a link that leaves the app", () => {

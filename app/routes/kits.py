@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import auth, cache_policy
+from ..payments.records import major, progress_of
 from ..ratelimit import client_ip
 from ..response_cache import Page, page_response
 from ..survey import kit as launch_kit
@@ -76,7 +77,8 @@ async def find_kit(request: Request, run_id: str = Query(..., max_length=32), in
 @router.get("/kits/{token}")
 async def kit_page(request: Request, token: str = Path(..., pattern=TOKEN)) -> Response:
     """A kit, for anyone with its link; the page asks again while it is building. A kit saved without its street map
-    gets it here when it can (app.kits)."""
+    gets it here when it can (app.kits). It is the same for everyone, so memory and the front door may keep it; the
+    campaigns started from it are GET /api/kits/{token}/campaigns."""
     page = await kit_page_for(request.app.state, token)
     if page is None:
         raise HTTPException(404, "Kit not found.")
@@ -122,6 +124,36 @@ def kit_fields(kit: dict) -> dict:
         "kit": kit["payload"] if kit["status"] == "ready" else None,
         "error": kit["error"] if kit["status"] == "failed" else None,
     }
+
+
+@router.get("/kits/{token}/campaigns")
+async def campaigns_for_kit(request: Request, token: str = Path(..., pattern=TOKEN)) -> dict:
+    """The Walk-in Founders campaigns started from a kit that still take pledges, the viewer's own first, then the
+    newest: the poster's QR code opens the viewer's own. Apart from the kit's page because they change with every pledge
+    and depend on who asks, so nothing keeps them (no-store). No such kit has none."""
+    return {"campaigns": await kit_campaigns(request, token)}
+
+
+async def kit_campaigns(request: Request, token: str) -> list[dict]:
+    """The kit's campaigns that still take pledges: the viewer's own first, then the newest."""
+    state = request.app.state
+    now = state.now()
+    rows = await state.campaigns.accepting_for_kit(token, now)
+    if not rows:
+        return []
+    user = await auth.current_user(request)
+    held: dict[str, list[dict]] = {row["id"]: [] for row in rows}
+    for pledge in await state.campaigns.pledges(held):
+        held[pledge["campaign_id"]].append(pledge)
+    listed = []
+    for row in rows:
+        progress = progress_of(row, held[row["id"]], now)
+        listed.append({
+            "id": row["id"], "url": f"/p/{row['id']}", "is_owner": user is not None and row["user_id"] == user["id"],
+            "status": row["status"], "amount": major(row["amount_cents"], row["currency"]), "goal": row["goal_count"],
+            "supporters": progress["supporters"], "total": progress["total"], "deadline": iso(row["deadline"]),
+        })
+    return sorted(listed, key=lambda campaign: not campaign["is_owner"])  # stable: the newest first otherwise
 
 
 @router.post("/kits/{token}/retry", status_code=202)

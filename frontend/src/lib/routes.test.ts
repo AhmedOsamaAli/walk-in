@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  campaignUrl,
   dossierUrl,
   EXAMPLES_URL,
+  FOUNDERS_URL,
   isPage,
   kitUrl,
   pageUrl,
@@ -10,6 +12,7 @@ import {
   PRIVACY_URL,
   samePage,
   surveyUrl,
+  type CampaignRoute,
 } from "./routes";
 
 describe("routes", () => {
@@ -79,7 +82,13 @@ describe("routes", () => {
       "/k/tok_1/report",
       "/k//dossier",
       "/kits/tok_1",
-      "/p/c4f1e2",
+      "/p",
+      "/p/",
+      "/p/a.b",
+      "/p/c4f1e2/extra",
+      "/pledge/c4f1e2",
+      "/founder",
+      "/founders/x",
       "/elsewhere",
     ]) {
       expect(parseRoute(path, "?sheet=1")).toEqual({ page: "brief" });
@@ -87,6 +96,7 @@ describe("routes", () => {
     expect(parseRoute(`/s/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
     expect(parseRoute(`/k/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
     expect(parseRoute(`/k/${"a".repeat(65)}/dossier`, "")).toEqual({ page: "brief" });
+    expect(parseRoute(`/p/${"a".repeat(65)}`, "")).toEqual({ page: "brief" });
   });
 
   it("builds a survey's address, with the open sheet, and reads it back", () => {
@@ -134,5 +144,50 @@ describe("routes", () => {
     expect(samePage({ page: "kit", token: "a" }, { page: "dossier", token: "a" })).toBe(false);
     expect(samePage({ page: "dossier", token: "a" }, { page: "dossier", token: "a" })).toBe(true);
     expect(samePage({ page: "kit", token: "a" }, { page: "places" })).toBe(false);
+  });
+
+  it("reads the Founders page, whatever the query", () => {
+    expect(parseRoute("/founders", "")).toEqual({ page: "founders" });
+    expect(parseRoute("/founders/", "?utm_source=poster")).toEqual({ page: "founders" });
+    expect(isPage({ page: "founders" })).toBe(true);
+    expect(pageUrl({ page: "founders" })).toBe(FOUNDERS_URL);
+    expect(FOUNDERS_URL).toBe("/founders");
+    expect(parseRoute(pageUrl({ page: "founders" }), "")).toEqual({ page: "founders" });
+    expect(samePage({ page: "founders" }, { page: "examples" })).toBe(false);
+  });
+
+  it("reads a campaign by its id, and what PayPal sent the supporter back with", () => {
+    const plain: CampaignRoute = { page: "campaign", id: "c4f1e2", pledge: null, cancelled: false };
+    expect(parseRoute("/p/c4f1e2", "")).toEqual(plain);
+    expect(parseRoute("/p/c4f1e2/", "?utm_source=poster&utm_medium=qr")).toEqual(plain);
+    expect(parseRoute(`/p/${"a".repeat(64)}`, "")).toEqual({ ...plain, id: "a".repeat(64) });
+    // PayPal adds its own token and PayerID to the return address.
+    expect(parseRoute("/p/c4f1e2", "?pledge=5O190127TN364715T&token=5O190127TN364715T&PayerID=QYR5Z8XDVJNXQ")).toEqual({
+      ...plain,
+      pledge: "5O190127TN364715T",
+    });
+    expect(parseRoute("/p/c4f1e2", "?cancelled=1&token=5O190127TN364715T")).toEqual({ ...plain, cancelled: true });
+    // The server's own pledge id, which its return address carries.
+    expect(parseRoute("/p/c4f1e2", "?pledge=pl_Zq3-x9KpL0&token=5O190127TN364715T&PayerID=QYR5Z8XDVJNXQ")).toEqual({
+      ...plain,
+      pledge: "pl_Zq3-x9KpL0",
+    });
+    expect(isPage(plain)).toBe(true);
+  });
+
+  it("ignores a pledge that is not an order id, and a cancel that is not 1", () => {
+    for (const search of ["?pledge=", "?pledge=a%20b", "?pledge=a/b", `?pledge=${"A".repeat(65)}`, "?cancelled=yes", "?cancelled=0"]) {
+      expect(parseRoute("/p/c4f1e2", search)).toEqual({ page: "campaign", id: "c4f1e2", pledge: null, cancelled: false });
+    }
+  });
+
+  it("builds a campaign's address without PayPal's query, so returning from PayPal stays on the same page", () => {
+    expect(campaignUrl("c4f1e2")).toBe("/p/c4f1e2");
+    const back: CampaignRoute = { page: "campaign", id: "c4f1e2", pledge: "5O190127TN364715T", cancelled: false };
+    expect(pageUrl(back)).toBe("/p/c4f1e2");
+    expect(samePage(back, { page: "campaign", id: "c4f1e2", pledge: null, cancelled: false })).toBe(true);
+    expect(samePage(back, { page: "campaign", id: "other", pledge: null, cancelled: false })).toBe(false);
+    const url = new URL(campaignUrl("A-b_9"), "https://walk-in.example");
+    expect(parseRoute(url.pathname, url.search)).toEqual({ page: "campaign", id: "A-b_9", pledge: null, cancelled: false });
   });
 });

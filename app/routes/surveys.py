@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from .. import auth, cache_policy, jsonio, schemas
 from ..catchment import make_reach
+from ..config import settings
 from ..db import SurveyStore
 from ..db.surveys import survey_status
 from ..ratelimit import client_ip
@@ -38,6 +39,8 @@ log = logging.getLogger("walkin")
 router = APIRouter(prefix="/api")
 
 FOCUS_OPTIONS = {"any", "food_drink", "retail", "leisure"}
+# What GET /api/run answers while surveys are paused (SURVEYS_PAUSED), once Qloo's hackathon key is switched off.
+SURVEYS_PAUSED = "New surveys are paused; open one of the surveyed storefronts"
 
 
 class DesignRequest(BaseModel):
@@ -75,6 +78,8 @@ async def run(
     business: str = Query("", max_length=80, description="The business to open (intent=open)"),
     place_id: str = Query("", max_length=64, pattern=r"^[A-Za-z0-9-]*$", description="The owner's place (intent=improve)"),
 ) -> StreamingResponse:
+    if settings.surveys_paused:
+        raise HTTPException(503, SURVEYS_PAUSED)
     if focus not in FOCUS_OPTIONS:
         raise HTTPException(400, "Unknown focus")
     try:
