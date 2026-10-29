@@ -20,7 +20,8 @@ export interface CampaignProgress {
   goal: number;
   remaining: number;
   percent: number;
-  /** What the held pledges add up to: "300.00". */
+  /** What the pledges PayPal holds, or has collected, add up to: "300.00". A second pledge from one neighbor adds its
+   * money, though not another neighbor. */
   total: string;
   funded: boolean;
 }
@@ -83,10 +84,12 @@ export interface CampaignCard {
   amount: string;
   goal: number;
   supporters: number;
+  /** What the pledges PayPal holds add up to: "75.00". */
+  total: string;
   deadline: string;
 }
 
-/** A kit's open campaign (GET /api/kits/{token}): the viewer's own first, then newest first. */
+/** A kit's open campaign (GET /api/kits/{token}/campaigns): the viewer's own first, then newest first. */
 export interface KitCampaign {
   id: string;
   url: string;
@@ -95,6 +98,8 @@ export interface KitCampaign {
   amount: string;
   goal: number;
   supporters: number;
+  /** What the pledges PayPal holds add up to: "75.00". */
+  total: string;
   deadline: string;
 }
 
@@ -104,6 +109,8 @@ export interface PlacesCampaign {
   title: string;
   status: CampaignStatus;
   supporters: number;
+  /** What its pledges add up to, held or collected: "75.00". */
+  total: string;
   goal: number;
   deadline: string;
   url: string;

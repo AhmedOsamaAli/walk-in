@@ -3,7 +3,7 @@ import { useRef } from "react";
 import { paypalOf, type KitCampaign } from "../../api/founders";
 import type { Kit, KitView } from "../../api/kit";
 import { cx } from "../../lib/css";
-import { dayText, deadlineText, inSandbox, moneyText, neededText, statusText, supportersText } from "../../lib/founders";
+import { dayText, deadlineText, heldText, inSandbox, moneyText, neededText, statusText, supportersText } from "../../lib/founders";
 import { absoluteUrl } from "../../lib/kit";
 import { isPlainClick } from "../../lib/navigation";
 import { useSession } from "../../state/session";
@@ -19,7 +19,7 @@ export function ownCampaign(view: KitView): KitCampaign | null {
   return view.campaigns?.find((campaign) => campaign.is_owner && campaign.status === "open") ?? null;
 }
 
-/** The count and the terms of a kit's campaign, in a line or two. */
+/** The count, the money and the terms of a kit's campaign, in a line or two. */
 function Standing({ campaign, name }: { campaign: KitCampaign; name: string }) {
   const progress = {
     supporters: campaign.supporters,
@@ -31,7 +31,9 @@ function Standing({ campaign, name }: { campaign: KitCampaign; name: string }) {
     <div className="fk-standing">
       <p className="fk-count">
         <b>{campaign.supporters}</b> of {campaign.goal} neighbors
-        <span className="mono">{neededText(progress, campaign.deadline)}</span>
+        <span className="mono">
+          {neededText(progress, campaign.deadline)} · {heldText(campaign.status, campaign.total)}
+        </span>
       </p>
       <ProgressBar supporters={campaign.supporters} goal={campaign.goal} funded={progress.funded} label={`Neighbors backing ${name}`} />
     </div>
@@ -96,7 +98,7 @@ function Others({ campaigns, name }: { campaigns: KitCampaign[]; name: string })
               <span className="fk-other-main">
                 <b>{supportersText(campaign)}</b>
                 <span>
-                  Pledge {moneyText(campaign.amount)} · by {dayText(campaign.deadline)}
+                  Pledge {moneyText(campaign.amount)} · {heldText(campaign.status, campaign.total)} · by {dayText(campaign.deadline)}
                 </span>
               </span>
               <span className="place-arrow" aria-hidden="true">

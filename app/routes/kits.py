@@ -145,11 +145,14 @@ async def kit_campaigns(request: Request, token: str) -> list[dict]:
     held: dict[str, list[dict]] = {row["id"]: [] for row in rows}
     for pledge in await state.campaigns.pledges(held):
         held[pledge["campaign_id"]].append(pledge)
-    listed = [{
-        "id": row["id"], "url": f"/p/{row['id']}", "is_owner": user is not None and row["user_id"] == user["id"],
-        "status": row["status"], "amount": major(row["amount_cents"], row["currency"]), "goal": row["goal_count"],
-        "supporters": progress_of(row, held[row["id"]], now)["supporters"], "deadline": iso(row["deadline"]),
-    } for row in rows]
+    listed = []
+    for row in rows:
+        progress = progress_of(row, held[row["id"]], now)
+        listed.append({
+            "id": row["id"], "url": f"/p/{row['id']}", "is_owner": user is not None and row["user_id"] == user["id"],
+            "status": row["status"], "amount": major(row["amount_cents"], row["currency"]), "goal": row["goal_count"],
+            "supporters": progress["supporters"], "total": progress["total"], "deadline": iso(row["deadline"]),
+        })
     return sorted(listed, key=lambda campaign: not campaign["is_owner"])  # stable: the newest first otherwise
 
 

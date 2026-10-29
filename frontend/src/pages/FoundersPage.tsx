@@ -8,7 +8,7 @@ import { Page, PageHead, useDocumentTitle, useFocusOnMount } from "../components
 import { SectionHead } from "../components/SectionHead";
 import { plainError } from "../lib/account";
 import { cssVars } from "../lib/css";
-import { inSandbox, moneyText, timeLeft } from "../lib/founders";
+import { heldText, inSandbox, moneyText, timeLeft } from "../lib/founders";
 import { useNow } from "../lib/useNow";
 import { EXAMPLES_URL, PLACES_URL } from "../lib/routes";
 import { useSession } from "../state/session";
@@ -46,6 +46,7 @@ function Card({ campaign, now, index }: { campaign: CampaignCard; now: number; i
         <div className="fd-card-progress">
           <p className="fd-card-count">
             <b>{campaign.supporters}</b> of {campaign.goal} neighbors
+            <span className="fd-card-held"> · {heldText("open", campaign.total)}</span>
           </p>
           <ProgressBar
             supporters={campaign.supporters}

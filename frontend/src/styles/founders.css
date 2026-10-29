@@ -89,6 +89,9 @@
 .cp-facts > div { min-width: 0; padding: 9px 12px 10px; background: var(--card); }
 .cp-facts dt { font-size: 9.5px; color: var(--ash); }
 .cp-facts dd { margin-top: 3px; font-size: 15px; font-weight: 500; line-height: 1.3; }
+/* The money behind the count, across the card: the figure a neighbor and the owner look for first. */
+.cp-facts > .cp-money { grid-column: 1 / -1; }
+.cp-facts .cp-money dd { margin-top: 4px; font: 300 30px/1 var(--f-sans); letter-spacing: -.035em; font-variant-numeric: tabular-nums; }
 .cp-deadline { margin-top: 10px; font-size: 10px; line-height: 1.5; color: var(--text-4); text-transform: none; letter-spacing: .02em; }
 
 /* The one thing to do here. */

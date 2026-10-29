@@ -118,6 +118,7 @@ async def places(request: Request, user: auth.SignedIn) -> dict:
     held: dict[str, list[dict]] = {row["id"]: [] for row in campaigns}
     for pledge in await state.campaigns.pledges(held):
         held[pledge["campaign_id"]].append(pledge)
+    progress = {row["id"]: progress_of(row, held[row["id"]], now) for row in campaigns}
     return {
         "surveys": [{
             "id": row["id"], "label": row["label"], "intent": row["intent"],
@@ -130,7 +131,7 @@ async def places(request: Request, user: auth.SignedIn) -> dict:
         } for row in kits],
         "campaigns": [{
             "id": row["id"], "title": row["title"], "status": row["status"],
-            "supporters": progress_of(row, held[row["id"]], now)["supporters"], "goal": row["goal_count"],
-            "deadline": iso(row["deadline"]), "url": f"/p/{row['id']}",
+            "supporters": progress[row["id"]]["supporters"], "total": progress[row["id"]]["total"],
+            "goal": row["goal_count"], "deadline": iso(row["deadline"]), "url": f"/p/{row['id']}",
         } for row in campaigns],
     }

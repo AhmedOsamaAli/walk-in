@@ -18,6 +18,7 @@ import {
   dayText,
   deadlineText,
   inSandbox,
+  moneyFact,
   moneyText,
   payoutText,
   pledgeTerms,
@@ -40,10 +41,11 @@ type Said = "cancelled" | "withdrawn" | null;
 
 const STEPS_ID = "cp-how";
 
-/** The count, the bar, and what is still needed by when. */
+/** The count, the bar, the money behind it, and what is still needed by when. */
 function Standing({ campaign, now }: { campaign: Campaign; now: number }) {
   const { progress } = campaign;
   const left = timeLeft(campaign.deadline, now);
+  const money = moneyFact(campaign.status, progress.total);
   return (
     <div className={cx("cp-standing", progress.funded && "funded")}>
       <p className="cp-count">
@@ -60,6 +62,10 @@ function Standing({ campaign, now }: { campaign: Campaign; now: number }) {
         label={`Neighbors backing ${campaign.name}`}
       />
       <dl className="cp-facts">
+        <div className="cp-money">
+          <dt className="mono">{money.label}</dt>
+          <dd>{money.value}</dd>
+        </div>
         <div>
           <dt className="mono">{progress.funded ? "Goal" : campaign.accepting ? "Still needed" : "Short by"}</dt>
           <dd>

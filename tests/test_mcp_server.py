@@ -533,15 +533,18 @@ def listed(campaign_id: str = CAMPAIGN_ID, **changes) -> dict:
     return {
         "id": campaign_id, "url": f"/p/{campaign_id}", "title": "Back the bakery this block is missing", "name": "Crumb Theory",
         "place": {"label": "Williamsburg, Brooklyn", "lat": 40.7145, "lon": -73.958}, "distance_km": 0.348,
-        "amount": "25.00", "goal": 40, "supporters": 12, "deadline": "2026-11-30T23:59:00Z",
+        "amount": "25.00", "goal": 40, "supporters": 12, "total": "300.00", "deadline": "2026-11-30T23:59:00Z",
     } | changes
 
 
 NEAR = [
     listed(),
-    listed("b0b5ea7e00000001", title="A 60-seat room for local bands", name="Low End",
-           place={"label": "Bushwick, Brooklyn", "lat": 40.6944, "lon": -73.9213}, distance_km=4.27, amount="12.50",
-           goal=100, supporters=3, deadline="2026-12-05T17:00:00Z"),
+    # As an older server lists it: without the total pledged, which the summary then leaves out.
+    {key: value for key, value in listed(
+        "b0b5ea7e00000001", title="A 60-seat room for local bands", name="Low End",
+        place={"label": "Bushwick, Brooklyn", "lat": 40.6944, "lon": -73.9213}, distance_km=4.27, amount="12.50",
+        goal=100, supporters=3, deadline="2026-12-05T17:00:00Z",
+    ).items() if key != "total"},
 ]
 
 
@@ -582,7 +585,7 @@ def test_find_campaigns_near_a_place_lists_the_nearest_first():
         "## Walk-in Founders: 2 open campaigns within 25 km of Williamsburg, Brooklyn, nearest first",
         "1. **Crumb Theory**: Back the bakery this block is missing",
         "   - Williamsburg, Brooklyn · 350 m away",
-        "   - $25 pledge · 12 of 40 supporters · deadline Nov 30, 2026",
+        "   - $25 pledge · 12 of 40 supporters, $300 pledged · deadline Nov 30, 2026",
         f"   - {BASE}/p/c0ffee1234abcd56",
         "2. **Low End**: A 60-seat room for local bands",
         "   - Bushwick, Brooklyn · 4.3 km away",

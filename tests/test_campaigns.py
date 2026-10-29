@@ -469,7 +469,7 @@ def test_open_campaigns_are_found_near_a_place_or_newest_first(world):
     assert listed == {
         "id": near, "url": f"/p/{near}", "title": row["title"], "name": world["kit"]["name"],
         "place": {"label": "Test Corner, Testville", "lat": lat, "lon": lon}, "distance_km": None, "amount": "25.00",
-        "goal": 3, "supporters": 1, "deadline": listed["deadline"],
+        "goal": 3, "supporters": 1, "total": "25.00", "deadline": listed["deadline"],
     }
     around = client.get("/api/campaigns", params={"lat": lat, "lon": lon}).json()["campaigns"]
     assert [(c["id"], c["distance_km"]) for c in around] == [(near, 0.0), (far, 22.2)]
@@ -497,8 +497,8 @@ def test_config_my_places_and_the_kit_page_show_campaigns(world):
     mine = start(world)
     pledge(client, mine)
     assert client.get("/api/me/places").json()["campaigns"] == [{
-        "id": mine, "title": table(client, campaigns)[0]["title"], "status": "open", "supporters": 1, "goal": 3,
-        "deadline": client.get(f"/api/campaigns/{mine}").json()["deadline"], "url": f"/p/{mine}",
+        "id": mine, "title": table(client, campaigns)[0]["title"], "status": "open", "supporters": 1, "total": "25.00",
+        "goal": 3, "deadline": client.get(f"/api/campaigns/{mine}").json()["deadline"], "url": f"/p/{mine}",
     }]
     world["clock"].advance(minutes=1)
     dev_sign_in(client, "neighbor@example.com")
@@ -513,7 +513,7 @@ def test_config_my_places_and_the_kit_page_show_campaigns(world):
     assert listed() == [(mine, True, 1), (theirs, False, 0)]
     page = client.get(kit_campaigns).json()["campaigns"][0]
     assert page == {"id": mine, "url": f"/p/{mine}", "is_owner": True, "status": "open", "amount": "25.00", "goal": 3,
-                    "supporters": 1, "deadline": page["deadline"]}
+                    "supporters": 1, "total": "25.00", "deadline": page["deadline"]}
     client.post("/api/auth/logout")
     assert listed() == [(theirs, False, 0), (mine, False, 1)]  # signed out: the newest first
     world["clock"].advance(days=11)

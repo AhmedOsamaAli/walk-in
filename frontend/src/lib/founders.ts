@@ -110,6 +110,42 @@ export function neededText(progress: Pick<CampaignProgress, "remaining" | "funde
   return `${progress.remaining} more by ${dayText(deadline, zone)}`;
 }
 
+/**
+ * The money behind a campaign, as its state has it, for the campaign's card: held by PayPal while it is open, being
+ * collected once it met its goal, collected at the end, released when it missed its goal or was cancelled. `total` is
+ * what its held or collected pledges add up to ("75.00").
+ */
+export function moneyFact(status: CampaignStatus, total: string): { label: string; value: string } {
+  switch (status) {
+    case "open":
+      return { label: "Held by PayPal so far", value: moneyText(total) };
+    case "funded":
+    case "partial":
+      return { label: "Being collected", value: moneyText(total) };
+    case "collected":
+      return { label: "Collected", value: moneyText(total) };
+    case "expired":
+    case "cancelled":
+      return { label: "Pledges", value: "Released" };
+  }
+}
+
+/** The same in a few words, for lists: "$75 held", "$75 being collected", "$15 collected", "holds released". */
+export function heldText(status: CampaignStatus, total: string): string {
+  switch (status) {
+    case "open":
+      return `${moneyText(total)} held`;
+    case "funded":
+    case "partial":
+      return `${moneyText(total)} being collected`;
+    case "collected":
+      return `${moneyText(total)} collected`;
+    case "expired":
+    case "cancelled":
+      return "holds released";
+  }
+}
+
 /** What a screen reader hears when the count changes: "13 of 40 neighbors have joined." */
 export function progressNews(progress: Pick<CampaignProgress, "supporters" | "goal" | "funded">): string {
   const joined = `${progress.supporters} of ${progress.goal} neighbors ${progress.supporters === 1 ? "has" : "have"} joined.`;

@@ -13,8 +13,10 @@ import {
   defaultDeadline,
   emailProblem,
   goalProblem,
+  heldText,
   inSandbox,
   LIMITS,
+  moneyFact,
   moneyText,
   neededText,
   normalizeAmount,
@@ -104,6 +106,20 @@ describe("progress in words", () => {
     expect(progressNews(progress)).toBe("12 of 40 neighbors have joined.");
     expect(progressNews({ supporters: 1, goal: 40, funded: false })).toBe("1 of 40 neighbors has joined.");
     expect(progressNews({ supporters: 40, goal: 40, funded: true })).toBe("40 of 40 neighbors have joined. The goal is met.");
+  });
+
+  it("says what the pledges come to as the campaign stands: held, being collected, collected or released", () => {
+    expect(moneyFact("open", "75.00")).toEqual({ label: "Held by PayPal so far", value: "$75" });
+    expect(moneyFact("open", "0.00")).toEqual({ label: "Held by PayPal so far", value: "$0" });
+    expect(moneyFact("funded", "1025.00")).toEqual({ label: "Being collected", value: "$1,025" });
+    expect(moneyFact("partial", "62.50")).toEqual({ label: "Being collected", value: "$62.50" });
+    expect(moneyFact("collected", "15.00")).toEqual({ label: "Collected", value: "$15" });
+    expect(moneyFact("expired", "0.00")).toEqual({ label: "Pledges", value: "Released" });
+    expect(moneyFact("cancelled", "25.00")).toEqual({ label: "Pledges", value: "Released" });
+    expect(heldText("open", "75.00")).toBe("$75 held");
+    expect(heldText("funded", "75.00")).toBe("$75 being collected");
+    expect(heldText("collected", "15.00")).toBe("$15 collected");
+    expect(heldText("cancelled", "0.00")).toBe("holds released");
   });
 });
 

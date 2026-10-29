@@ -319,12 +319,13 @@ async def find_campaigns(
     listed = []
     for row, distance in found:
         place = place_of(row)
+        progress = progress_of(row, held[row["id"]], now)
         listed.append({
             "id": row["id"], "url": f"/p/{row['id']}", "title": row["title"], "name": (row["offer"] or {}).get("name") or "",
             "place": {"label": place["label"], "lat": place["lat"], "lon": place["lon"]},
             "distance_km": round(distance, 1) if distance is not None else None,
             "amount": major(row["amount_cents"], row["currency"]), "goal": row["goal_count"],
-            "supporters": progress_of(row, held[row["id"]], now)["supporters"], "deadline": iso(row["deadline"]),
+            "supporters": progress["supporters"], "total": progress["total"], "deadline": iso(row["deadline"]),
         })
     return {"campaigns": listed}
 

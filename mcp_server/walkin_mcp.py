@@ -884,10 +884,12 @@ def listed_lines(number: int, item: dict, walkin: Walkin) -> list[str]:
     if where:
         lines.append(f"   - {' · '.join(where)}")
     amount, supporters, goal = money(item.get("amount"), item.get("currency")), item.get("supporters"), item.get("goal")
+    total = money(item.get("total"), item.get("currency"))  # what its pledges come to; missing from older servers
     deadline = moment(item.get("deadline"), walkin.zone)
+    count = f"{supporters} of {goal} supporters" if isinstance(supporters, int) and isinstance(goal, int) else None
     deal = [
         f"{amount} pledge" if amount else None,
-        f"{supporters} of {goal} supporters" if isinstance(supporters, int) and isinstance(goal, int) else None,
+        f"{count}, {total} pledged" if count and total else count,
         f"deadline {day(deadline)}" if deadline else None,
     ]
     if any(deal):

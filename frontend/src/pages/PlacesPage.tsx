@@ -13,7 +13,7 @@ import { SectionHead } from "../components/SectionHead";
 import { SignInOptions } from "../components/SignIn";
 import { dateText, plainError, SURVEY_STATUS, surveyOutcome } from "../lib/account";
 import { INTENTS, letter } from "../lib/format";
-import { dayText, statusText } from "../lib/founders";
+import { dayText, heldText, statusText } from "../lib/founders";
 import { forgetGoogleChoice } from "../lib/google";
 import { KIT_OUTCOME, KIT_STATUS } from "../lib/kit";
 import { BRIEF_URL, FOUNDERS_URL, kitUrl, PRIVACY_URL } from "../lib/routes";
@@ -189,7 +189,7 @@ function CampaignRow({ campaign }: { campaign: PlacesCampaign }) {
           <span className="place-kicker mono">Founders campaign</span>
           <span className="place-name">{campaign.title}</span>
           <span className="place-sub">
-            {campaign.supporters} of {campaign.goal} neighbors
+            {campaign.supporters} of {campaign.goal} neighbors · {heldText(campaign.status, campaign.total)}
             {campaign.status === "open" ? ` · ${funded ? "goal met" : `${campaign.goal - campaign.supporters} more needed`}` : ""}
           </span>
           <ProgressBar supporters={campaign.supporters} goal={campaign.goal} funded={funded} className="place-bar" />

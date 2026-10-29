@@ -80,6 +80,8 @@ type Campaign = {
   title: string; pitch: string; perks: string[]; how_it_works: string;
   amount: string; currency: "USD"; goal: number; deadline: string; closed_at: string | null;
   progress: { supporters: number; goal: number; remaining: number; percent: number; total: string; funded: boolean };
+  // total: what the pledges PayPal holds, or has collected, add up to; a second pledge from one payer adds its money
+  // but not another supporter.
   is_owner: boolean;
   owner?: {                                                 // the owner only
     counts: Record<string, number>;                         // pledges by status
@@ -91,7 +93,8 @@ type Campaign = {
 
 `GET /api/campaigns?lat=&lon=&km=` (anyone; agent-friendly) → open campaigns within `km` (default 25, max 100), nearest
 first; without `lat`/`lon`, open campaigns newest first. At most 50:
-`{ campaigns: { id, url, title, name, place: {label, lat, lon}, distance_km: number | null, amount, goal, supporters, deadline }[] }`.
+`{ campaigns: { id, url, title, name, place: {label, lat, lon}, distance_km: number | null, amount, goal, supporters, total, deadline }[] }`.
+`total` is what the campaign's held pledges add up to (`"75.00"`), as in `progress.total`.
 
 `POST /api/campaigns/{id}/pledges` (anyone) body `{ flow: "buttons" | "redirect" }` → `{ order_id, approve_url: string | null }`.
 Creates the AUTHORIZE order for the campaign's amount (`custom_id` = our pledge id, description "Founding supporter:
@@ -109,9 +112,9 @@ Idempotent. `402 {detail, retry: true}` when PayPal declines the instrument, so 
 `POST /api/paypal/webhook` (PayPal; verified) and `POST /api/cron/settle` (header `X-Cron-Secret: CRON_SECRET`) settle
 what is due. Both are exempt from the Origin check.
 
-`GET /api/me/places` (exists; extend it) adds `campaigns: { id, title, status, supporters, goal, deadline, url }[]`.
+`GET /api/me/places` (exists; extend it) adds `campaigns: { id, title, status, supporters, total, goal, deadline, url }[]`.
 
-`GET /api/kits/{token}/campaigns` → `{ campaigns: { id, url, is_owner, status, amount, goal, supporters, deadline }[] }`:
+`GET /api/kits/{token}/campaigns` → `{ campaigns: { id, url, is_owner, status, amount, goal, supporters, total, deadline }[] }`:
 the kit's open campaigns, the viewer's own first, then newest first; never cached (no-store). The poster uses the
 viewer's own open campaign. They are not part of `GET /api/kits/{token}`: that page is the same for every visitor, so
 memory and the front door keep it (app/cache_policy.py), while campaigns change with every pledge and depend on who asks.
