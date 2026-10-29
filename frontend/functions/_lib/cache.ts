@@ -22,9 +22,10 @@ export const STALE_MAX_SECONDS = 7 * 24 * 60 * 60;
 
 /**
  * Bumped to drop every copy the edge holds at the next deploy, should a stored answer ever need to go at once. v2: stale
- * copies are kept only for answers with stale-if-error; none kept under the earlier rule can answer.
+ * copies are kept only for answers with stale-if-error; none kept under the earlier rule can answer. v3: /api/config
+ * gained PayPal's settings with Founders, and a kit's page lost its campaigns to their own endpoint.
  */
-const KEY_VERSION = "v2";
+const KEY_VERSION = "v3";
 
 /** The survey stream: never kept, whatever its headers say. */
 const STREAM = /^\/api\/run\/?$/;

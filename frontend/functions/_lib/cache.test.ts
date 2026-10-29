@@ -85,8 +85,8 @@ describe("keys", () => {
   const url = new URL(`${FRONT}/api/runs/abc?x=1`);
 
   it("are the URL alone, the fresh and the stale copy apart", () => {
-    expect(freshKey(url)).toBe(`${FRONT}/__edge/v2/fresh/api/runs/abc?x=1`);
-    expect(staleKey(url)).toBe(`${FRONT}/__edge/v2/stale/api/runs/abc?x=1`);
+    expect(freshKey(url)).toBe(`${FRONT}/__edge/v3/fresh/api/runs/abc?x=1`);
+    expect(staleKey(url)).toBe(`${FRONT}/__edge/v3/stale/api/runs/abc?x=1`);
   });
 
   it("can never be the URL of a request the function answers", () => {
