@@ -132,6 +132,7 @@ export function PosterSection({ poster, scope, link, landing, campaign, onAddLin
   if (mode === "report") return (
     <figure className="poster-report-frame" data-report-poster data-report-ready={loaded && status.ready}>
       {art ?? <p className="poster-ask" role={failed ? "alert" : "status"}>{failed ?? "Loading the campaign's real perks and payment terms..."}</p>}
+      {notice ? <figcaption className="poster-tip" role="status">{notice}</figcaption> : null}
       {status.problem ? <figcaption className="page-alert" role="alert">{status.problem}</figcaption> : null}
     </figure>
   );

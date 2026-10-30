@@ -74,6 +74,7 @@ describe("the report includes the customized poster, not just a link to it", () 
     window.localStorage.setItem("walk-in-poster:kit:report-test", "not json");
     const html = renderToStaticMarkup(<DossierPage token="report-test" />);
     expect(html).toContain('data-direction="kinetic"');
+    expect(html).toContain("This browser could not restore the saved poster design.");
     expect(html).toContain("Taste is not foot traffic.");
   });
 
