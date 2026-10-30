@@ -7,6 +7,7 @@ import { CopyButton } from "../components/CopyButton";
 import { PayPalPledge } from "../components/founders/PayPalPledge";
 import { ProgressBar } from "../components/founders/ProgressBar";
 import { SandboxNotice } from "../components/founders/SandboxNotice";
+import { CampaignPosterButton } from "../components/founders/CampaignPosterButton";
 import { Link } from "../components/Link";
 import { MapsLink } from "../components/MapsLink";
 import { Page, useDocumentTitle, useFocusOnMount } from "../components/Page";
@@ -637,6 +638,7 @@ export function CampaignPage({ route }: { route: CampaignRoute }) {
         </p>
       </header>
       {campaign.is_owner ? <OwnerPanel campaign={campaign} onCampaign={replace} /> : null}
+      {campaign.is_owner ? <CampaignPosterButton campaign={campaign} /> : null}
       <div className="cp-body">
         <aside className="cp-side">
           <PledgeCard

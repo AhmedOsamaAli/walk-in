@@ -15,6 +15,7 @@ import type { TitleField } from "../components/SiteHeader";
 import { panelId, tabId, TabPager, TabPanel, Tabs, type TabItem } from "../components/Tabs";
 import { dateText } from "../lib/account";
 import { letter } from "../lib/format";
+import { posterForKit } from "../lib/posterProject";
 import { focusHeading } from "../lib/journey";
 import { kitError, trackedUrl } from "../lib/kit";
 import { KIT_PARTS, kitPart, partInHash, type KitPart } from "../lib/kitParts";
@@ -303,7 +304,8 @@ function Ready({ view, kit }: { view: KitView; kit: Kit }) {
           }
         />
         <PosterSection
-          poster={kit.poster}
+          poster={posterForKit(kit)}
+          scope={`kit:${view.token}`}
           link={posterUrl}
           landing={landing}
           campaign={campaign}

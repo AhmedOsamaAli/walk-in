@@ -4,7 +4,8 @@ Walk-in finds what an empty storefront's block is missing. **Founders** lets the
 the lease is signed: they pledge, PayPal only holds the money, and everyone is charged only if enough people join by
 the deadline. If the goal is missed, every hold is released and nobody pays.
 
-This is the PayPal AI Hackathon edition (deadline Nov 12, 2026, noon Pacific; judging Dec 1–15). Every builder codes to
+Walk-in is one product; the PayPal AI Hackathon presentation highlights Founders (deadline Nov 12, 2026, noon Pacific;
+judging Dec 1–15). Every builder codes to
 this file. If something here cannot work, stop and tell the lead rather than inventing a different shape. All JSON.
 Errors are FastAPI's `{"detail": "plain words"}`. Amounts are strings with two decimals (`"25.00"`), never floats.
 Times are ISO 8601 UTC strings.
@@ -55,6 +56,12 @@ drop the kit purchase (`app/commerce.py`, `app/sales.py`, the paid `routes/kits.
     the name, kind, description, address and optional why-here line, then sets the same money terms. Such campaigns
     say "in the owner's words" and "not survey-verified" on the web and through MCP. No Qloo facts are fabricated.
     They use the existing hold, settlement, withdrawal and payout engine unchanged.
+14. **One scenario-aware poster.** The same editor serves a launch kit or any campaign. The business's real offer and
+    identity lead a launch poster; its actual participation perks lead a Founders poster, with accurate terms and a
+    public campaign QR link. Owners may reorder real perks, not invent new ones through the artwork editor.
+    The palette, original motif, typography, logo and optional real street locator belong to the particular project.
+    The QR's branded frame remains outside a five-module white quiet zone. Exports must preserve all perks and terms;
+    overflow blocks export rather than silently cutting them.
 
 ## Endpoints
 

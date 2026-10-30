@@ -110,6 +110,18 @@
 }
 .poster-art { display: block; width: 100%; max-width: 520px; height: auto; box-shadow: var(--shadow); transform: rotate(-.7deg); }
 .poster-side { display: grid; gap: 18px; }
+.poster-design-controls { display: grid; gap: 12px; min-width: 0; padding: 18px; border: var(--rule); border-radius: var(--r-m); }
+.poster-design-controls legend { padding: 0 7px; color: var(--blue); font-size: 11px; }
+.poster-design-controls label { display: grid; gap: 6px; font-size: 13px; line-height: 1.4; }
+.poster-design-controls small { font-size: 12px; line-height: 1.45; color: var(--text-4); }
+.poster-design-controls .poster-check { display: flex; align-items: flex-start; gap: 9px; }
+.poster-design-controls input[type="checkbox"] { margin-top: 3px; flex: none; }
+.poster-design-controls input[type="file"] { max-width: 100%; font-size: 12px; }
+.poster-design-controls input[type="color"] { width: 58px; height: 36px; border: var(--rule); cursor: pointer; }
+.poster-actions { flex-wrap: wrap; }
+.cp-owner-poster { padding: 22px var(--pad); border-bottom: var(--rule); }
+.cp-campaign-poster { margin-top: 22px; }
+.cp-campaign-poster > .cp-h { margin-bottom: 20px; }
 .poster-side-lead { max-width: 44ch; font: 400 19px/1.42 var(--f-serif); color: var(--text-2); }
 .poster-link { font: 500 13px/1.4 var(--f-mono); overflow-wrap: anywhere; }
 /* Without the owner's link the poster has no QR code: a note asks for one, and says why. */
