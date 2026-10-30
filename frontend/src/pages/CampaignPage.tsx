@@ -32,6 +32,7 @@ import { campaignUrl, FOUNDERS_URL, type CampaignRoute } from "../lib/routes";
 import { useNow } from "../lib/useNow";
 import { heldPledge, keepPledge, useCampaign, type HeldPledge } from "../state/founders";
 import { session, useSession } from "../state/session";
+import { PrivateReceipt } from "../components/founders/PrivateReceipt";
 
 /** A pledge the supporter approved on PayPal's own page, which sent them back here to place the hold. */
 type Return = { orderId: string; phase: "holding" } | { orderId: string; phase: "failed"; message: string };
@@ -118,6 +119,7 @@ function Held({ campaign, pledge, onWithdrawn }: { campaign: Campaign; pledge: H
         PayPal holds your {amount}. You are charged only if {campaign.goal} neighbors join by {dayText(campaign.deadline)};
         otherwise the hold is released and you pay nothing.
       </p>
+      {pledge.receipt ? <PrivateReceipt token={pledge.receipt} /> : null}
       {campaign.accepting ? (
         <div className="cp-held-out">
           <p>Changed your mind? You can withdraw from this browser while the campaign is open.</p>
@@ -164,7 +166,7 @@ interface PledgeCardProps {
   back: Return | null;
   said: Said;
   news: string;
-  onHeld: (orderId: string, progress: CampaignProgress) => void;
+  onHeld: (orderId: string, progress: CampaignProgress, receipt?: string) => void;
   onWithdrawn: (progress: CampaignProgress) => void;
   onProgress: (progress: CampaignProgress) => void;
   onClosed: () => void;
@@ -642,8 +644,8 @@ export function CampaignPage({ route }: { route: CampaignRoute }) {
             back={back}
             said={said}
             news={news}
-            onHeld={(orderId, progress) => {
-              const pledge = { orderId, at: new Date().toISOString() };
+            onHeld={(orderId, progress, receipt) => {
+              const pledge = { orderId, at: new Date().toISOString(), ...(receipt ? { receipt } : {}) };
               keepPledge(id, pledge);
               setHeld(pledge);
               setSaid(null);

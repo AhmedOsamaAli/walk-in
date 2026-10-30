@@ -70,6 +70,7 @@ A survey says what the block is missing; Founders lets the owner test that answe
 - **The neighbors pledge with PayPal**, no account needed. Each pledge is a PayPal order with intent `AUTHORIZE`: PayPal only holds the money. The campaign's page shows why this, why here (the survey's evidence), how many neighbors have joined and how much PayPal holds so far.
 - **All or nothing.** At the deadline, or as soon as the owner closes a campaign that met its goal, every hold is captured and PayPal Payouts sends the total after PayPal's fees to the owner. Short of the goal, or cancelled, every hold is released and nobody pays. Settlement can resume after a crash and never captures or pays twice, and PayPal's webhooks are verified with PayPal before they count.
 - **From an AI assistant**, the MCP server finds campaigns near a place and prepares a pledge; the person approves it in PayPal, and no tool ever sees a payment detail ([below](#use-walk-in-from-your-ai-assistant)).
+- **Private receipts.** New pledges get a private link to follow or withdraw that pledge from another device or an assistant. Anyone holding it can withdraw while the campaign is open: keep it private. Only its SHA-256 digest is stored; receipt responses are never cached, their paths are redacted from access logs, and old pledges retain their original withdrawal path.
 - **Test mode.** It runs on PayPal's sandbox, and every screen with money says "Test mode: PayPal sandbox, no real money." It was run end to end against the sandbox: pledges through PayPal's button, a campaign funded by three sandbox buyers, closed by its owner, collected and paid out.
 
 The rules and API are in [docs/founders/CONTRACT.md](docs/founders/CONTRACT.md), the code in [app/payments](app/payments), [app/settlement.py](app/settlement.py) and [app/routes/campaigns.py](app/routes/campaigns.py).
@@ -164,6 +165,7 @@ The model only chooses, names and positions. The server writes every factual lin
 - `list_examples` takes nothing and returns the finished example surveys: each site and area, what is most missing, the concepts, and links to the survey, its launch kit and its report. It is free.
 - `get_survey` takes a run id or a survey's `/s/` link and returns that survey, summarized like `survey_storefront`; for a survey still running, what it has found so far. It is free.
 - `find_campaigns` lists the open Founders campaigns near a place (or the newest), `get_campaign` reads one in full (the survey's evidence, the pitch, the perks and the terms), and `back_campaign` prepares a pledge: it returns PayPal's approval link for the person to open and approve. No tool approves a pledge, and none sends or receives a payment detail ([docs/founders/agents.md](docs/founders/agents.md)).
+- `pledge_status` reads one pledge with its private receipt. `withdraw_pledge` releases that pledge's hold while the campaign is open, only when the person explicitly asks. Never publish a receipt or put it on a poster.
 
 Setup and limits are in [mcp_server/README.md](mcp_server/README.md).
 

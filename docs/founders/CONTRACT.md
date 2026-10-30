@@ -29,7 +29,7 @@ drop the kit purchase (`app/commerce.py`, `app/sales.py`, the paid `routes/kits.
    the evidence does not support). The AI never sets a number.
 5. **A pledge is a PayPal order with intent AUTHORIZE.** On the web the supporter approves in the PayPal buttons (JS SDK
    v6). For an AI assistant (MCP) the server creates the order with return and cancel URLs and hands back PayPal's
-   approval link; the supporter approves in PayPal, PayPal sends them to `/p/{id}?pledge={orderId}`, and that page
+   approval link; the supporter approves in PayPal, PayPal sends them to `/p/{id}?pledge={pledgeId}`, and that page
    authorizes it. A held pledge counts toward the goal; a declined one never does. A supporter may withdraw a pledge
    while the campaign is open (the hold is voided).
 6. **Closing.** At the deadline, or early by the owner once the goal is met. Funded: capture every valid hold
@@ -47,6 +47,10 @@ drop the kit purchase (`app/commerce.py`, `app/sales.py`, the paid `routes/kits.
 11. **Surveys can be paused** (`SURVEYS_PAUSED=true`, for the judging weeks after Qloo's key is gone): `/api/run`
     answers 503 "New surveys are paused; open one of the surveyed storefronts", and the web app shows the surveyed
     storefronts instead of the brief's survey button.
+12. **Private receipts.** Each new pledge gets a random 192-bit receipt token, given once to whoever prepared the
+    pledge. Only its SHA-256 digest is stored, never the token. Its bearer may read the pledge or withdraw it while
+    the campaign takes pledges, without signing in. The receipt is a cancellation capability, not a payment credential:
+    keep it private. Old pledges without a receipt still work through their campaign page.
 
 ## Endpoints
 
@@ -96,15 +100,31 @@ first; without `lat`/`lon`, open campaigns newest first. At most 50:
 `{ campaigns: { id, url, title, name, place: {label, lat, lon}, distance_km: number | null, amount, goal, supporters, total, deadline }[] }`.
 `total` is what the campaign's held pledges add up to (`"75.00"`), as in `progress.total`.
 
-`POST /api/campaigns/{id}/pledges` (anyone) body `{ flow: "buttons" | "redirect" }` → `{ order_id, approve_url: string | null }`.
+`POST /api/campaigns/{id}/pledges` (anyone) body `{ flow: "buttons" | "redirect" }` →
+`{ order_id, approve_url: string | null, receipt: string }`.
 Creates the AUTHORIZE order for the campaign's amount (`custom_id` = our pledge id, description "Founding supporter:
-{name}"). `redirect` adds return/cancel URLs (`{PUBLIC_URL}/p/{id}?pledge={orderId}` and `?cancelled=1`) and returns
+{name}"). `redirect` adds return/cancel URLs (`{PUBLIC_URL}/p/{id}?pledge={pledgeId}` and `?cancelled=1`) and returns
 PayPal's approval link. 409 when the campaign no longer accepts pledges. Rate-limited per address.
 
 `POST /api/campaigns/{id}/pledges/{order_id}/authorize` (anyone) → `{ status: "authorized" | "declined", progress }`.
 Idempotent. `402 {detail, retry: true}` when PayPal declines the instrument, so the buttons can restart.
 
 `POST /api/campaigns/{id}/pledges/{order_id}/withdraw` (anyone holding the order id, while open) → `{ status: "withdrawn", progress }`.
+
+`GET /api/receipts/{receipt}` (receipt bearer) returns
+`{ status, state, explanation, withdrawable, amount, currency, pledged_at, campaign }`.
+The campaign includes its public terms and progress, not the owner's panel; no payer identity, email, PayPal order,
+authorization, capture id, token or token digest is returned.
+
+`POST /api/receipts/{receipt}/withdraw` (receipt bearer) withdraws exactly that pledge under the same lock and rules as
+the campaign route, and returns the receipt's new view. Repeating a withdrawal makes no second PayPal call. A campaign
+past its close refuses with 409. Unknown or malformed receipts return 404. Reads are limited to 120 per hour per
+address, withdrawals to 20; guesses count too. Every answer, errors included, is `no-store`.
+
+`/r/{receipt}` is the private receipt page. Both it and the API suppress referrers, and the edge never caches receipt
+API responses even if an upstream header accidentally permits it. The page carries `noindex, nofollow, noarchive`.
+Uvicorn's access logger redacts receipt paths. Operators must also keep raw receipt URLs out of proxy analytics and
+other access logs. Do not put receipts in public updates, posters or shared campaign links.
 
 `POST /api/campaigns/{id}/close` (owner) → settles now when funded (or when the deadline has passed) → the campaign.
 `POST /api/campaigns/{id}/cancel` (owner, short of the goal) → voids every hold → the campaign.

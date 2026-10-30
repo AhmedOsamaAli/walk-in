@@ -45,6 +45,7 @@ export function needsOf(route: Route): RouteNeeds {
       return { chunks: [route.page], data: null };
     case "founders":
     case "campaign":
+    case "receipt":
       return { chunks: ["founders"], data: null };
   }
 }

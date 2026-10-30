@@ -14,6 +14,13 @@
 .sandbox-tag { margin-right: 4px; font-size: 10px; }
 .poster-side .sandbox { justify-self: start; }
 
+.cp-private-receipt { display: grid; gap: 8px; padding-top: 14px; border-top: var(--hair); font-size: 13px; line-height: 1.5; }
+.cp-private-receipt > .mono { color: var(--blue); font-size: 10px; }
+.cp-receipt-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cp-receipt-link > a { min-width: 0; overflow-wrap: anywhere; color: var(--blue); }
+.receipt-page { display: grid; justify-items: start; gap: 18px; max-width: 880px; padding: 32px var(--pad) 44px; }
+.receipt-page .cp-facts { width: 100%; }
+
 /* ---------- The count toward the goal: the pen while it fills, the highlighter once it is met ---------- */
 .fd-bar {
   position: relative; display: block; height: 12px; overflow: hidden;

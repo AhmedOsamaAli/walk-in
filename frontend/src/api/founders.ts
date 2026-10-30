@@ -149,6 +149,23 @@ export interface PledgeStarted {
   order_id: string;
   /** PayPal's approval link, for the redirect flow. */
   approve_url: string | null;
+  /** Private bearer token: given once, never published with the campaign. */
+  receipt: string;
+}
+
+export interface PledgeReceipt {
+  status: string;
+  state: string;
+  explanation: string;
+  withdrawable: boolean;
+  amount: string;
+  currency: string;
+  pledged_at: string;
+  campaign: Pick<Campaign, "id" | "title" | "name" | "status" | "accepting" | "amount" | "currency" | "goal" |
+    "deadline" | "closed_at" | "progress"> & {
+    url: string;
+    place: Pick<Campaign["place"], "label" | "area">;
+  };
 }
 
 export interface PledgeAuthorized {
@@ -205,6 +222,10 @@ export const founders = {
   close: (id: string) => request<Campaign>(`/api/campaigns/${segment(id)}/close`, post()),
   /** The owner, short of the goal: releases every hold. */
   cancel: (id: string) => request<Campaign>(`/api/campaigns/${segment(id)}/cancel`, post()),
+  receipt: (token: string, signal?: AbortSignal) =>
+    request<PledgeReceipt>(`/api/receipts/${segment(token)}`, { signal, cache: "no-store", referrerPolicy: "no-referrer" }),
+  withdrawReceipt: (token: string) =>
+    request<PledgeReceipt>(`/api/receipts/${segment(token)}/withdraw`, { ...post(), referrerPolicy: "no-referrer" }),
 };
 
 // ---------- What an error's body adds to its detail ----------

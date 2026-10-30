@@ -7,7 +7,8 @@ per survey concept, live and go with their survey.
 
 Walk-in Founders: a campaign starts from a ready kit and keeps what its page shows (the business, the place, the
 evidence), so it outlives its survey; its pledges are PayPal orders that only hold money until it settles, its payout
-sends the net collected total to the owner, and PayPal's webhook events are kept once each.
+sends the net collected total to the owner, and PayPal's webhook events are kept once each. A pledge keeps only the
+SHA-256 of its private receipt, as a session keeps only that of its cookie.
 """
 from __future__ import annotations
 
@@ -186,6 +187,9 @@ pledges = Table(
     Column("net_cents", Integer),  # the capture after PayPal's fee (seller_receivable_breakdown.net_amount)
     Column("captured_at", UTCDateTime),
     Column("error", String(64)),  # PayPal's code for why the last settlement could not finish it
+    # The SHA-256 of the pledge's private receipt (app.payments.receipts), never the receipt itself; null for pledges
+    # made before receipts.
+    Column("receipt_hash", String(64), unique=True, index=True),
     _created(),
     _updated(),
 )

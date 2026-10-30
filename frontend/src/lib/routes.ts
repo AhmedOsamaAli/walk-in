@@ -35,6 +35,7 @@ export type PageRoute =
   | { page: "privacy" }
   | { page: "examples" }
   | { page: "founders" }
+  | { page: "receipt"; token: string }
   | KitRoute
   | CampaignRoute;
 
@@ -55,6 +56,7 @@ const FOUNDERS_PATH = /^\/founders\/?$/;
 const KIT_PATH = /^\/k\/([A-Za-z0-9_-]{1,64})\/?$/;
 const DOSSIER_PATH = /^\/k\/([A-Za-z0-9_-]{1,64})\/dossier\/?$/;
 const CAMPAIGN_PATH = /^\/p\/([A-Za-z0-9_-]{1,64})\/?$/;
+const RECEIPT_PATH = /^\/r\/([A-Za-z0-9_-]{32})\/?$/;
 // What PayPal sends a supporter back with: our pledge's id, or PayPal's order id ("5O190127TN364715T"); the server
 // takes either.
 const ORDER_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -72,6 +74,8 @@ export function parseRoute(pathname: string, search: string): Route {
   if (PRIVACY_PATH.test(pathname)) return { page: "privacy" };
   if (EXAMPLES_PATH.test(pathname)) return { page: "examples" };
   if (FOUNDERS_PATH.test(pathname)) return { page: "founders" };
+  const receipt = RECEIPT_PATH.exec(pathname)?.[1];
+  if (receipt) return { page: "receipt", token: receipt };
   const kit = KIT_PATH.exec(pathname)?.[1];
   if (kit) return { page: "kit", token: kit };
   const dossier = DOSSIER_PATH.exec(pathname)?.[1];
@@ -114,6 +118,10 @@ export function campaignUrl(id: string): string {
   return `/p/${encodeURIComponent(id)}`;
 }
 
+export function receiptUrl(token: string): string {
+  return `/r/${encodeURIComponent(token)}`;
+}
+
 /** The address a page route shows; a campaign's without what PayPal sent the supporter back with. */
 export function pageUrl(route: PageRoute): string {
   switch (route.page) {
@@ -131,6 +139,8 @@ export function pageUrl(route: PageRoute): string {
       return dossierUrl(route.token);
     case "campaign":
       return campaignUrl(route.id);
+    case "receipt":
+      return receiptUrl(route.token);
   }
 }
 

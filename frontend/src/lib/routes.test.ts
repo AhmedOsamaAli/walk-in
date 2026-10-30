@@ -10,12 +10,23 @@ import {
   parseRoute,
   PLACES_URL,
   PRIVACY_URL,
+  receiptUrl,
   samePage,
   surveyUrl,
   type CampaignRoute,
 } from "./routes";
 
 describe("routes", () => {
+  it("opens private receipts without putting their data in a public campaign URL", () => {
+    const token = "A-b_".repeat(8);
+    const route = { page: "receipt", token } as const;
+    expect(parseRoute(receiptUrl(token), "")).toEqual(route);
+    expect(pageUrl(route)).toBe(`/r/${token}`);
+    expect(isPage(route)).toBe(true);
+    for (const invalid of ["/r/", "/r/short", `/r/${token}x`, `/r/${token}/extra`]) {
+      expect(parseRoute(invalid, "")).toEqual({ page: "brief" });
+    }
+  });
   it("reads a survey's id and its open design sheet", () => {
     expect(parseRoute("/s/3f9a0c1b2d4e", "")).toEqual({ page: "survey", id: "3f9a0c1b2d4e", sheet: null });
     expect(parseRoute("/s/3f9a0c1b2d4e/", "")).toEqual({ page: "survey", id: "3f9a0c1b2d4e", sheet: null });

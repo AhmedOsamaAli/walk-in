@@ -58,6 +58,17 @@ afterEach(() => {
 });
 
 describe("the campaign API", () => {
+  it("reads a private receipt without caching or sending its URL as a referrer", async () => {
+    const token = "x".repeat(32);
+    const body = { status: "authorized", state: "Held", explanation: "PayPal holds your pledge." };
+    const calls = stubFetch(json(body), json({ ...body, status: "withdrawn" }));
+    await expect(founders.receipt(token)).resolves.toEqual(body);
+    await expect(founders.withdrawReceipt(token)).resolves.toMatchObject({ status: "withdrawn" });
+    expect(calls[0]?.url).toBe(`/api/receipts/${token}`);
+    expect(calls[0]?.init).toMatchObject({ cache: "no-store", referrerPolicy: "no-referrer" });
+    expect(calls[1]?.url).toBe(`/api/receipts/${token}/withdraw`);
+    expect(calls[1]?.init).toMatchObject({ method: "POST", referrerPolicy: "no-referrer" });
+  });
   it("reads a campaign by its id", async () => {
     const calls = stubFetch(json(CAMPAIGN));
     await expect(founders.campaign("c4f1e2")).resolves.toEqual(CAMPAIGN);
