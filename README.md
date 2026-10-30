@@ -65,6 +65,8 @@ Every survey is saved and can be shared by its link. Signing in with Google keep
 
 A survey says what the block is missing; Founders lets the owner test that answer with real money before signing the lease.
 
+Already know what you are opening? Start without a survey at `/founders/start`: describe the business, select its address, set the terms and edit an AI draft. The owner's why-here line is labelled as not survey-verified, not Qloo evidence. Both paths use the same PayPal holds, settlement and private receipts.
+
 - **The owner starts a campaign** from any ready launch kit, signed in with Google, and sets the money terms: one pledge amount ($5 to $200), how many neighbors must join (3 to 500), a deadline 1 to 27 days away, an optional perk and the PayPal email that receives the money.
 - **AI writes the words, never the numbers.** A model drafts the title, pitch and perks from the kit and the survey's evidence. The owner edits them, and the server checks the edited words with the same rules: no amounts but the owner's, no counts or names the evidence does not give, no "only" or "first" it cannot support.
 - **The neighbors pledge with PayPal**, no account needed. Each pledge is a PayPal order with intent `AUTHORIZE`: PayPal only holds the money. The campaign's page shows why this, why here (the survey's evidence), how many neighbors have joined and how much PayPal holds so far.

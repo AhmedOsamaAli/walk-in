@@ -15,6 +15,7 @@ const PrivacyPage = lazyComponent(privacyChunk, (chunk) => chunk.PrivacyPage);
 const FoundersPage = lazyComponent(foundersChunk, (chunk) => chunk.FoundersPage);
 const CampaignPage = lazyComponent(foundersChunk, (chunk) => chunk.CampaignPage);
 const ReceiptPage = lazyComponent(foundersChunk, (chunk) => chunk.ReceiptPage);
+const StartCampaignPage = lazyComponent(foundersChunk, (chunk) => chunk.StartCampaignPage);
 
 function Broken() {
   return (
@@ -63,6 +64,8 @@ function Shown({ route, onFresh }: PageViewProps) {
       return <CampaignPage route={route} />;
     case "receipt":
       return <ReceiptPage token={route.token} />;
+    case "start-campaign":
+      return <StartCampaignPage />;
   }
 }
 

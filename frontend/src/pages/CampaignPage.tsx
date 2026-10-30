@@ -327,9 +327,9 @@ function OwnerPanel({ campaign, onCampaign }: { campaign: Campaign; onCampaign: 
             <code ref={box}>{share}</code>
             <CopyButton text={share} what="the campaign's link" target={box} />
           </p>
-          <Link className="text-link cp-owner-kit" href={`${campaign.kit_url}#poster`}>
+          {campaign.kit_url ? <Link className="text-link cp-owner-kit" href={`${campaign.kit_url}#poster`}>
             The window poster, with its QR code to this page <span aria-hidden="true">→</span>
-          </Link>
+          </Link> : null}
         </div>
         <div className="cp-owner-col">
           {owner?.report?.length ? (
@@ -428,7 +428,7 @@ function Story({ campaign }: { campaign: Campaign }) {
       {campaign.evidence.length ? (
         <section className="cp-sec" aria-labelledby="cp-why">
           <h2 className="cp-h" id="cp-why">
-            Why this, why here
+            {campaign.source === "owner" ? "Why here, in the owner's words" : "Why this, why here"}
           </h2>
           <ol className="cp-evidence">
             {campaign.evidence.map((line) => (
@@ -437,12 +437,14 @@ function Story({ campaign }: { campaign: Campaign }) {
               </li>
             ))}
           </ol>
-          <p className="cp-source">
+          {campaign.source === "owner" ? (
+            <p className="cp-source">Provided by the owner. Not verified by a Walk-in survey.</p>
+          ) : campaign.survey_url ? <p className="cp-source">
             From Walk-in&apos;s survey of the {campaign.place.area} around the door, with Qloo&apos;s taste data.{" "}
             <Link className="text-link" href={campaign.survey_url}>
               See the survey <span aria-hidden="true">→</span>
             </Link>
-          </p>
+          </p> : null}
         </section>
       ) : null}
       {campaign.perks.length ? (
@@ -486,12 +488,12 @@ function Story({ campaign }: { campaign: Campaign }) {
         <p className="cp-genre mono">{campaign.concept.genre}</p>
         <p className="cp-summary">{campaign.concept.summary}</p>
         <p className="cp-plan-links">
-          <Link className="text-link" href={campaign.kit_url}>
+          {campaign.kit_url ? <Link className="text-link" href={campaign.kit_url}>
             The launch kit <span aria-hidden="true">→</span>
-          </Link>
-          <Link className="text-link" href={campaign.survey_url}>
+          </Link> : null}
+          {campaign.survey_url ? <Link className="text-link" href={campaign.survey_url}>
             The survey <span aria-hidden="true">→</span>
-          </Link>
+          </Link> : null}
           <MapsLink lat={campaign.place.lat} lon={campaign.place.lon} />
         </p>
       </section>

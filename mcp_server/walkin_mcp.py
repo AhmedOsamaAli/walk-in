@@ -969,7 +969,9 @@ def campaign_summary(campaign: dict, found_id: str, walkin: Walkin, paypal: dict
         lines += ["", pitch]
     evidence = texts(campaign.get("evidence"))
     if evidence:
-        lines += ["", "**Why here**, from Walk-in's survey of the block:", *(f"- {line}" for line in evidence)]
+        source = ("**Why here**, in the owner's words (not survey-verified):" if campaign.get("source") == "owner" else
+                  "**Why here**, from Walk-in's survey of the block:")
+        lines += ["", source, *(f"- {line}" for line in evidence)]
     perks = texts(campaign.get("perks"))
     if perks:
         lines += ["", "**Founding supporters get:**", *(f"- {perk}" for perk in perks)]

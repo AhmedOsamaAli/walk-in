@@ -20,6 +20,16 @@
 .cp-receipt-link > a { min-width: 0; overflow-wrap: anywhere; color: var(--blue); }
 .receipt-page { display: grid; justify-items: start; gap: 18px; max-width: 880px; padding: 32px var(--pad) 44px; }
 .receipt-page .cp-facts { width: 100%; }
+.start-campaign { padding: 32px var(--pad) 44px; }
+.business-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; max-width: 900px; }
+.business-form .cf-wide { grid-column: 1 / -1; }
+.business-form label { display: block; margin-bottom: 8px; }
+.business-form input, .business-form textarea, .business-form select { width: 100%; }
+.business-addresses { display: grid; gap: 8px; margin-top: 12px; list-style: none; }
+.business-addresses [aria-pressed="true"] { color: var(--blue); font-weight: 600; }
+@container page (max-width: 560px) {
+  .business-form { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ---------- The count toward the goal: the pen while it fills, the highlighter once it is met ---------- */
 .fd-bar {

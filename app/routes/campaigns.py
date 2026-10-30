@@ -53,15 +53,18 @@ CLOSED_WHILE_HELD = (
 LATE = timedelta(seconds=1)
 
 
-class Terms(BaseModel):
+class MoneyTerms(BaseModel):
     """The owner's terms. They are checked by pledges.validate_campaign, which says what is wrong in plain words."""
 
-    kit_token: str = Field(..., min_length=1, max_length=64, description="The ready launch kit the campaign starts from")
     amount: Any = Field(None, description='Each pledge, "5.00" to "200.00"', examples=["25.00"])
     goal: Any = Field(None, description="Supporters needed, 3 to 500", examples=[40])
     deadline: Any = Field(None, description="ISO 8601 with a time zone, 1 to 27 days away")
     perk: Any = Field(None, description="What founding supporters get, in the owner's words, or null",
                       examples=["10% off every visit in the first year"])
+
+
+class Terms(MoneyTerms):
+    kit_token: str = Field(..., min_length=1, max_length=64, description="The ready launch kit the campaign starts from")
 
 
 class NewCampaign(Terms):
@@ -95,7 +98,7 @@ def perk_of(value: Any) -> str | None:
     return " ".join(value.split()) or None
 
 
-def check_terms(body: Terms, now: datetime, name: str | None = None) -> tuple[Any, list[str]]:
+def check_terms(body: MoneyTerms, now: datetime, name: str | None = None) -> tuple[Any, list[str]]:
     """The deadline as a datetime, and what is wrong with the owner's terms; the perk line must offer something beyond
     the pledge (`name` is the business's, which a perk may mention)."""
     deadline = deadline_of(body.deadline)
@@ -196,8 +199,8 @@ async def campaign_view(request: Request, row: dict) -> dict:
         "status": row["status"],
         "accepting": pledges.accepting(campaign, now),
         "kit_token": row["kit_token"],
-        "kit_url": f"/k/{row['kit_token']}",
-        "survey_url": f"/s/{row['survey_id']}?sheet={row['idx']}",
+        "kit_url": f"/k/{row['kit_token']}" if row["kit_token"] else None,
+        "survey_url": f"/s/{row['survey_id']}?sheet={row['idx']}" if row["survey_id"] else None,
         "name": offer.get("name") or "",
         "place": place_of(row),
         "concept": offer.get("concept") or {"genre": "", "summary": ""},
@@ -214,6 +217,8 @@ async def campaign_view(request: Request, row: dict) -> dict:
         "progress": public_progress(progress),
         "is_owner": owner,
     }
+    if row["kit_token"] is None:
+        view["source"] = "owner"
     if owner:
         view["owner"] = {
             "counts": progress["counts"],

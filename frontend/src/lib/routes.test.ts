@@ -17,6 +17,13 @@ import {
 } from "./routes";
 
 describe("routes", () => {
+  it("starts a campaign without sending the owner through the survey", () => {
+    const route = { page: "start-campaign" } as const;
+    expect(parseRoute("/founders/start", "")).toEqual(route);
+    expect(parseRoute("/founders/start/", "")).toEqual(route);
+    expect(pageUrl(route)).toBe("/founders/start");
+    expect(isPage(route)).toBe(true);
+  });
   it("opens private receipts without putting their data in a public campaign URL", () => {
     const token = "A-b_".repeat(8);
     const route = { page: "receipt", token } as const;

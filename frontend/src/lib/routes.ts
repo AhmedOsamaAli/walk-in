@@ -35,6 +35,7 @@ export type PageRoute =
   | { page: "privacy" }
   | { page: "examples" }
   | { page: "founders" }
+  | { page: "start-campaign" }
   | { page: "receipt"; token: string }
   | KitRoute
   | CampaignRoute;
@@ -46,6 +47,7 @@ export const PRIVACY_URL = "/privacy";
 export const EXAMPLES_URL = "/examples";
 /** The open Founders campaigns, and how to start one. */
 export const FOUNDERS_URL = "/founders";
+export const START_CAMPAIGN_URL = "/founders/start";
 
 const SURVEY_PATH = /^\/s\/([A-Za-z0-9_-]{1,64})\/?$/;
 const PLACES_PATH = /^\/me\/?$/;
@@ -74,6 +76,7 @@ export function parseRoute(pathname: string, search: string): Route {
   if (PRIVACY_PATH.test(pathname)) return { page: "privacy" };
   if (EXAMPLES_PATH.test(pathname)) return { page: "examples" };
   if (FOUNDERS_PATH.test(pathname)) return { page: "founders" };
+  if (pathname === START_CAMPAIGN_URL || pathname === `${START_CAMPAIGN_URL}/`) return { page: "start-campaign" };
   const receipt = RECEIPT_PATH.exec(pathname)?.[1];
   if (receipt) return { page: "receipt", token: receipt };
   const kit = KIT_PATH.exec(pathname)?.[1];
@@ -133,6 +136,8 @@ export function pageUrl(route: PageRoute): string {
       return EXAMPLES_URL;
     case "founders":
       return FOUNDERS_URL;
+    case "start-campaign":
+      return START_CAMPAIGN_URL;
     case "kit":
       return kitUrl(route.token);
     case "dossier":

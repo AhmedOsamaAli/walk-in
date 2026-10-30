@@ -344,7 +344,7 @@ export function termsProblems(form: TermsForm, now: number): Record<TermsField, 
 }
 
 /** The terms as the API takes them, once every one of them is fine; else null. */
-export function termsOf(form: TermsForm, kitToken: string, now: number): CampaignTerms | null {
+export function moneyTermsOf(form: TermsForm, now: number): Omit<CampaignTerms, "kit_token"> | null {
   const amount = normalizeAmount(form.amount);
   const goal = goalValue(form.goal);
   const deadline = deadlineFrom(form.date, form.time);
@@ -353,7 +353,12 @@ export function termsOf(form: TermsForm, kitToken: string, now: number): Campaig
     return null;
   }
   const perk = form.perk.trim().replace(/\s+/g, " ");
-  return { kit_token: kitToken, amount, goal, deadline, perk: perk || null };
+  return { amount, goal, deadline, perk: perk || null };
+}
+
+export function termsOf(form: TermsForm, kitToken: string, now: number): CampaignTerms | null {
+  const terms = moneyTermsOf(form, now);
+  return terms ? { kit_token: kitToken, ...terms } : null;
 }
 
 /** The words as the owner edited them. */

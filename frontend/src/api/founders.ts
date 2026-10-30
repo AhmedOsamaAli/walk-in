@@ -48,9 +48,10 @@ export interface Campaign {
   status: CampaignStatus;
   /** Still takes pledges. */
   accepting: boolean;
-  kit_token: string;
-  kit_url: string;
-  survey_url: string;
+  kit_token: string | null;
+  kit_url: string | null;
+  survey_url: string | null;
+  source?: "owner";
   /** The business, from the kit. */
   name: string;
   place: { label: string; lat: number; lon: number; area: string };
@@ -117,8 +118,7 @@ export interface PlacesCampaign {
 }
 
 /** The money terms, which the owner alone sets. */
-export interface CampaignTerms {
-  kit_token: string;
+export interface MoneyTerms {
   amount: string;
   goal: number;
   deadline: string;
@@ -126,6 +126,24 @@ export interface CampaignTerms {
   perk: string | null;
 }
 
+export interface CampaignTerms extends MoneyTerms {
+  kit_token: string;
+}
+
+export const BUSINESS_KINDS = ["cafe", "restaurant", "bakery", "bar", "gym", "studio", "salon", "barber",
+  "bookstore", "shop", "grocery", "kids", "services", "other"] as const;
+export type BusinessKind = (typeof BUSINESS_KINDS)[number];
+export interface BusinessDescription {
+  name: string;
+  kind: BusinessKind;
+  description: string;
+  why_here: string;
+  address: string;
+  lat: number;
+  lon: number;
+}
+export type BusinessTerms = BusinessDescription & MoneyTerms;
+export type NewBusinessCampaign = BusinessTerms & { payout_email: string; title: string; pitch: string; perks: string[] };
 /** POST /api/campaigns/draft: the words, or the reasons the terms are not allowed (then nothing is drafted). */
 export interface CampaignDraft {
   title: string;
@@ -196,6 +214,8 @@ export function campaignsPath(near: Near | null): string {
 }
 
 export const founders = {
+  draftBusiness: (terms: BusinessTerms) => request<CampaignDraft>("/api/business-campaigns/draft", post(terms)),
+  publishBusiness: (campaign: NewBusinessCampaign) => request<{ id: string; url: string }>("/api/business-campaigns", post(campaign)),
   /** The AI's words for the terms, or why the terms are not allowed. Signed in. */
   draft: (terms: CampaignTerms) => request<CampaignDraft>("/api/campaigns/draft", post(terms)),
   /** 422 with `problems` when a term or an edited line breaks a rule; 409 with `url` when one is already open. */

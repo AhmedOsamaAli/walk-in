@@ -141,9 +141,9 @@ campaigns = Table(
     Column("id", String(32), primary_key=True),
     # The kit it started from and the survey and concept behind it: no foreign keys, so a campaign outlives a survey
     # that is purged or deleted with its user's account.
-    Column("kit_token", String(64), nullable=False, index=True),
-    Column("survey_id", String(32), nullable=False),
-    Column("idx", Integer, nullable=False),
+    Column("kit_token", String(64), nullable=True, index=True),
+    Column("survey_id", String(32), nullable=True),
+    Column("idx", Integer, nullable=True),
     # The owner, the signed-in user who started it; null once they delete their account.
     Column("user_id", String(32), ForeignKey("users.id", ondelete="SET NULL"), index=True),
     Column("status", String(16), nullable=False, index=True),  # open | funded | partial | collected | expired | cancelled

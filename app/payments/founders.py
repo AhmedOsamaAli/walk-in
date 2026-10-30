@@ -29,7 +29,7 @@ SHUTDOWN_GRACE_S = 10
 # Called by PayPal and a scheduled job, never by a page; each proves itself otherwise.
 CALLBACKS = frozenset({"/api/paypal/webhook", "/api/cron/settle"})
 # The web app's pages for a campaign, for the list of open campaigns and for a pledge's private receipt.
-PAGES = ("/p/{key}", "/founders", "/r/{key}")
+PAGES = ("/p/{key}", "/founders", "/founders/start", "/r/{key}")
 
 
 def paypal_config(state) -> dict:
@@ -46,9 +46,9 @@ def paypal_config(state) -> dict:
 
 def install(app: FastAPI) -> None:
     """Adds the campaign and receipt endpoints and the callbacks to the app; the web app's pages are PAGES."""
-    from ..routes import campaigns, hooks, receipts
+    from ..routes import business_campaigns, campaigns, hooks, receipts
 
-    for area in (campaigns, hooks, receipts):
+    for area in (campaigns, hooks, receipts, business_campaigns):
         app.include_router(area.router)
     app.add_exception_handler(records.Problem, records.problem_response)
     app.state.origin_exempt = frozenset(getattr(app.state, "origin_exempt", frozenset()) | CALLBACKS)
@@ -66,6 +66,7 @@ async def running(app: FastAPI, settle_every: float | None) -> AsyncIterator[Non
     state.campaign_lock = asyncio.Lock()
     state.pledge_limiter = RateLimiter(PLEDGES_PER_HOUR, 3600)
     state.draft_limiter = RateLimiter(DRAFTS_PER_HOUR, 3600)
+    state.campaign_limiter = RateLimiter(10, 3600)
     state.receipt_limiter = RateLimiter(RECEIPT_CHECKS_PER_HOUR, 3600)
     state.receipt_withdraw_limiter = RateLimiter(RECEIPT_WITHDRAWALS_PER_HOUR, 3600)
     if settle_every:

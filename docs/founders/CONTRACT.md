@@ -51,8 +51,29 @@ drop the kit purchase (`app/commerce.py`, `app/sales.py`, the paid `routes/kits.
     pledge. Only its SHA-256 digest is stored, never the token. Its bearer may read the pledge or withdraw it while
     the campaign takes pledges, without signing in. The receipt is a cancellation capability, not a payment credential:
     keep it private. Old pledges without a receipt still work through their campaign page.
+13. **The owner's own business.** `/founders/start` also starts a campaign without a survey or kit. The owner gives
+    the name, kind, description, address and optional why-here line, then sets the same money terms. Such campaigns
+    say "in the owner's words" and "not survey-verified" on the web and through MCP. No Qloo facts are fabricated.
+    They use the existing hold, settlement, withdrawal and payout engine unchanged.
 
 ## Endpoints
+
+`POST /api/business-campaigns/draft` (signed in) takes the money terms (`amount`, `goal`, `deadline`, `perk`) plus:
+`{ name, kind, description, why_here, address, lat, lon }`. It returns the same draft shape as a kit campaign.
+Names are 2–60 characters, descriptions 8–500, why-here up to 300 and addresses 3–250; coordinates must be finite
+and in range. Kinds are cafe, restaurant, bakery, bar, gym, studio, salon, barber, bookstore, shop, grocery, kids,
+services or other. A from-scratch campaign has no measured exclusivity claim: "only", "first" and "best" remain
+subject to the existing copy rules.
+
+`POST /api/business-campaigns` (signed in) adds `payout_email`, `title`, `pitch` and `perks` to that body. It returns
+`{ id, url }`. Both routes check terms before asking a model; edited words get the same checks as model output.
+Unknown fields are refused, drafts share the existing per-address limit, and publication is limited to 10 per hour
+per signed-in account. `/api/campaigns/{id}` returns `source: "owner"` and null kit/survey URLs for these campaigns.
+The nullable source references are real nulls, never placeholders that look like a survey.
+
+Payment timing is still the existing 27-day pledge campaign, not an escrow or a verified-opening guarantee. A
+production marketplace, platform fees, holding seller funds and automatic full refunds require payment-provider
+approval and a funded refund policy; they are not silently enabled by this feature.
 
 `GET /api/config` (exists; extend it) adds:
 ```ts

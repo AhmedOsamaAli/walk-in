@@ -3,3 +3,4 @@
 export { CampaignPage } from "./CampaignPage";
 export { FoundersPage } from "./FoundersPage";
 export { ReceiptPage } from "./ReceiptPage";
+export { StartCampaignPage } from "./StartCampaignPage";

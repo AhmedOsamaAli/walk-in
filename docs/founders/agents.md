@@ -11,6 +11,10 @@ commerce done safely, and how to connect Walk-in's MCP server to an assistant. T
 [CONTRACT.md](CONTRACT.md), the tools in [mcp_server/README.md](../../mcp_server/README.md), and a summary for
 crawling agents in [llms.txt](../../frontend/public/llms.txt), served at https://walkin-app.pages.dev/llms.txt.
 
+Campaigns can also start from the owner's own description without a Walk-in survey. Their `source` is `owner`,
+their survey and kit links are null, and why-here is labelled as the owner's words, not verified evidence. Do not
+repeat such a claim as something Qloo measured.
+
 ## End to end
 
 1. **Find.** The person asks what is opening near them. The assistant calls `find_campaigns` with their place, or with
