@@ -14,6 +14,7 @@ import { readPosterLogo } from "../../lib/posterLogo";
 import { openingClaim } from "../../lib/posterProject";
 import { campaignUrl } from "../../lib/routes";
 import { posterMapOf } from "../../lib/sitemap";
+import { posterDesign, usePosterAppearance } from "../../state/poster";
 import { useSession } from "../../state/session";
 import type { Landing } from "./TrackedLinks";
 import { PosterArt, type PosterInput, type PosterStatus } from "./PosterArt";
@@ -34,13 +35,15 @@ interface PosterSectionProps {
   landing?: Landing;
   campaign: KitCampaign | Campaign | null;
   onAddLink?: () => void;
+  mode?: "editor" | "report";
+  onStatus?: (status: PosterStatus) => void;
 }
 
 /** One editor, print copy and export path for a launch kit or any business's Founders campaign. */
-export function PosterSection({ poster, scope, link, landing, campaign, onAddLink }: PosterSectionProps) {
+export function PosterSection({ poster, scope, link, landing, campaign, onAddLink, mode = "editor", onStatus }: PosterSectionProps) {
   const svg = useRef<SVGSVGElement>(null);
   const [initial] = useState(() => stored(scope));
-  const [appearance, setAppearance] = useState(initial.appearance);
+  const appearance = usePosterAppearance(scope);
   const [notice, setNotice] = useState<string | null>(initial.notice);
   const [error, setError] = useState<string | null>(null);
   const [ownsLogo, setOwnsLogo] = useState(Boolean(initial.appearance.logo));
@@ -61,6 +64,10 @@ export function PosterSection({ poster, scope, link, landing, campaign, onAddLin
   const mapAvailable = poster.site !== undefined && posterMapOf(poster)?.streets != null;
 
   useEffect(() => {
+    onStatus?.({ ready: loaded && status.ready, problem: failed ?? status.problem });
+  }, [loaded, status.ready, status.problem, failed, onStatus]);
+
+  useEffect(() => {
     if (!id || supplied) return;
     const abort = new AbortController();
     founders.campaign(id, abort.signal).then(
@@ -73,12 +80,10 @@ export function PosterSection({ poster, scope, link, landing, campaign, onAddLin
   }, [id, supplied]);
 
   function save(next: PosterAppearance) {
-    setAppearance(next);
     setError(null);
-    try {
-      window.localStorage.setItem(KEY + scope, JSON.stringify(next));
+    if (posterDesign.save(scope, next)) {
       setNotice("Design saved on this device. The logo is embedded in downloads, not uploaded to a server.");
-    } catch {
+    } else {
       setNotice("This browser cannot save the design. You can still print or download it during this visit.");
     }
   }
@@ -124,6 +129,12 @@ export function PosterSection({ poster, scope, link, landing, campaign, onAddLin
   const art = loaded ? <PosterArt poster={poster} link={code} campaign={details} sandbox={inSandbox(paypal)}
     appearance={appearance} svgRef={svg} onStatus={setStatus} /> : null;
   const disabled = !loaded || !status.ready || busy;
+  if (mode === "report") return (
+    <figure className="poster-report-frame" data-report-poster data-report-ready={loaded && status.ready}>
+      {art ?? <p className="poster-ask" role={failed ? "alert" : "status"}>{failed ?? "Loading the campaign's real perks and payment terms..."}</p>}
+      {status.problem ? <figcaption className="page-alert" role="alert">{status.problem}</figcaption> : null}
+    </figure>
+  );
   return (
     <div className="poster-section">
       <figure className="poster-frame">

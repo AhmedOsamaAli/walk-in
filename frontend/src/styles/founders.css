@@ -6,12 +6,8 @@
 
 /* ---------- Money: the test-mode notice, wherever money appears ---------- */
 .sandbox {
-  padding: 9px 13px 10px;
-  background: var(--marker); border: 1px dashed var(--on-yellow-3); border-radius: 12px;
-  font-size: 13.5px; line-height: 1.4; color: var(--ink);
+  font-size: 12.5px; line-height: 1.45; color: var(--text-3);
 }
-:root[data-theme="dark"] .sandbox { border-color: var(--yellow); }
-.sandbox-tag { margin-right: 4px; font-size: 10px; }
 .poster-side .sandbox { justify-self: start; }
 
 .cp-private-receipt { display: grid; gap: 8px; padding-top: 14px; border-top: var(--hair); font-size: 13px; line-height: 1.5; }

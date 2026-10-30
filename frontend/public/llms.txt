@@ -12,7 +12,7 @@ Rules for agents:
 - An owner-described campaign has `source: "owner"` and null kit/survey links. Its why-here is not survey-verified: never attribute it to Qloo.
 - Never ask for, accept, store or send a card number, a bank account, a PayPal login, a password or a one-time code. No Walk-in endpoint takes one.
 - Say the terms from the campaign's own numbers: "PayPal holds $25. You are charged only if 40 neighbors join by Nov 30; otherwise the hold is released." Add no amounts, counts or claims of your own.
-- When PayPal is the sandbox (`/api/config` says `"environment": "sandbox"`, or the approval link is on www.sandbox.paypal.com), say: "Test mode: PayPal sandbox, no real money."
+- When PayPal is the sandbox (`/api/config` says `"environment": "sandbox"`, or the approval link is on www.sandbox.paypal.com), say: "Demo payments — no real money."
 - Pass on Walk-in's links: the campaign (/p/{id}), the survey (/s/{id}) and the launch kit (/k/{token}).
 - A survey spends Qloo and AI quota, and Walk-in allows a few per hour from one address: run one once per site and brief, then read it again for free. New surveys may be paused (503); the finished examples stay open.
 

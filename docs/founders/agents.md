@@ -28,8 +28,8 @@ repeat such a claim as something Qloo measured.
 3. **Prepare.** When the person says "back it for me", the assistant calls `back_campaign`. The tool reads the campaign
    again and, if it still takes pledges, calls `POST /api/campaigns/{id}/pledges` with `{"flow": "redirect"}`. Walk-in
    creates a PayPal order with intent `AUTHORIZE` for the campaign's amount, with return and cancel URLs, and hands back
-   PayPal's approval link. The tool returns that link, the terms, the progress, the deadline and, on the sandbox, "Test
-   mode: PayPal sandbox, no real money."
+   PayPal's approval link. The tool returns that link, the terms, the progress, the deadline and, on the sandbox,
+   "Demo payments — no real money."
 4. **Approve.** The person opens the link and approves the pledge in PayPal, in their own account. The assistant is not
    part of this step.
 5. **Hold.** PayPal sends the person back to the campaign's page, `/p/{id}?pledge={orderId}`. The page authorizes the
@@ -111,8 +111,8 @@ What the design guarantees:
 - **The agent has no owner account.** It cannot see who pledged, the owner's view, the settlement or the payout. It
   cannot change campaign terms or capture money. Only a private receipt permits it to withdraw that receipt's pledge,
   and only while the campaign takes pledges.
-- **Test mode, said plainly.** This edition runs on PayPal's sandbox. Every answer that shows money says "Test mode:
-  PayPal sandbox, no real money."
+- **Demo payments, said plainly.** This edition runs on PayPal's sandbox. Every answer that shows money says
+  "Demo payments — no real money."
 
 ## Connect the MCP server to an assistant
 

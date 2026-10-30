@@ -55,7 +55,7 @@ MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 
 TOO_MANY_SURVEYS = "Walk-in allows a few surveys per hour from one address; try again later."
 TOO_MANY_PLEDGES = "Walk-in is preparing too many pledges from this address right now; try again later. No pledge was prepared."
-TEST_MODE = "Test mode: PayPal sandbox, no real money."
+TEST_MODE = "Demo payments — no real money."
 CREDIT = "Data: Qloo taste data · OpenStreetMap (© OpenStreetMap contributors) · Valhalla routing."
 SHAPES = {"street network": "traced over the street network",
           "circle": "drawn as a circle because street routing was unavailable"}

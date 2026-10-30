@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, type Ref } from "react";
-import { posterLine } from "../../lib/founders";
+import { posterLine, SANDBOX_NOTICE } from "../../lib/founders";
 import { shortLink } from "../../lib/kit";
 import { fitLines, layoutPoster, POSTER_FONTS, POSTER_H, POSTER_M, POSTER_W, roughMeasure, type Block, type Measure, type PosterCampaign, type PosterInput } from "../../lib/poster";
 import { brandForPoster, DEFAULT_POSTER_APPEARANCE, type PosterAppearance } from "../../lib/posterBrand";
@@ -85,7 +85,7 @@ export function PosterArt({ poster, link, campaign = null, sandbox = false,
   const chosen = selectedPerk !== undefined && actualPerks.includes(selectedPerk);
   const perks = chosen ? [selectedPerk, ...actualPerks.filter((perk) => perk !== selectedPerk)] : actualPerks;
   const back = campaign ? campaign.accepting ? posterLine(campaign.amount, campaign.goal, campaign.deadline) :
-    "This campaign is no longer taking pledges. Scan for its current status and participation details." : null;
+    `This campaign is no longer taking pledges. Original terms: ${posterLine(campaign.amount, campaign.goal, campaign.deadline)} Scan for its current status.` : null;
   const stage = appearance.stage ?? "planned";
   const messages = poster.messages ?? (poster.headline ? [poster.headline] : []);
   const chosenMessage = appearance.message;
@@ -173,7 +173,7 @@ export function PosterArt({ poster, link, campaign = null, sandbox = false,
         </text>
       </g> : null}
       {campaign && sandbox ? <text x={POSTER_M} y={POSTER_H - 48} fontFamily={POSTER_FONTS.sans}
-        fontSize="9" fill={brand.ink}>Test mode: PayPal sandbox, no real money.</text> : null}
+        fontSize="9" fill={brand.ink}>{SANDBOX_NOTICE}</text> : null}
       {readableLink.map((line, i) => <text key={i} x={POSTER_M} y={POSTER_H - 30 + i * 10} fontFamily={POSTER_FONTS.mono} fontSize="8.5" fill={brand.ink}>{line}</text>)}
       <text x={POSTER_W - POSTER_M} y={POSTER_H - 10} textAnchor="end" fontFamily={POSTER_FONTS.sans} fontSize="6.8" fill={brand.ink}>Made with Walk-in</text>
     </svg>

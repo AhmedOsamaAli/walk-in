@@ -249,9 +249,9 @@ function PledgeCard({ campaign, now, held, back, said, news, onHeld, onWithdrawn
   return (
     <section className="cp-card" aria-label={`Back ${campaign.name}`}>
       <Standing campaign={campaign} now={now} />
-      {action}
       {/* The owner's part above already says it. */}
       {!campaign.is_owner && (!paypal || (paypal.enabled && inSandbox(paypal))) ? <SandboxNotice className="cp-sandbox" /> : null}
+      {action}
       <p className="sr-only" role="status" aria-live="polite">
         {news}
       </p>

@@ -40,7 +40,9 @@ drop the kit purchase (`app/commerce.py`, `app/sales.py`, the paid `routes/kits.
    `seller_receivable_breakdown`) to the owner's PayPal email, idempotent per campaign (`sender_batch_id`). The owner
    sees its status. In production this would be PayPal's marketplace onboarding, money straight to the owner; the
    README says so.
-8. **Test mode**, wherever money appears: "Test mode: PayPal sandbox, no real money."
+8. **Demo payments**, disclosed before a pledge and on relevant receipt, owner-money and poster/report views:
+   "Demo payments — no real money." This is presentation only: PayPal stays in its sandbox, technical environment
+   values and hostnames remain accurate, and PayPal's native approval window is never masked.
 9. **Webhooks**, verified with PayPal's verify-webhook-signature API on the raw body, keep pledges and the payout in
    sync. Unknown or replayed events are acknowledged and ignored.
 10. **Agents never touch payment credentials.** They find campaigns and prepare a pledge; a person approves every
@@ -178,9 +180,23 @@ memory and the front door keep it (app/cache_policy.py), while campaigns change 
 - The launch kit page gets a **Founders** tab: start a campaign (the form, the AI draft, edit, publish), or this user's
   campaign for the kit. Signed out: "Sign in with Google to start one."
 - The **window poster**: when the kit has an open campaign, its QR code opens the campaign and the poster says, from
-  the campaign's own terms (not from the model): "Back it before it opens: pledge $25, charged only if 40 neighbors
-  join by Nov 30."
+  the campaign's own terms (not from the model): "PayPal holds $25. You are charged only if 40 neighbors join by
+  Nov 30; otherwise the hold is released." Actual participation perks lead. The report tab, dossier and exported
+  report PDF reuse this renderer and saved design; the PDF gives the poster its own complete A4/Letter page.
 - My places lists the user's campaigns. The top bar links "Founders".
+
+## Schema and release rollback
+
+Startup runs the existing Alembic chain: `0003` → `0004_receipts.py` (revision `0004`, nullable receipt hash and
+unique index) → `0005_business_campaigns.py` (revision `0005`, nullable kit/survey references). Existing pledges keep
+their original withdrawal path and a null receipt hash. PostgreSQL alters the columns without rebuilding customer
+records; `tests/test_release_migrations.py` also checks an upgrade with existing campaigns, holds, kits and surveys.
+
+Take and verify an encrypted database snapshot before deployment. An old application image that lacks these
+revision files cannot start against `0005`: a code rollback must retain the migration chain, or restore a verified
+pre-release database snapshot deliberately. Do not downgrade or erase data just to start an old image.
+The `0005` downgrade refuses to remove owner-described campaigns while any exist; dropping `0004` would remove
+receipt hashes. Never silently trade customer records or working receipt capabilities for a code rollback.
 
 ## Content-Security-Policy additions (the server's in `app/main.py`, `frontend/public/_headers`, `vite.config.ts`)
 

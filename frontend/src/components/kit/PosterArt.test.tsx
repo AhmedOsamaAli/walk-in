@@ -25,7 +25,9 @@ describe("the same poster renderer in different scenarios", () => {
     expect(printed).toContain("founders&#x27; wall");
     expect(printed).toContain("An invitation to the opening");
     expect(html.indexOf("AS A FOUNDER, YOU GET")).toBeLessThan(html.indexOf("THE PLEDGE"));
-    expect(printed).toContain("PayPal sandbox, no real money.");
+    expect(printed).toContain("Demo payments — no real money.");
+    expect(printed).toContain("PayPal holds $25.");
+    expect(printed).toContain("otherwise the hold is released.");
     expect(html).not.toContain("Internal demand and supply analysis.");
     expect(html).not.toContain("Do Not Print This Artist Name");
     expect(html).not.toContain("EVERYONE INSIDE THE BLUE LINE");
@@ -55,6 +57,8 @@ describe("the same poster renderer in different scenarios", () => {
     const html = renderToStaticMarkup(<PosterArt poster={poster} campaign={{ ...campaign, accepting: false }} sandbox link="https://walkin-app.pages.dev/p/c1" />);
     expect(html).toContain("SCAN FOR STATUS");
     expect(html).toContain("no longer taking pledges");
+    expect(visibleWords(html)).toContain("Original terms:");
+    expect(visibleWords(html)).toContain("PayPal holds $25.");
     expect(html).not.toContain("SCAN TO JOIN");
     expect(html).not.toContain("BECOME A FOUNDING SUPPORTER");
   });

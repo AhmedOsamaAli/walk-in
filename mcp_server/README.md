@@ -45,7 +45,7 @@ How the calls map to the API:
 - `back_campaign` reads the campaign with `GET /api/campaigns/{id}`. If it still takes pledges, it calls
   `POST /api/campaigns/{id}/pledges` with `{"flow": "redirect"}`. Walk-in creates a PayPal order with intent
   `AUTHORIZE` and hands back PayPal's approval link. A campaign that no longer takes pledges gets no order.
-- To say "Test mode: PayPal sandbox, no real money.", `find_campaigns` and `get_campaign` read `GET /api/config`;
+- To say "Demo payments — no real money.", `find_campaigns` and `get_campaign` read `GET /api/config`;
   `back_campaign` reads it from PayPal's link (`www.sandbox.paypal.com`).
 - `back_campaign` also returns a private receipt link on servers that support it. `pledge_status` calls
   `GET /api/receipts/{token}`; `withdraw_pledge` calls `POST /api/receipts/{token}/withdraw`. Keep the token secret:
@@ -106,7 +106,7 @@ The assistant calls `find_campaigns(place="Williamsburg, Brooklyn", km=2)`:
    - https://walkin-app.pages.dev/p/c0ffee1234abcd56
 
 get_campaign reads one in full: what it is, why there, its perks and its terms. back_campaign prepares a pledge for the person to approve in PayPal.
-Test mode: PayPal sandbox, no real money.
+Demo payments — no real money.
 ```
 
 > **Assistant:** Yes: Crumb Theory, a neighborhood bakery 350 m from you. It needs 40 founding supporters by Nov 30,
@@ -131,7 +131,7 @@ https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T
 - Approving places a hold, not a charge. PayPal then brings the person back to the campaign's page, which confirms the hold and counts the pledge; it can be withdrawn there while the campaign is open.
 - So far: 12 of 40 supporters (30%), 28 more needed; $300 pledged. Deadline: Nov 30, 2026, 11:59 PM UTC-5.
 - The link is for this one pledge. Anyone else who wants to back it needs their own: call back_campaign again for them.
-Test mode: PayPal sandbox, no real money.
+Demo payments — no real money.
 
 Campaign page: https://walkin-app.pages.dev/p/c0ffee1234abcd56
 ```

@@ -49,6 +49,14 @@ overlaid logo. Its destination is a public campaign or an approved owner page, n
 PayPal approval. `lib/posterExport.ts` embeds local fonts and the logo in SVG and 2400×3392 PNG output without
 broadening the production CSP. The same renderer supplies a one-page A4 or Letter print/PDF.
 
+The kit's Report tab and `/k/<token>/dossier` embed that customized poster, not a separate template or an editor link.
+The report PDF keeps its analysis and maps and adds the actual poster as a dedicated A4/Letter page. The shared
+device-local design store keeps the editor, report preview and document synchronized, including the owner's logo,
+checked headline and selected real participation perk. Printing waits for typefaces, actual campaign terms and
+ready artwork; a failed campaign lookup cannot silently become a generic launch poster. The report preview loads
+only when its tab is opened. Campaign posters use the compact "Demo payments — no real money." disclosure; the
+PayPal SDK, endpoints and runtime environment remain sandbox.
+
 If text, terms or perks do not fit, printing and downloading stop with an explanation instead of dropping words.
 
 ## Routes
