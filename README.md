@@ -86,13 +86,19 @@ The rules and API are in [docs/founders/CONTRACT.md](docs/founders/CONTRACT.md),
    - Taste: the brands, artists, films, TV shows and podcasts people within 1.5 km (or as far as a big area reaches) over-index on, against three same-size areas around, each with its Qloo genres (a brand's industry, as its genres are broad).
 
    With an age focus, each of these rankings leans toward that age group, here and around alike. A comparison area where Qloo lists almost no place (open water, a rail yard) is moved nearer, farther or a little to the side, or left out.
-3. **Gaps.** For the eight place types people here rank highest (within the business type chosen), Walk-in measures:
+3. **Gaps.** Within the same eight-category query budget, Walk-in measures the highest-ranked place types for the chosen
+   business focus. **Any business** retains the top six and uses up to two slots to also inspect ranked retail and
+   leisure categories when absent; the remaining slots take the next strongest demand ranks. This broadens the
+   investigation, not the outcome: measured scores and owner constraints still determine which concepts win.
+   Walk-in measures:
    - **demand:** the rank here against the median rank in the areas around;
    - **supply:** the places of the type inside the area against what the larger area holds, scaled to the area's size and to the site's median across types, so parks and water around do not bias every type. OpenStreetMap is read for the same area (up to 30 km²), and a place only it shows counts as supply too, so a kind of place missing from Qloo's list is never called missing;
    - **pull:** the places of the type people here love more than the rest of the city does, how many of them lie outside the area, and the median trip to those;
    - **fit:** when the owner describes the unit, whether it can host the type (a seafood restaurant needs a full kitchen with extraction) and how many guests it holds; and whether the owner's rules allow the type at all.
 
-   Together they make a gap score out of 100. Types Qloo barely knows here are flagged as thin data, and types whose loved places are mostly hotels or malls as atypical; both are discounted.
+   Together they make a gap score out of 100, not a probability of success. Where actual counts exist, the UI also
+   shows the percentage of sampled located favorites outside the area, explicitly not a share of residents.
+   Types Qloo barely knows here are flagged as thin data, and types whose loved places are mostly hotels or malls as atypical; both are discounted.
 4. **Concepts.** An agent reads the evidence, tests its own hunches live against Qloo and proposes three concepts, which the server then checks ([below](#the-agent-and-its-checks)). Without a model, or when every free model is busy, evidence rules design them.
 5. **The design sheet.** Opening a concept builds its sheet from the evidence, with no model call. It keeps the concept's own name, one-liner and signature items, and adds:
    - the offer: what the places people here love are known for, those no place inside the area offers first, within the owner's rules. An item needs evidence: a lone word that one place's reviews mention once or twice, with no Qloo tag behind it ("medicine" at a café), is left out;
